@@ -90,3 +90,22 @@ test('a SIGSTOPped child still counts as LIVE — held is not gone', async () =>
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('teardown escalates SIGTERM → SIGKILL and the result is RE-OBSERVED emptiness', async () => {
+  const dir = tmp();
+  try {
+    // a child that ignores SIGTERM: only the KILL escalation can end it
+    const cage = spawnCaged({
+      unit: 'test-kill', env: { PATH: process.env.PATH },
+      cmd: SH, args: ['-c', "trap '' TERM; sleep 30"], cwd: dir, stdio: 'ignore',
+      graceMs: 300,
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    assert.ok(cage.enumerate().length > 0);
+    const out = await cage.teardownProvenEmpty();
+    assert.equal(out.empty, true, `TERM-immune child must fall to SIGKILL: ${out.detail}`);
+    assert.equal(cage.enumerate().length, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
