@@ -125,7 +125,7 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
     // RECOVERY: state carried across sessions earns the celebration + the star ask.
     assert.match(payload.systemMessage, /\u{1F389}/u);
     assert.match(payload.systemMessage, /saved your session state/i);
-    assert.match(payload.systemMessage, /1 contract/);
+    assert.match(payload.systemMessage, /1 task still yours/);
     assert.match(payload.systemMessage, /github\.com\/oathe-ai\/oathe/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -147,7 +147,8 @@ test('render-board on a workspace with NOTHING open confirms visibly that oathe 
       { OATHE_PRINCIPAL: 'firia' });
     assert.equal(out.status, 0, out.stderr);
     const payload = JSON.parse(out.stdout);
-    assert.match(payload.systemMessage, /\u{1F389}/u); // the party popper
+    assert.match(payload.systemMessage, /\u{1F37A}/u); // the beer
+    assert.match(payload.systemMessage, /no open tasks/i);
     assert.match(payload.systemMessage, /keeping track/i);
     assert.doesNotMatch(payload.systemMessage, /github\.com/, 'the star ask rides RECOVERY only');
     assert.match(payload.hookSpecificOutput.additionalContext, /no open contracts/i);
@@ -169,7 +170,9 @@ test('open contracts that are NOT yours summarize without celebration or the sta
       { OATHE_PRINCIPAL: 'firia' });
     assert.equal(out.status, 0, out.stderr);
     const payload = JSON.parse(out.stdout);
-    assert.match(payload.systemMessage, /open for signing/i);
+    assert.match(payload.systemMessage, /\u{1F512}/u); // the lock
+    assert.match(payload.systemMessage, /1 open \u00b7 0 held/);
+    assert.doesNotMatch(payload.systemMessage, /contracts|for signing|elsewhere/i);
     assert.doesNotMatch(payload.systemMessage, /\u{1F389}/u);
     assert.doesNotMatch(payload.systemMessage, /github\.com/);
   } finally {

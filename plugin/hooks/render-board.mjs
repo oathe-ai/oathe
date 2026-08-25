@@ -39,12 +39,12 @@ await failSoft(async ({ substrate, workspace, identity }) => {
 
   let message;
   if (mine.length > 0) {
-    const n = mine.length === 1 ? '1 contract' : `${mine.length} contracts`;
+    const n = mine.length === 1 ? '1 task' : `${mine.length} tasks`;
     message = `🎉 Oathe just saved your session state — ${n} still yours! ${STAR_ASK}`;
   } else if (offered.length + theirs.length > 0) {
-    message = `Oathe contracts: ${offered.length} open for signing · ${theirs.length} held elsewhere`;
+    message = `🔒 Oathe: ${offered.length} open · ${theirs.length} held`;
   } else {
-    message = '🎉 No open contracts in this folder — Oathe is keeping track.';
+    message = '🍺 No open tasks in this folder — Oathe is keeping track.';
   }
   emitSessionStart({ context: lines.join('\n'), message });
 }, { quietNote: 'Oathe contracts unavailable — substrate not initialized; run `oathe init`' });
