@@ -162,6 +162,14 @@ test('REJECTED: verification row records the rejection and the task REOPENS (R8)
     'SELECT settled_at FROM cell.work_claim WHERE work_claim_id = $1', [claim.work_claim_id])).rows[0];
   assert.equal(claimRow.settled_at, null, 'a rejected claim never settles');
 
+  // R8 on the BOARD: a reopened task is OPEN again (not stuck in asserted), and the settled
+  // review is off the board entirely
+  const { sections } = await workerTools.oathe_board({});
+  assert.ok(sections.open.some((r) => r.task_id === 'reject-me'), JSON.stringify(sections.open));
+  assert.ok(!sections.asserted.some((r) => r.task_id === 'reject-me'));
+  assert.ok(!Object.values(sections).flat().some((r) => r.task_id === 'verify:reject-me'),
+    'the settled review left the board');
+
   // R8: rejection reopens work — the task is claimable again
   const reclaim = await workerTools.oathe_claim({ task_id: 'reject-me', objective: 'second attempt' });
   assert.equal(reclaim.claimed, true);

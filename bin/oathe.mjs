@@ -115,10 +115,11 @@ const handlers = {
     });
     const { ctx, tools } = await toolsForCwd();
     try {
-      const { board, workspace } = await tools.oathe_board({ all: values.all === true });
+      const { sections, workspace } = await tools.oathe_board({ all: values.all === true });
       process.stdout.write(`board${workspace ? ` (${workspace})` : ' (all workspaces)'}:\n`);
-      if (board.length === 0) process.stdout.write('  (none — a clean slate)\n');
-      for (const r of board) {
+      const listed = [...sections.mine, ...sections.open, ...sections.asserted, ...sections.held];
+      if (listed.length === 0) process.stdout.write('  (none — a clean slate)\n');
+      for (const r of listed) {
         const holder = r.state === 'active' ? `${r.principal_id}, lease until ${r.lease_until}` : (r.state ?? 'open');
         process.stdout.write(`  [${(r.state ?? 'open').padEnd(8)}] ${r.task_id} — ${r.objective} (${holder})\n`);
       }

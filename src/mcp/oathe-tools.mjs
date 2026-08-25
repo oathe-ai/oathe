@@ -227,9 +227,9 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       // ONE row per task: the latest claim in view wins (a task reclaimed after a yield is one
       // task, not a history lesson — statements carry the history).
       const { rows } = await client.query(
-        `SELECT task_id, objective, state, principal_id, contract_ref, settled_at, lease_until FROM (
+        `SELECT task_id, objective, origin, state, principal_id, contract_ref, settled_at, lease_until FROM (
            SELECT DISTINCT ON (t.task_id)
-                  t.task_id, t.objective, t.created_at, w.state, w.principal_id, w.contract_ref,
+                  t.task_id, t.objective, t.created_at, t.origin, w.state, w.principal_id, w.contract_ref,
                   w.settled_at,
                   to_char(w.ownership_valid_until, 'YYYY-MM-DD HH24:MI') AS lease_until
              FROM cell.task t LEFT JOIN cell.work_claim w USING (org_id, task_id)
@@ -243,6 +243,7 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       for (const row of rows) {
         if (row.settled_at) continue; // settled: the obligation is CLOSED — off the board
         if (row.state === 'active') sections[row.principal_id === principalId ? 'mine' : 'held'].push(row);
+        else if (row.origin === 'reopened') sections.open.push({ ...row, state: 'reopened' }); // R8: back on the board
         else if (row.state === 'completion_asserted') sections.asserted.push(row);
         else sections.open.push(row);
       }
