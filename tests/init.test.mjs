@@ -71,6 +71,10 @@ test('doctor over a healthy install reports every row ok; after a user edit insi
   await runInit({ env, exec });
   const healthy = await runDoctor({ env });
   assert.equal(healthy.substrate.reachable, true);
+  // the trace-contract monitor derives store paths from env HOME (nothing hardcoded): the
+  // sandbox home has no session stores, and the doctor says so VISIBLY instead of skipping.
+  assert.equal(healthy.traces.claude.status, 'store-absent', JSON.stringify(healthy.traces));
+  assert.equal(healthy.traces.codex.status, 'store-absent', JSON.stringify(healthy.traces));
   assert.ok(healthy.rows.length >= 4);
   assert.ok(healthy.rows.every((r) => r.status === 'ok'), JSON.stringify(healthy.rows));
   assert.equal(healthy.plugin.resolves, true);

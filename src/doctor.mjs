@@ -49,6 +49,29 @@ export async function runDoctor({ env = process.env } = {}) {
       block_version: row.block_version,
       status: (VERIFIERS[row.kind] ?? (() => 'unknown-kind'))(row),
     }));
+    // The trace-contract monitor: both vendors disclaim transcript-schema stability, so the
+    // doctor validates the NEWEST live record in each store against docs/traces.md and
+    // reports DRIFT loudly. An absent store is a distinct, visible status — never a silent skip.
+    const { ClaudeTraceStore, CodexTraceStore } = await import('./traces.mjs');
+    const home = ctx.home;
+    const traces = {};
+    for (const [name, store] of Object.entries({
+      claude: new ClaudeTraceStore({ home }),
+      codex: new CodexTraceStore({ home }),
+    })) {
+      const newest = name === 'claude' ? store.newestTranscript() : store.newestRollout();
+      if (!newest) {
+        traces[name] = { status: 'store-absent', newest: null, detail: 'no session records found' };
+        continue;
+      }
+      const seen = store.validate(newest);
+      traces[name] = {
+        status: seen.ok ? 'ok' : 'DRIFT',
+        newest,
+        detail: seen.detail,
+      };
+    }
+
     let plugin;
     try {
       const manifestDoc = JSON.parse(
@@ -59,7 +82,7 @@ export async function runDoctor({ env = process.env } = {}) {
     } catch (e) {
       plugin = { resolves: false, detail: String(e?.message || e) };
     }
-    return { rows, substrate: await substrate.status(), plugin };
+    return { rows, substrate: await substrate.status(), plugin, traces };
   } finally {
     await substrate.close();
   }
