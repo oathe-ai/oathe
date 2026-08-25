@@ -131,7 +131,8 @@ test('oathe_statement records a statement (a statement, not truth) against the a
   });
   assert.equal(out.recorded, true);
   const { rows } = await substrate.query(
-    "SELECT proposition, epistemic_status FROM cell.agent_statement WHERE task_id = 'task-x'");
+    "SELECT proposition, epistemic_status FROM cell.agent_statement "
+    + "WHERE task_id = 'task-x' AND statement_type = 'progress'");
   assert.equal(rows[0].proposition, 'Found the root cause');
   assert.equal(rows[0].epistemic_status, 'observed');
 });
@@ -200,6 +201,62 @@ test('oathe_done records a completion statement and moves the claim terminal —
   const claim = await substrate.query(
     "SELECT state FROM cell.work_claim WHERE task_id = 'done-task' ORDER BY claimed_at DESC LIMIT 1");
   assert.notEqual(claim.rows[0].state, 'active');
+});
+
+test('oathe_claim assigns the verifier engine at claim time, from config', async () => {
+  const { OatheConfig } = await import('../src/config.mjs');
+  const codexTools = createOatheTools({
+    client: substrate,
+    identity: { orgId: 'oathe', principalId: 'firia', department: 'founder' },
+    workspace: WS,
+    config: new OatheConfig({ env: { ...process.env, OATHE_VERIFIER: 'codex' } }),
+  });
+  const out = await codexTools.oathe_claim({ task_id: 'assigned-task', objective: 'verifier assigned at claim' });
+  assert.equal(out.verifier, 'codex');
+  const { rows } = await substrate.query(
+    "SELECT subject_ref FROM cell.agent_statement WHERE work_claim_id = $1 AND subject_ref LIKE 'verifier:%'",
+    [out.work_claim_id]);
+  assert.deepEqual(rows.map((r) => r.subject_ref), ['verifier:codex']);
+});
+
+test('oathe_done binds the policy-standard plan (G2-b) and mints the verification task', async () => {
+  await tools.oathe_claim({ task_id: 'pipeline-task', objective: 'run the whole done pipeline' });
+  const out = await tools.oathe_done({
+    task_id: 'pipeline-task', proposition: 'the pipeline ran', evidence_ref: 'commit:abc',
+  });
+  assert.equal(out.done, true);
+
+  // 1. the plan is now DECLARED with clauses — bound BEFORE the completion terminal (FC161)
+  const plan = (await substrate.query(
+    "SELECT verification_plan AS p FROM cell.task WHERE task_id = 'pipeline-task'")).rows[0].p;
+  assert.equal(plan.plan_status, 'declared');
+  assert.deepEqual(plan.clauses, ['acceptance_package']);
+  assert.ok(plan.clause_spec.acceptance_package.conditions.length >= 3, JSON.stringify(plan));
+  assert.match(plan.bound_by, /policy:oathe-standard/);
+
+  // 2. the verification task exists on the board, open, with its own declared plan + engine
+  const vtask = (await substrate.query(
+    "SELECT objective, verification_plan AS p FROM cell.task WHERE task_id = 'verify:pipeline-task'")).rows[0];
+  assert.ok(vtask, 'verification task minted');
+  assert.match(vtask.objective, /verdict/i);
+  assert.equal(vtask.p.plan_status, 'declared');
+  assert.equal(vtask.p.verifier_engine, 'claude');
+  assert.equal(out.verification_task, 'verify:pipeline-task');
+
+  // 3. the result coaches the ruled dispatch: a DIFFERENT principal verifies
+  assert.match(out.note, /different principal|FC010/i);
+  assert.match(out.note, /oathe verify/);
+});
+
+test('oathe_done leaves an already-declared plan alone — the bar never moves after being set', async () => {
+  const { rows } = await substrate.query(
+    "SELECT verification_plan AS p FROM cell.task WHERE task_id = 'pipeline-task'");
+  const before = rows[0].p;
+  await tools.oathe_claim({ task_id: 'pipeline-task' }); // re-claim the (asserted) task's successor claim
+  await tools.oathe_done({ task_id: 'pipeline-task', proposition: 'done again' });
+  const after = (await substrate.query(
+    "SELECT verification_plan AS p FROM cell.task WHERE task_id = 'pipeline-task'")).rows[0].p;
+  assert.deepEqual(after, before);
 });
 
 test('oathe_done without an active claim is a typed refusal', async () => {

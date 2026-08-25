@@ -70,7 +70,8 @@ test('BORN-RED SEMANTIC: a killed cage stops the renewals and the lease is left 
   const after2 = await leaseHoursLeft('killed');
   assert.ok(after2 <= after1, 'no further renewals after death — the lease only runs DOWN now');
   const { rows } = await substrate.query(
-    "SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'killed'");
+    "SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'killed' "
+    + "AND subject_ref NOT LIKE 'verifier:%'"); // the claim-time engine assignment is not a session statement
   assert.equal(rows[0].n, 0, 'NO statement fabricated for a death nobody witnessed');
 });
 
@@ -85,7 +86,8 @@ test('a clean exit records the exit statement — terminal from exit', async () 
   await host.stop({ exitCode: 0 });
   assert.equal(host.running, false);
   const { rows } = await substrate.query(
-    "SELECT proposition FROM cell.agent_statement WHERE task_id = 'clean'");
+    "SELECT proposition FROM cell.agent_statement WHERE task_id = 'clean' "
+    + "AND execution_actor = 'oathe-session-host'");
   assert.equal(rows.length, 1);
   assert.match(rows[0].proposition, /session ended.*exit 0/i);
 });

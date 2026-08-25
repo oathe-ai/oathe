@@ -14,6 +14,8 @@ import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
 
+import { standardPlan, verificationTaskId, verificationObjective, isVerificationTask } from '../plans.mjs';
+
 export const PROTOCOL_VERSION = '2025-06-18';
 export const SERVER_NAME = 'oathe-tools';
 
@@ -163,12 +165,25 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
         `SELECT cell.claim_work($1, $2, $3, NULL, $4, $5, 'exclusive',
                 now() + make_interval(hours => $6), $7, now(), $8)`,
         [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
+      // Verifier assignment happens AT CLAIM (founder direction 2026-08-25): the engine that
+      // will judge this work is named before the work starts, from config, on the record.
+      const verifier = config?.get('verifier') ?? 'claude';
+      await client.query(
+        `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+                execution_actor, claim_principal, statement_type, subject_ref, proposition,
+                evidence_refs, epistemic_status, asserted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'observation', $7, $8, $9::jsonb, 'observed', now())`,
+        [crypto.randomUUID(), orgId, task_id, workClaimId, actor, principalId,
+          `verifier:${verifier}`,
+          `verification of this claim is assigned to the ${verifier} engine (bound at claim time)`,
+          JSON.stringify([`config:verifier=${verifier}`])]);
       return {
         claimed: true,
         task_id,
         work_claim_id: workClaimId,
         contract_ref: contractRef,
         lease: `${leaseHours} hours`,
+        verifier,
         note: existing.length === 0
           ? "task minted at claim — plan_status is honestly 'unknown'; a real cell pages you at verify_by"
           : 'existing task claimed',
@@ -232,6 +247,22 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
 
     async oathe_done({ task_id, proposition, evidence_ref }) {
       const workClaimId = await activeClaim(task_id);
+
+      // 1. G2-b: work may not finish until a plan exists. If the plan is still honestly
+      //    unknown, the POLICY binder supplies the standard plan — via the substrate's own
+      //    amend verb (an explicit CONTRACT_CHANGED event), which FC161 permits only while
+      //    the claim is ACTIVE, i.e. exactly now, before the completion terminal.
+      const { rows: taskRows } = await client.query(
+        'SELECT verification_plan AS plan FROM cell.task WHERE org_id = $1 AND task_id = $2',
+        [orgId, task_id]);
+      if (taskRows[0].plan?.plan_status !== 'declared') {
+        await client.query(
+          'SELECT cell.amend_verification_contract($1, $2, $3::jsonb, now(), $4::uuid, $5)',
+          [orgId, task_id, JSON.stringify(standardPlan()), crypto.randomUUID(),
+            'oathe policy-standard plan bound at completion (G2-b policy binder)']);
+      }
+
+      // 2. The completion statement + the substrate's terminal (as before).
       const statementId = crypto.randomUUID();
       await client.query(
         `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
@@ -243,9 +274,39 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       await client.query(
         'SELECT cell.assert_claim_completion($1::uuid, $2::uuid)',
         [statementId, crypto.randomUUID()]);
+
+      // 3. Verification is ordinary work: mint the verification task, open on the board,
+      //    carrying the engine assigned at claim time. A verification task does not mint a
+      //    verifier for ITSELF — that regress ends at the deterministic bar.
+      let verificationTask = null;
+      if (!isVerificationTask(task_id)) {
+        const { rows: engineRows } = await client.query(
+          `SELECT subject_ref FROM cell.agent_statement
+            WHERE org_id = $1 AND work_claim_id = $2 AND subject_ref LIKE 'verifier:%'
+            ORDER BY asserted_at DESC LIMIT 1`,
+          [orgId, workClaimId]);
+        const engine = engineRows[0]?.subject_ref.slice('verifier:'.length)
+          ?? config?.get('verifier') ?? 'claude';
+        verificationTask = verificationTaskId(task_id);
+        await client.query(
+          `INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                                  verify_by, claim_mode, created_at)
+           VALUES ($1, $2, $3, $4, 'minted_at_claim', $5::jsonb,
+                   now() + make_interval(hours => $6), 'exclusive', now())
+           ON CONFLICT DO NOTHING`,
+          [orgId, verificationTask, department, verificationObjective(task_id),
+            JSON.stringify(standardPlan({ verifierEngine: engine })), verifyByHours]);
+      }
+
       return {
         done: true, task_id, work_claim_id: workClaimId, statement_id: statementId,
-        note: 'completion ASSERTED, not settled — verification is still owed at verify_by',
+        verification_task: verificationTask,
+        note: verificationTask
+          ? `completion ASSERTED, not settled. Verification task '${verificationTask}' is on the `
+            + 'board. A DIFFERENT principal must verify (FC010 — you cannot verify your own work, '
+            + 'including via your own sub-agents): run `oathe verify` from any terminal, or leave '
+            + 'it for another session to claim.'
+          : 'completion ASSERTED, not settled — the deterministic acceptance bar settles verification tasks',
       };
     },
 
