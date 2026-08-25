@@ -11,11 +11,11 @@ const USAGE = `usage: oathe <verb> [args]
 
 verbs:
   init                         onboard installed harnesses + bring up the local cell substrate
-  claude [--hermetic] [args…]  launch interactive Claude Code inside the cage, contracts attached
-  claim <task-id> [objective]  take a contract (minting the task when new — objective required then)
-  ls [--all]                   this workspace's open contracts (--all: every workspace)
+  claude [--hermetic] [args…]  launch interactive Claude Code inside the cage, board attached
+  claim <task-id> [objective]  claim a task (minting it when new — objective required then)
+  ls [--all]                   this workspace's board (--all: every workspace)
   note <task-id> <text> [ref]  record a progress statement against your active claim
-  yield <task-id> <note>       yield: the contract goes back open for signing
+  yield <task-id> <note>       yield: the task goes back on the board, unowned
   doctor                       verify every managed surface against the install manifest
   status                       the substrate half of doctor
   uninstall [--purge-db]       remove exactly what init recorded (the database stays put)
@@ -100,11 +100,11 @@ const handlers = {
     });
     const { ctx, tools } = await toolsForCwd();
     try {
-      const { contracts, workspace } = await tools.oathe_contracts({ all: values.all === true });
-      process.stdout.write(`contracts${workspace ? ` (${workspace})` : ' (all workspaces)'}:\n`);
-      if (contracts.length === 0) process.stdout.write('  (none — a clean slate)\n');
-      for (const r of contracts) {
-        const holder = r.state === 'active' ? `${r.principal_id}, lease until ${r.lease_until}` : (r.state ?? 'open for signing');
+      const { board, workspace } = await tools.oathe_board({ all: values.all === true });
+      process.stdout.write(`board${workspace ? ` (${workspace})` : ' (all workspaces)'}:\n`);
+      if (board.length === 0) process.stdout.write('  (none — a clean slate)\n');
+      for (const r of board) {
+        const holder = r.state === 'active' ? `${r.principal_id}, lease until ${r.lease_until}` : (r.state ?? 'open');
         process.stdout.write(`  [${(r.state ?? 'open').padEnd(8)}] ${r.task_id} — ${r.objective} (${holder})\n`);
       }
       summary('ls', 'ok');

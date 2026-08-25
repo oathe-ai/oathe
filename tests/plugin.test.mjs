@@ -119,9 +119,9 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
     const payload = JSON.parse(out.stdout);
     const context = payload.hookSpecificOutput.additionalContext;
     assert.equal(payload.hookSpecificOutput.hookEventName, 'SessionStart');
-    assert.match(context, /## Oathe contracts/);
+    assert.match(context, /## Oathe board/);
     assert.match(context, /render-me/);
-    assert.match(context, /Your contracts/i);
+    assert.match(context, /yours/i);
     // RECOVERY: state carried across sessions earns the celebration + the star ask.
     assert.match(payload.systemMessage, /\u{1F389}/u);
     assert.match(payload.systemMessage, /saved your session state/i);
@@ -151,13 +151,13 @@ test('render-board on a workspace with NOTHING open confirms visibly that oathe 
     assert.match(payload.systemMessage, /no open tasks/i);
     assert.match(payload.systemMessage, /keeping track/i);
     assert.doesNotMatch(payload.systemMessage, /github\.com/, 'the star ask rides RECOVERY only');
-    assert.match(payload.hookSpecificOutput.additionalContext, /no open contracts/i);
+    assert.match(payload.hookSpecificOutput.additionalContext, /no open tasks/i);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('open contracts that are NOT yours summarize without celebration or the star ask', async () => {
+test('open tasks that are NOT yours summarize without celebration or the star ask', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-offered-'));
   try {
     // An unclaimed task carries no workspace yet, so every folder's list offers it.

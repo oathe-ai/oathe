@@ -2,7 +2,7 @@
 
 The Oathe interface, D0.1: an npm package whose `oathe init` onboards **both** installed
 harnesses (Claude Code and Codex) onto the local cell substrate, and whose `oathe claude`
-launches a normal interactive session inside the cage with this folder's open contracts attached.
+launches a normal interactive session inside the cage with this folder's board attached.
 
 Claims are speech acts. The substrate refuses dishonesty by construction — a claim never
 mints its work as done, a task without a plan says `plan_status: "unknown"`, a second
@@ -13,18 +13,18 @@ not a fabricated goodbye.
 
     oathe init                    # substrate up (createdb oathe_local + 26 DDL files, additive,
                                   # never DROP) + Claude/Codex onboarding + install manifest
-    oathe claude [--hermetic]     # interactive Claude Code in the cage; your contracts render
-                                  # at SessionStart; leases renew while the cage shows life
-    oathe claim <id> [objective]  # take a contract (minting the task honestly when new)
-    oathe ls [--all]              # this workspace's open contracts
+    oathe claude [--hermetic]     # interactive Claude Code in the cage; the board renders at
+                                  # SessionStart; leases renew while the cage shows life
+    oathe claim <id> [objective]  # claim a task (minting it honestly when new)
+    oathe ls [--all]              # this workspace's board (--all: every workspace)
     oathe note <id> <text> [ref]  # a progress statement — a statement, not truth
-    oathe yield <id> <note>       # the contract goes back open for signing, unowned
+    oathe yield <id> <note>       # the task goes back on the board, unowned
     oathe doctor                  # verify every managed surface against the manifest
     oathe status                  # the substrate half of doctor
     oathe uninstall [--purge-db]  # remove exactly what init recorded; the database stays
 
 There is **no resume verb** (founder ruling 2026-08-24): resuming is what launching means.
-Launching renders the folder's open contracts; *picking up* happens in-session — "continue
+Launching renders the folder's board; *picking up* happens in-session — "continue
 task-x" runs the `oathe_pickup` MCP tool, which drives the verified successor sequence
 (read prior attempt → reallocate → recompiled frame) against the real runtime.
 
