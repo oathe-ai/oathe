@@ -5,7 +5,7 @@
 
 import { parseArgs } from 'node:util';
 
-const VERBS = ['init', 'claude', 'claim', 'ls', 'note', 'yield', 'doctor', 'uninstall', 'status'];
+const VERBS = ['init', 'claude', 'claim', 'ls', 'note', 'done', 'yield', 'doctor', 'uninstall', 'status'];
 
 const USAGE = `usage: oathe <verb> [args]
 
@@ -15,6 +15,7 @@ verbs:
   claim <task-id> [objective]  claim a task (minting it when new — objective required then)
   ls [--all]                   this workspace's board (--all: every workspace)
   note <task-id> <text> [ref]  record a progress statement against your active claim
+  done <task-id> <what> [ref]  assert completion (a completion statement + the substrate's terminal)
   yield <task-id> <note>       yield: the task goes back on the board, unowned
   doctor                       verify every managed surface against the install manifest
   status                       the substrate half of doctor
@@ -121,6 +122,19 @@ const handlers = {
       const out = await tools.oathe_statement({ task_id: taskId, proposition, evidence_ref: evidenceRef });
       process.stdout.write(`statement recorded (${out.note})\n`);
       summary('note', 'ok');
+    } finally {
+      await ctx.substrate.close();
+    }
+  },
+
+  async done(argv) {
+    const [taskId, proposition, evidenceRef] = argv;
+    if (!taskId || !proposition) throw new Error('usage: oathe done <task-id> <what-was-done> [evidence-ref]');
+    const { ctx, tools } = await toolsForCwd();
+    try {
+      const out = await tools.oathe_done({ task_id: taskId, proposition, evidence_ref: evidenceRef });
+      process.stdout.write(`done: ${out.task_id} — ${out.note}\n`);
+      summary('done', 'ok');
     } finally {
       await ctx.substrate.close();
     }

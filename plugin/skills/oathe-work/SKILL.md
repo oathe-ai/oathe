@@ -19,7 +19,10 @@ The substrate refuses dishonesty by construction — work with it, not around it
 3. **Pick up, don't re-derive.** When the user says "continue <task>" (or the board shows a
    lease of yours), call `oathe_pickup {task_id}`: the successor sequence returns the compiled
    frame for the obligation. The obligation, not the conversation, is what comes back.
-4. **Yield what you cannot finish.** Stopping without finishing means
+4. **Say done when it is done.** Finished work closes with
+   `oathe_done {task_id, proposition, evidence_ref}` — a completion statement plus the
+   substrate's own terminal. Completion is ASSERTED, not settled: verification is still owed.
+5. **Yield what you cannot finish.** Stopping without finishing means
    `oathe_yield {task_id, note}` — the task goes back on the board, unowned, with a declared
    cause. Walking away silently leaves a lease to expire, which the board will show.
 

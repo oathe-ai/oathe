@@ -18,6 +18,7 @@ not a fabricated goodbye.
     oathe claim <id> [objective]  # claim a task (minting it honestly when new)
     oathe ls [--all]              # this workspace's board (--all: every workspace)
     oathe note <id> <text> [ref]  # a progress statement — a statement, not truth
+    oathe done <id> <what> [ref]  # assert completion (terminal via the substrate; not settled)
     oathe yield <id> <note>       # the task goes back on the board, unowned
     oathe doctor                  # verify every managed surface against the manifest
     oathe status                  # the substrate half of doctor

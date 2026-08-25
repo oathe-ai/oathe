@@ -17,7 +17,7 @@ test('initialize advertises the legacy protocol version and tool capability', as
 test('tools/list names the five oathe tools with schemas', async () => {
   const out = await dispatch({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { tools: {} });
   assert.deepEqual(out.result.tools.map((t) => t.name),
-    ['oathe_claim', 'oathe_board', 'oathe_statement', 'oathe_yield', 'oathe_pickup']);
+    ['oathe_claim', 'oathe_board', 'oathe_statement', 'oathe_yield', 'oathe_done', 'oathe_pickup']);
   assert.ok(out.result.tools.every((t) => t.inputSchema?.type === 'object'));
 });
 
@@ -157,7 +157,45 @@ test('oathe_pickup delegates to the successor seam and returns its compiled fram
 });
 
 test('oathe_pickup without a successor seam refuses rather than pretending', async () => {
+  await tools.oathe_claim({ task_id: 'task-x' }); // reclaim: task-x was yielded above
   await assert.rejects(
     () => tools.oathe_pickup({ task_id: 'task-x' }),
     (e) => e.code === 'OATHE_PICKUP_UNAVAILABLE');
+  await tools.oathe_yield({ task_id: 'task-x', note: 'back to yielded for later tests' });
+});
+
+test('oathe_pickup on a YIELDED task coaches the recovery: claim again, then pick up', async () => {
+  await assert.rejects(
+    () => tools.oathe_pickup({ task_id: 'task-x' }),
+    (e) => e.code === 'OATHE_NO_ACTIVE_CLAIM' && /yielded/.test(e.message)
+      && /claim it again/i.test(e.message));
+});
+
+test('oathe_done records a completion statement and moves the claim terminal — the loop can close', async () => {
+  await tools.oathe_claim({ task_id: 'done-task', objective: 'finish honestly' });
+  const out = await tools.oathe_done({
+    task_id: 'done-task', proposition: 'the work described by the objective is done', evidence_ref: 'commit:xyz',
+  });
+  assert.equal(out.done, true);
+  assert.ok(out.statement_id);
+  const { rows } = await substrate.query(
+    "SELECT statement_type FROM cell.agent_statement WHERE statement_id = $1", [out.statement_id]);
+  assert.equal(rows[0].statement_type, 'completion');
+  const claim = await substrate.query(
+    "SELECT state FROM cell.work_claim WHERE task_id = 'done-task' ORDER BY claimed_at DESC LIMIT 1");
+  assert.notEqual(claim.rows[0].state, 'active');
+});
+
+test('oathe_done without an active claim is a typed refusal', async () => {
+  await assert.rejects(
+    () => tools.oathe_done({ task_id: 'done-task', proposition: 'again' }),
+    (e) => e.code === 'OATHE_NO_ACTIVE_CLAIM');
+});
+
+test('the board collapses to ONE row per task: the latest claim wins', async () => {
+  // task-x now has multiple claims (yielded, re-claimed, yielded again) — one row, the latest.
+  const { board } = await tools.oathe_board({});
+  const rows = board.filter((r) => r.task_id === 'task-x');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].state, 'yielded');
 });

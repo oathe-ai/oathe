@@ -58,6 +58,15 @@ test('claim → ls → note → yield: the play loop, productized, with the mach
   assert.match(yieldOut.stdout, /back on the board/);
 });
 
+test('claim → done closes the loop from the CLI', () => {
+  const claim = oathe(['claim', 'done-cli-task', 'Close me properly']);
+  assert.equal(claim.status, 0, claim.stderr);
+  const done = oathe(['done', 'done-cli-task', 'closed properly', 'ref:cli-test']);
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(done.stdout, /completion ASSERTED, not settled/);
+  assert.match(done.stdout, /^oathe: done ok$/m);
+});
+
 test('a second claim is the substrate refusal, faithfully non-zero', () => {
   oathe(['claim', 'twice-task', 'claim me once']);
   const second = oathe(['claim', 'twice-task', 'claim me twice']);

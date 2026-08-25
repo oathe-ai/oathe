@@ -80,6 +80,22 @@ export function makeToolDefs() {
       },
     },
     {
+      name: 'oathe_done',
+      description:
+        'Assert completion of your active claim: records a completion statement and moves the '
+        + 'claim terminal through the substrate\'s own verb. Asserted, NOT settled — verification '
+        + 'is still owed at verify_by. Args: {task_id, proposition, evidence_ref?}.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string' },
+          proposition: { type: 'string', description: 'what was done, as the completion assertion' },
+          evidence_ref: { type: 'string' },
+        },
+        required: ['task_id', 'proposition'],
+      },
+    },
+    {
       name: 'oathe_pickup',
       description:
         'Pick up prior work on a claim: runs the successor sequence (read prior attempt → '
@@ -162,12 +178,17 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       // workspace yet, so the scoped board still shows them: they are the offered, claimable ones.
       const filter = all ? '' : 'AND (w.contract_ref LIKE $2 OR w.contract_ref IS NULL)';
       const params = all ? [orgId] : [orgId, `workspace:${workspace};%`];
+      // ONE row per task: the latest claim in view wins (a task reclaimed after a yield is one
+      // task, not a history lesson — statements carry the history).
       const { rows } = await client.query(
-        `SELECT t.task_id, t.objective, w.state, w.principal_id, w.contract_ref,
-                to_char(w.ownership_valid_until, 'YYYY-MM-DD HH24:MI') AS lease_until
-           FROM cell.task t LEFT JOIN cell.work_claim w USING (org_id, task_id)
-          WHERE t.org_id = $1 ${filter}
-          ORDER BY t.created_at DESC`,
+        `SELECT task_id, objective, state, principal_id, contract_ref, lease_until FROM (
+           SELECT DISTINCT ON (t.task_id)
+                  t.task_id, t.objective, t.created_at, w.state, w.principal_id, w.contract_ref,
+                  to_char(w.ownership_valid_until, 'YYYY-MM-DD HH24:MI') AS lease_until
+             FROM cell.task t LEFT JOIN cell.work_claim w USING (org_id, task_id)
+            WHERE t.org_id = $1 ${filter}
+            ORDER BY t.task_id, w.claimed_at DESC NULLS LAST
+         ) latest ORDER BY created_at DESC`,
         params);
       return { workspace: all ? null : workspace, board: rows };
     },
@@ -199,14 +220,45 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       };
     },
 
+    async oathe_done({ task_id, proposition, evidence_ref }) {
+      const workClaimId = await activeClaim(task_id);
+      const statementId = crypto.randomUUID();
+      await client.query(
+        `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+                execution_actor, claim_principal, statement_type, subject_ref, proposition,
+                evidence_refs, epistemic_status, asserted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'completion', $7, $8, $9::jsonb, 'observed', now())`,
+        [statementId, orgId, task_id, workClaimId, actor, principalId,
+          `task:${task_id}`, proposition, JSON.stringify([evidence_ref ?? 'note:session'])]);
+      await client.query(
+        'SELECT cell.assert_claim_completion($1::uuid, $2::uuid)',
+        [statementId, crypto.randomUUID()]);
+      return {
+        done: true, task_id, work_claim_id: workClaimId, statement_id: statementId,
+        note: 'completion ASSERTED, not settled — verification is still owed at verify_by',
+      };
+    },
+
     async oathe_pickup({ task_id }) {
+      const { rows } = await client.query(
+        `SELECT work_claim_id, state FROM cell.work_claim
+          WHERE org_id = $1 AND task_id = $2 ORDER BY claimed_at DESC LIMIT 1`,
+        [orgId, task_id]);
+      const latest = rows[0];
+      if (!latest || latest.state !== 'active') {
+        // The refusal coaches the recovery a session actually needs mid-conversation.
+        const hint = latest
+          ? `the latest claim on '${task_id}' is ${latest.state} — claim it again (oathe_claim), `
+            + 'then oathe_pickup follows the task\'s history'
+          : `no claim exists on '${task_id}' — nothing to pick up`;
+        throw new OatheToolError('OATHE_NO_ACTIVE_CLAIM', hint, { task_id, state: latest?.state ?? null });
+      }
       if (!successor) {
         throw new OatheToolError('OATHE_PICKUP_UNAVAILABLE',
           'the successor sequence is not wired into this server (no runtime config in this '
           + 'session) — pickup cannot pretend; launch via `oathe claude` to get it', { task_id });
       }
-      const workClaimId = await activeClaim(task_id);
-      return successor({ task_id, work_claim_id: workClaimId });
+      return successor({ task_id, work_claim_id: latest.work_claim_id });
     },
   };
 }
