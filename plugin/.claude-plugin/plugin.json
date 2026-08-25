@@ -1,0 +1,8 @@
+{
+  "name": "oathe",
+  "displayName": "Oathe",
+  "version": "0.1.0",
+  "description": "Claims are speech acts: your session opens on this folder's board, records progress as statements, renews its lease while alive, and yields what it cannot finish.",
+  "author": { "name": "Oathe" },
+  "license": "UNLICENSED"
+}

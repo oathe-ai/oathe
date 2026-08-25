@@ -1,0 +1,39 @@
+{
+  "description": "Oathe session lifecycle: the folder's board at SessionStart, lease heartbeat at Stop, frame note before compaction. Same three events exist verbatim in Claude Code and Codex.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/render-board.mjs",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/heartbeat.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/frame-note.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

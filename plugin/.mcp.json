@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "oathe": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/../src/mcp/oathe-tools.mjs"],
+      "env": {
+        "OATHE_WORKSPACE_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}
