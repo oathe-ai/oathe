@@ -5,7 +5,7 @@
 
 import { parseArgs } from 'node:util';
 
-const VERBS = ['init', 'claude', 'codex', 'claim', 'ls', 'note', 'done', 'verify', 'yield', 'config', 'doctor', 'uninstall', 'status', 'hook', 'mcp'];
+const VERBS = ['init', 'claude', 'codex', 'claim', 'ls', 'note', 'done', 'verify', 'trace', 'yield', 'config', 'doctor', 'uninstall', 'status', 'hook', 'mcp'];
 
 const USAGE = `usage: oathe <verb> [args]
 
@@ -18,6 +18,7 @@ verbs:
   note <task-id> <text> [ref]  record a progress statement against your active claim
   done <task-id> <what> [ref]  assert completion (a completion statement + the substrate's terminal)
   verify [task] [--all] [--engine claude|codex]  run the verification lane (non-author seat settles)
+  trace <task-id> [--out dir]  export the claim's linked session traces as ATIF trajectories
   yield <task-id> <note>       yield: the task goes back on the board, unowned
   doctor                       verify every managed surface against the install manifest
   status                       the substrate half of doctor
@@ -181,6 +182,63 @@ const handlers = {
       summary('verify', attention ? 'attention' : 'ok');
     } finally {
       await verifier.close();
+      await ctx.substrate.close();
+    }
+  },
+
+  async trace(argv) {
+    const { values, positionals } = parseArgs({
+      args: argv, options: { out: { type: 'string' } }, allowPositionals: true,
+    });
+    const [taskId] = positionals;
+    if (!taskId) throw new Error('usage: oathe trace <task-id> [--out <dir>]');
+    const [{ buildContext }, { projectorFor }, { workspaceRef }, fs, path] = await Promise.all([
+      import('../src/context.mjs'), import('../src/atif.mjs'), import('../src/workspace.mjs'),
+      import('node:fs'), import('node:path'),
+    ]);
+    const ctx = buildContext({});
+    try {
+      const { rows: claims } = await ctx.substrate.query(
+        `SELECT work_claim_id, contract_ref FROM cell.work_claim
+          WHERE org_id = $1 AND task_id = $2 ORDER BY claimed_at DESC LIMIT 1`,
+        [ctx.identity.orgId, taskId]);
+      if (claims.length === 0) throw new Error(`no claim on '${taskId}' — nothing to trace`);
+      const claim = claims[0];
+      const { rows: traceRows } = await ctx.substrate.query(
+        `SELECT evidence_refs FROM cell.agent_statement
+          WHERE org_id = $1 AND work_claim_id = $2 AND subject_ref LIKE 'trace:%'`,
+        [ctx.identity.orgId, claim.work_claim_id]);
+      const { rows: verdicts } = await ctx.substrate.query(
+        `SELECT result, verifier_principal, verification_id FROM cell.verification
+          WHERE org_id = $1 AND task_id = $2 ORDER BY recorded_at DESC LIMIT 1`,
+        [ctx.identity.orgId, taskId]);
+      const files = traceRows.flatMap((r) => r.evidence_refs);
+      if (files.length === 0) throw new Error(`'${taskId}' has no linked traces — nothing to export`);
+      const trajectories = files.map((file) => {
+        const trajectory = projectorFor(file).project(file);
+        Object.assign(trajectory.extra.oathe, {
+          org_id: ctx.identity.orgId,
+          task_id: taskId,
+          work_claim_id: claim.work_claim_id,
+          contract_ref: claim.contract_ref,
+          workspace: workspaceRef(process.cwd()),
+          ...(verdicts[0] ? { verdict: verdicts[0] } : {}),
+        });
+        return trajectory;
+      });
+      if (values.out) {
+        fs.mkdirSync(values.out, { recursive: true });
+        for (const [at, trajectory] of trajectories.entries()) {
+          const file = path.join(values.out, `${taskId.replaceAll(/[^a-zA-Z0-9_-]/g, '_')}-${at + 1}.atif.json`);
+          fs.writeFileSync(file, `${JSON.stringify(trajectory, null, 2)}\n`);
+          process.stdout.write(`${file}\n`);
+        }
+      } else {
+        // stdout is PURE JSON here; the machine summary rides stderr instead.
+        process.stdout.write(`${JSON.stringify(trajectories, null, 2)}\n`);
+      }
+      process.stderr.write('oathe: trace ok\n');
+    } finally {
       await ctx.substrate.close();
     }
   },

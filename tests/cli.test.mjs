@@ -79,6 +79,42 @@ test('everything after claude/codex passes through VERBATIM — flags included; 
   assert.deepEqual(got, ['-p', 'hello world', '--model', 'haiku', '--hermetic']);
 });
 
+test('oathe trace exports the linked traces of a claim as VALID ATIF on stdout', async () => {
+  // a claim with a real (fixture) linked trace, wired the way the heartbeat does it
+  const claim = oathe(['claim', 'trace-cli-task', 'Export me as a trajectory']);
+  assert.equal(claim.status, 0, claim.stderr);
+  const fixDir = path.join(sb.home, '.claude/projects/-fixture');
+  fs.mkdirSync(fixDir, { recursive: true });
+  const sessionId = '99999999-8888-7777-6666-555555555555';
+  const transcript = path.join(fixDir, `${sessionId}.jsonl`);
+  fs.writeFileSync(transcript, [
+    JSON.stringify({ type: 'user', uuid: 'u1', sessionId, message: { role: 'user', content: 'work' } }),
+    JSON.stringify({
+      type: 'assistant', uuid: 'a1', sessionId,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'worked' }] },
+    }),
+  ].join('\n'));
+  const hook = spawnSync('node', [BIN, 'hook', 'heartbeat'], {
+    input: JSON.stringify({
+      cwd: sb.home, hook_event_name: 'Stop', session_id: sessionId, transcript_path: transcript,
+    }),
+    encoding: 'utf8', env: sb.env,
+  });
+  assert.equal(hook.status, 0, hook.stderr);
+
+  const out = spawnSync('node', [BIN, 'trace', 'trace-cli-task'], { encoding: 'utf8', env: sb.env, cwd: sb.home });
+  assert.equal(out.status, 0, out.stderr);
+  const trajectories = JSON.parse(out.stdout);
+  assert.equal(trajectories.length, 1);
+  const { AtifValidator } = await import('../src/atif.mjs');
+  assert.equal(new AtifValidator().validate(trajectories[0]).ok, true);
+  // the export carries the full claim linkage in extra.oathe
+  assert.equal(trajectories[0].extra.oathe.task_id, 'trace-cli-task');
+  assert.ok(trajectories[0].extra.oathe.work_claim_id);
+  assert.match(out.stderr, /^oathe: trace ok$/m, 'summary rides stderr — stdout stays pure JSON');
+  oathe(['yield', 'trace-cli-task', 'export test done']);
+});
+
 test('oathe hook render-board runs the SessionStart hook through the bin', () => {
   const out = spawnSync('node', [BIN, 'hook', 'render-board'], {
     input: JSON.stringify({ cwd: sb.home, hook_event_name: 'SessionStart' }),

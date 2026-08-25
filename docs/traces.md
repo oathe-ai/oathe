@@ -49,6 +49,12 @@ the live stores against this contract and FAIL LOUD on drift (see `tests/traces-
 - **Hook stdin**: `session_id`, `transcript_path` (= the live rollout, materialized before
   dispatch), `cwd`; `SubagentStop` adds `agent_transcript_path`.
 
+## ATIF projection
+
+The traces above are GROUND TRUTH; `src/atif.mjs` projects them at read time into ATIF v1.7
+trajectories carrying the `extra.oathe` convention — see `docs/atif-oathe.md`. The verifier
+judges the projected, aligned view; `oathe trace <task>` exports it.
+
 ## What oathe records (C1 linkage)
 
 Hooks write ONE trace statement per (claim × session): `subject_ref: trace:<session_id>`,

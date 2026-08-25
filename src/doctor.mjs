@@ -53,6 +53,7 @@ export async function runDoctor({ env = process.env } = {}) {
     // doctor validates the NEWEST live record in each store against docs/traces.md and
     // reports DRIFT loudly. An absent store is a distinct, visible status — never a silent skip.
     const { ClaudeTraceStore, CodexTraceStore } = await import('./traces.mjs');
+    const { ClaudeAtifProjector, CodexAtifProjector, AtifValidator } = await import('./atif.mjs');
     const home = ctx.home;
     const traces = {};
     for (const [name, store] of Object.entries({
@@ -64,12 +65,15 @@ export async function runDoctor({ env = process.env } = {}) {
         traces[name] = { status: 'store-absent', newest: null, detail: 'no session records found' };
         continue;
       }
-      const seen = store.validate(newest);
-      traces[name] = {
-        status: seen.ok ? 'ok' : 'DRIFT',
-        newest,
-        detail: seen.detail,
-      };
+      // Full projection + validation — the deepest read the verifier itself performs.
+      try {
+        const projector = name === 'claude'
+          ? new ClaudeAtifProjector({ store }) : new CodexAtifProjector({ store });
+        new AtifValidator().assert(projector.project(newest), { file: newest });
+        traces[name] = { status: 'ok', newest, detail: null };
+      } catch (e) {
+        traces[name] = { status: 'DRIFT', newest, detail: String(e?.message || e) };
+      }
     }
 
     let plugin;
