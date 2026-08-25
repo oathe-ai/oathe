@@ -98,6 +98,22 @@ export function makeToolDefs() {
       },
     },
     {
+      name: 'oathe_verify',
+      description:
+        'Run the verification lane for an asserted task: a fresh headless engine (assigned at '
+        + 'claim time) judges the completion against its recorded traces, the verdict lands as '
+        + 'durable evidence, and the deterministic acceptance lane settles (accepted) or '
+        + 'reopens (rejected) under a NON-AUTHOR seat. Args: {task_id, engine?}.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string' },
+          engine: { type: 'string', description: 'override the assigned engine (claude|codex)' },
+        },
+        required: ['task_id'],
+      },
+    },
+    {
       name: 'oathe_pickup',
       description:
         'Pick up prior work on a claim: runs the successor sequence (read prior attempt → '
@@ -120,7 +136,7 @@ export function makeToolDefs() {
  *          workspace: string, executionActor?: string,
  *          successor?: (o: {task_id: string, work_claim_id: string}) => Promise<object>}} o
  */
-export function createOatheTools({ client, identity, workspace, executionActor, successor, config }) {
+export function createOatheTools({ client, identity, workspace, executionActor, successor, config, verifier }) {
   const { orgId, principalId, department } = identity;
   const leaseHours = config?.get('leaseHours') ?? 4;
   const verifyByHours = config?.get('verifyByHours') ?? 24;
@@ -145,7 +161,7 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
     async oathe_claim({ task_id, objective }) {
       const contractRef = `workspace:${workspace};contract:${orgId}/${task_id}@v1`;
       const { rows: existing } = await client.query(
-        'SELECT 1 FROM cell.task WHERE org_id = $1 AND task_id = $2', [orgId, task_id]);
+        'SELECT origin FROM cell.task WHERE org_id = $1 AND task_id = $2', [orgId, task_id]);
       if (existing.length === 0) {
         if (!objective) {
           throw new OatheToolError('OATHE_OBJECTIVE_REQUIRED',
@@ -161,10 +177,23 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
           [orgId, task_id, department, objective, verifyByHours]);
       }
       const workClaimId = crypto.randomUUID();
-      await client.query(
-        `SELECT cell.claim_work($1, $2, $3, NULL, $4, $5, 'exclusive',
-                now() + make_interval(hours => $6), $7, now(), $8)`,
-        [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
+      if (existing[0]?.origin === 'reopened') {
+        // R8's second half: reopened work is RESUMED, not re-claimed — the evaluator lane's
+        // verb seats the prior interval's principal (the one who answers for this work next).
+        const { rows: reclaimed } = await client.query(
+          'SELECT cell.reclaim_reopened_task($1, $2, $3, now(), $4) AS seated',
+          [orgId, task_id, workClaimId, crypto.randomUUID()]);
+        if (reclaimed[0].seated !== true) {
+          throw new OatheToolError('OATHE_RECLAIM_REFUSED',
+            `'${task_id}' is reopened but could not be resumed (a live owner already holds it)`,
+            { task_id });
+        }
+      } else {
+        await client.query(
+          `SELECT cell.claim_work($1, $2, $3, NULL, $4, $5, 'exclusive',
+                  now() + make_interval(hours => $6), $7, now(), $8)`,
+          [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
+      }
       // Verifier assignment happens AT CLAIM (founder direction 2026-08-25): the engine that
       // will judge this work is named before the work starts, from config, on the record.
       const verifier = config?.get('verifier') ?? 'claude';
@@ -198,9 +227,10 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       // ONE row per task: the latest claim in view wins (a task reclaimed after a yield is one
       // task, not a history lesson — statements carry the history).
       const { rows } = await client.query(
-        `SELECT task_id, objective, state, principal_id, contract_ref, lease_until FROM (
+        `SELECT task_id, objective, state, principal_id, contract_ref, settled_at, lease_until FROM (
            SELECT DISTINCT ON (t.task_id)
                   t.task_id, t.objective, t.created_at, w.state, w.principal_id, w.contract_ref,
+                  w.settled_at,
                   to_char(w.ownership_valid_until, 'YYYY-MM-DD HH24:MI') AS lease_until
              FROM cell.task t LEFT JOIN cell.work_claim w USING (org_id, task_id)
             WHERE t.org_id = $1 ${filter}
@@ -211,6 +241,7 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       // asserted-awaiting-verdict / open. Asserted is NOT open — it awaits verification.
       const sections = { mine: [], open: [], asserted: [], held: [] };
       for (const row of rows) {
+        if (row.settled_at) continue; // settled: the obligation is CLOSED — off the board
         if (row.state === 'active') sections[row.principal_id === principalId ? 'mine' : 'held'].push(row);
         else if (row.state === 'completion_asserted') sections.asserted.push(row);
         else sections.open.push(row);
@@ -310,6 +341,15 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       };
     },
 
+    async oathe_verify({ task_id, engine }) {
+      if (!verifier) {
+        throw new OatheToolError('OATHE_VERIFY_UNAVAILABLE',
+          'the verification lane is not wired into this server — run `oathe verify` from a '
+          + 'terminal instead; verification cannot pretend', { task_id });
+      }
+      return verifier({ taskId: task_id, engine });
+    },
+
     async oathe_pickup({ task_id }) {
       const { rows } = await client.query(
         `SELECT work_claim_id, state FROM cell.work_claim
@@ -404,11 +444,23 @@ export async function main(env = process.env) {
   // The successor is built LAZILY on the first pickup: a session that never picks up never pays
   // for the runtime wiring, and a wiring failure surfaces as that call's typed error.
   let successorPromise = null;
+  let verifierInstance = null;
   const tools = createOatheTools({
     client: substrate,
     identity,
     config,
     workspace: workspaceRef(env.OATHE_WORKSPACE_DIR || process.cwd()),
+    verifier: async (o) => {
+      if (!verifierInstance) {
+        const { Verifier } = await import('../verifier.mjs');
+        verifierInstance = new Verifier({
+          substrate, paths, config,
+          workspace: workspaceRef(env.OATHE_WORKSPACE_DIR || process.cwd()),
+          operatorPrincipal: identity.principalId,
+        });
+      }
+      return verifierInstance.verify(o);
+    },
     successor: async (o) => {
       if (!successorPromise) {
         successorPromise = import('../successor.mjs')

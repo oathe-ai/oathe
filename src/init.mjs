@@ -4,6 +4,7 @@
 
 import { buildContext } from './context.mjs';
 import { census } from './harness.mjs';
+import { standardPlan } from './plans.mjs';
 
 export class OatheInitError extends Error {
   constructor(code, message, details = {}) {
@@ -38,6 +39,26 @@ export async function runInit({ env = process.env, exec } = {}) {
     });
     await substrate.registerYieldCause();
 
+    // The verification lane: a non-author verifier principal (FC010) and the acceptance-seat
+    // roster, registered through the substrate's own governed verb. Seat order matters — the
+    // producer picks the first NON-AUTHOR seat, so the verifier leads and the operator backs
+    // it up (for settling the verification tasks the verifier itself authors).
+    const verifierPrincipal = ctx.config.get('verifierPrincipal');
+    await substrate.seedVerifier({
+      orgId: identity.orgId,
+      verifierPrincipal,
+      operatorPrincipal: identity.principalId,
+      department: 'verification',
+    });
+    const seats = [verifierPrincipal, identity.principalId];
+    await substrate.registerAcceptanceAuthority({
+      orgId: identity.orgId,
+      seats,
+      clauseSpecs: standardPlan().clause_spec,
+      checkerRefs: { 'checker://acceptance_package': 'verification-clause' },
+      registeredBy: 'oathe-init',
+    });
+
     const actions = [];
     for (const harness of harnesses) {
       const detection = seen.find((s) => s.name === harness.name);
@@ -55,6 +76,7 @@ export async function runInit({ env = process.env, exec } = {}) {
       census: seen,
       substrate: await substrate.status(),
       principal: { org_id: identity.orgId, principal_id: identity.principalId, role: 'ceo' },
+      verifier: { principal_id: verifierPrincipal, seats },
       actions,
     };
   } finally {

@@ -34,6 +34,8 @@ test('init end-to-end: substrate up, both harnesses onboarded, manifest written,
   assert.equal(result.substrate.ddl_applied, 26);
   assert.equal(result.substrate.yield_cause_registered, true);
   assert.equal(result.principal.principal_id, 'firia');
+  assert.equal(result.verifier.principal_id, 'oathe-verifier');
+  assert.deepEqual(result.verifier.seats, ['oathe-verifier', 'firia']);
 
   const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude/settings.json'), 'utf8'));
   assert.equal(settings.enabledPlugins['oathe@oathe'], true);

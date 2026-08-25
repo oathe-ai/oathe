@@ -98,6 +98,40 @@ test('status on a database that exists but has no DDL yet reports zero without e
   }
 });
 
+test('seedVerifier creates the non-author verifier principal, idempotently', async () => {
+  const first = await substrate.seedVerifier({
+    orgId: 'oathe', verifierPrincipal: 'oathe-verifier', operatorPrincipal: 'firia', department: 'verification',
+  });
+  assert.equal(first.inserted, true);
+  const second = await substrate.seedVerifier({
+    orgId: 'oathe', verifierPrincipal: 'oathe-verifier', operatorPrincipal: 'firia', department: 'verification',
+  });
+  assert.equal(second.inserted, false);
+  const { rows } = await substrate.query(
+    "SELECT role, assigner_principal_id FROM cell.principal WHERE principal_id = 'oathe-verifier'");
+  assert.equal(rows[0].role, 'lead');
+  assert.equal(rows[0].assigner_principal_id, 'firia');
+});
+
+test('registerAcceptanceAuthority registers the seat roster through the governed verb', async () => {
+  await substrate.registerAcceptanceAuthority({
+    orgId: 'oathe',
+    seats: ['oathe-verifier', 'firia'],
+    clauseSpecs: { acceptance_package: { conditions: [{ kind: 'evidence_present', min: 1 }] } },
+    checkerRefs: { 'checker://acceptance_package': 'verification-clause' },
+    registeredBy: 'oathe-init',
+  });
+  const { rows } = await substrate.query(
+    "SELECT seats, registered_by FROM cell.acceptance_authority WHERE org_id = 'oathe'");
+  assert.deepEqual(rows[0].seats, ['oathe-verifier', 'firia']);
+  assert.equal(rows[0].registered_by, 'oathe-init');
+  // re-register upserts (the verb's contract), no error
+  await substrate.registerAcceptanceAuthority({
+    orgId: 'oathe', seats: ['oathe-verifier', 'firia'],
+    clauseSpecs: {}, checkerRefs: {}, registeredBy: 'oathe-init',
+  });
+});
+
 test('status reports the substrate a doctor can print', async () => {
   const seen = await substrate.status();
   assert.equal(seen.reachable, true);

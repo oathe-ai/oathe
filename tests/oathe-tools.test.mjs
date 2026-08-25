@@ -17,7 +17,7 @@ test('initialize advertises the legacy protocol version and tool capability', as
 test('tools/list names the five oathe tools with schemas', async () => {
   const out = await dispatch({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { tools: {} });
   assert.deepEqual(out.result.tools.map((t) => t.name),
-    ['oathe_claim', 'oathe_board', 'oathe_statement', 'oathe_yield', 'oathe_done', 'oathe_pickup']);
+    ['oathe_claim', 'oathe_board', 'oathe_statement', 'oathe_yield', 'oathe_done', 'oathe_verify', 'oathe_pickup']);
   assert.ok(out.result.tools.every((t) => t.inputSchema?.type === 'object'));
 });
 

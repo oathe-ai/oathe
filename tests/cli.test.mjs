@@ -34,7 +34,7 @@ test('oathe with no verb prints usage and the verb list', () => {
   const out = oathe([]);
   assert.equal(out.status, 2);
   assert.match(out.stderr, /usage/i);
-  for (const verb of ['init', 'claude', 'claim', 'ls', 'note', 'yield', 'doctor', 'uninstall', 'status']) {
+  for (const verb of ['init', 'claude', 'codex', 'claim', 'ls', 'note', 'done', 'verify', 'yield', 'config', 'doctor', 'uninstall', 'status']) {
     assert.match(out.stderr, new RegExp(`\\b${verb}\\b`));
   }
 });

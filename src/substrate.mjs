@@ -198,6 +198,32 @@ export class Substrate {
   }
 
   /**
+   * The non-author verifier principal (FC010: a verdict's signer may be neither the claim
+   * principal nor the execution actor — the operator cannot verify their own work). Role
+   * 'lead', assigned by the operator: the substrate's principal roles are ceo|lead, and a
+   * verifier seat is a delegate of the human root, never a second root.
+   * @returns {Promise<{inserted: boolean}>}
+   */
+  async seedVerifier({ orgId, verifierPrincipal, operatorPrincipal, department }) {
+    const { rowCount } = await this.query(
+      `INSERT INTO cell.principal (org_id, principal_id, role, assigner_principal_id, department)
+       VALUES ($1, $2, 'lead', $3, $4) ON CONFLICT DO NOTHING`,
+      [orgId, verifierPrincipal, operatorPrincipal, department]);
+    return { inserted: rowCount === 1 };
+  }
+
+  /**
+   * The acceptance-seat roster, written ONLY through the substrate's governed verb (FC170
+   * refuses any other writer). Upserts by org — re-running init re-registers the same truth.
+   */
+  async registerAcceptanceAuthority({ orgId, seats, clauseSpecs, checkerRefs, registeredBy }) {
+    await this.query(
+      'SELECT cell.register_acceptance_authority($1, $2::jsonb, $3::jsonb, $4::jsonb, $5, now())',
+      [orgId, JSON.stringify(seats), JSON.stringify(clauseSpecs), JSON.stringify(checkerRefs), registeredBy]);
+    return { registered: true };
+  }
+
+  /**
    * The operator yield cause: a real plpgsql function (record_claim_yield resolves its caller off
    * the call stack via cell.written_by) plus its declared basis prefix. The play script's exact
    * pattern, productized under oathe's name.

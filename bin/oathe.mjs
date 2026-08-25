@@ -5,7 +5,7 @@
 
 import { parseArgs } from 'node:util';
 
-const VERBS = ['init', 'claude', 'codex', 'claim', 'ls', 'note', 'done', 'yield', 'config', 'doctor', 'uninstall', 'status', 'hook', 'mcp'];
+const VERBS = ['init', 'claude', 'codex', 'claim', 'ls', 'note', 'done', 'verify', 'yield', 'config', 'doctor', 'uninstall', 'status', 'hook', 'mcp'];
 
 const USAGE = `usage: oathe <verb> [args]
 
@@ -17,6 +17,7 @@ verbs:
   ls [--all]                   this workspace's board (--all: every workspace)
   note <task-id> <text> [ref]  record a progress statement against your active claim
   done <task-id> <what> [ref]  assert completion (a completion statement + the substrate's terminal)
+  verify [task] [--all] [--engine claude|codex]  run the verification lane (non-author seat settles)
   yield <task-id> <note>       yield: the task goes back on the board, unowned
   doctor                       verify every managed surface against the install manifest
   status                       the substrate half of doctor
@@ -148,6 +149,38 @@ const handlers = {
       process.stdout.write(`done: ${out.task_id} — ${out.note}\n`);
       summary('done', 'ok');
     } finally {
+      await ctx.substrate.close();
+    }
+  },
+
+  async verify(argv) {
+    const { values, positionals } = parseArgs({
+      args: argv,
+      options: { all: { type: 'boolean', default: false }, engine: { type: 'string' } },
+      allowPositionals: true,
+    });
+    const [{ buildContext }, { Verifier }, { workspaceRef }] = await Promise.all([
+      import('../src/context.mjs'), import('../src/verifier.mjs'), import('../src/workspace.mjs'),
+    ]);
+    const ctx = buildContext({});
+    const verifier = new Verifier({
+      substrate: ctx.substrate, paths: ctx.paths, config: ctx.config,
+      workspace: workspaceRef(process.cwd()),
+      operatorPrincipal: ctx.identity.principalId,
+    });
+    try {
+      const targets = values.all === true ? await verifier.pending() : [positionals[0]];
+      if (!targets[0]) throw new Error('usage: oathe verify <task-id> | --all');
+      let attention = false;
+      for (const target of targets) {
+        const out = await verifier.verify({ taskId: target, engine: values.engine });
+        const mark = out.verdict === 'accepted' ? '✓ settled' : '✗ rejected — task reopened';
+        process.stdout.write(`${out.task_id}: ${mark} (${out.engine}) — ${out.reason}\n`);
+        if (out.verdict !== 'accepted') attention = true;
+      }
+      summary('verify', attention ? 'attention' : 'ok');
+    } finally {
+      await verifier.close();
       await ctx.substrate.close();
     }
   },
