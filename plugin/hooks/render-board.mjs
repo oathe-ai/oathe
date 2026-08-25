@@ -1,29 +1,34 @@
-// SessionStart — the folder's open work, delivered twice over: the full board as additional
-// context for the MODEL, and one visible line for the USER as the session loads. A workspace
-// with nothing open still confirms, party popper and all, that oathe is keeping track —
-// silence would be indistinguishable from oathe not running.
+// SessionStart — the folder's open contracts, delivered twice over: the full list as
+// additional context for the MODEL, and one visible line for the USER as the session loads.
+//
+// Three states, three voices: RECOVERY (contracts of yours survived across sessions — the
+// moment oathe visibly earned its keep, so the celebration and the star ask ride here, and
+// ONLY here); open-but-not-yours (a plain summary); and a clean folder (the party popper
+// confirmation — silence would be indistinguishable from oathe not running).
 
 import { failSoft, emitSessionStart } from './lib.mjs';
 import { createOatheTools } from '../../src/mcp/oathe-tools.mjs';
 
+const STAR_ASK = '⭐ Support open-source infra: https://github.com/oathe-ai/oathe';
+
 await failSoft(async ({ substrate, workspace, identity }) => {
   const tools = createOatheTools({ client: substrate, identity, workspace });
-  const { board } = await tools.oathe_board({});
-  const mine = board.filter((r) => r.state === 'active' && r.principal_id === identity.principalId);
-  const offered = board.filter((r) => r.state !== 'active');
-  const theirs = board.filter((r) => r.state === 'active' && r.principal_id !== identity.principalId);
+  const { contracts } = await tools.oathe_contracts({});
+  const mine = contracts.filter((r) => r.state === 'active' && r.principal_id === identity.principalId);
+  const offered = contracts.filter((r) => r.state !== 'active');
+  const theirs = contracts.filter((r) => r.state === 'active' && r.principal_id !== identity.principalId);
 
-  const lines = [`## Oathe board (${workspace})`, ''];
+  const lines = [`## Oathe contracts (${workspace})`, ''];
   if (mine.length === 0 && offered.length === 0 && theirs.length === 0) {
-    lines.push('_No open work in this workspace. Claim before you build: `oathe_claim`._');
+    lines.push('_No open contracts in this workspace. Take one before you build: `oathe_claim`._');
   }
   if (mine.length > 0) {
-    lines.push('**Yours (lease running — say `continue <task>` to pick one up):**');
+    lines.push('**Your contracts (lease running — say `continue <task>` to pick one up):**');
     for (const r of mine) lines.push(`- [${r.task_id}] ${r.objective} — lease until ${r.lease_until}`);
     lines.push('');
   }
   if (offered.length > 0) {
-    lines.push('**Offered (claimable):**');
+    lines.push('**Open for signing:**');
     for (const r of offered) lines.push(`- [${r.task_id}] ${r.objective}${r.state ? ` (${r.state})` : ''}`);
     lines.push('');
   }
@@ -32,9 +37,14 @@ await failSoft(async ({ substrate, workspace, identity }) => {
     for (const r of theirs) lines.push(`- [${r.task_id}] ${r.objective} (${r.principal_id})`);
   }
 
-  const open = mine.length + offered.length + theirs.length;
-  const message = open === 0
-    ? '\u{1F389} Oathe is keeping track — no open work in this workspace.'
-    : `Oathe board: ${mine.length} yours · ${offered.length} offered · ${theirs.length} held elsewhere`;
+  let message;
+  if (mine.length > 0) {
+    const n = mine.length === 1 ? '1 contract' : `${mine.length} contracts`;
+    message = `🎉 Oathe just saved your session state — ${n} still yours! ${STAR_ASK}`;
+  } else if (offered.length + theirs.length > 0) {
+    message = `Oathe contracts: ${offered.length} open for signing · ${theirs.length} held elsewhere`;
+  } else {
+    message = '🎉 No open contracts in this folder — Oathe is keeping track.';
+  }
   emitSessionStart({ context: lines.join('\n'), message });
-}, { quietNote: 'Oathe board unavailable — substrate not initialized; run `oathe init`' });
+}, { quietNote: 'Oathe contracts unavailable — substrate not initialized; run `oathe init`' });

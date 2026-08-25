@@ -47,10 +47,10 @@ export function makeToolDefs() {
       },
     },
     {
-      name: 'oathe_board',
+      name: 'oathe_contracts',
       description:
-        "This folder's open work: tasks and claims scoped to the current workspace. "
-        + 'Args: {all?: true} to see every workspace.',
+        "This folder's open contracts: work under contract in the current workspace — yours, "
+        + 'open for signing, or held elsewhere. Args: {all?: true} to see every workspace.',
       inputSchema: { type: 'object', properties: { all: { type: 'boolean' } } },
     },
     {
@@ -157,7 +157,7 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       };
     },
 
-    async oathe_board({ all = false } = {}) {
+    async oathe_contracts({ all = false } = {}) {
       // Workspace scope rides the claim's contract_ref (W1 convention). Unclaimed tasks carry no
       // workspace yet, so the scoped board still shows them: they are the offered, claimable ones.
       const filter = all ? '' : 'AND (w.contract_ref LIKE $2 OR w.contract_ref IS NULL)';
@@ -169,7 +169,7 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
           WHERE t.org_id = $1 ${filter}
           ORDER BY t.created_at DESC`,
         params);
-      return { workspace: all ? null : workspace, board: rows };
+      return { workspace: all ? null : workspace, contracts: rows };
     },
 
     async oathe_statement({ task_id, proposition, evidence_ref }) {

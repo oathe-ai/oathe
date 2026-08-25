@@ -119,12 +119,14 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
     const payload = JSON.parse(out.stdout);
     const context = payload.hookSpecificOutput.additionalContext;
     assert.equal(payload.hookSpecificOutput.hookEventName, 'SessionStart');
-    assert.match(context, /## Oathe board/);
+    assert.match(context, /## Oathe contracts/);
     assert.match(context, /render-me/);
-    assert.match(context, /yours/i);
-    // The visible confirmation: the user sees the oathe state at session load.
-    assert.match(payload.systemMessage, /Oathe/);
-    assert.match(payload.systemMessage, /1 yours/);
+    assert.match(context, /Your contracts/i);
+    // RECOVERY: state carried across sessions earns the celebration + the star ask.
+    assert.match(payload.systemMessage, /\u{1F389}/u);
+    assert.match(payload.systemMessage, /saved your session state/i);
+    assert.match(payload.systemMessage, /1 contract/);
+    assert.match(payload.systemMessage, /github\.com\/oathe-ai\/oathe/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -147,8 +149,31 @@ test('render-board on a workspace with NOTHING open confirms visibly that oathe 
     const payload = JSON.parse(out.stdout);
     assert.match(payload.systemMessage, /\u{1F389}/u); // the party popper
     assert.match(payload.systemMessage, /keeping track/i);
-    assert.match(payload.hookSpecificOutput.additionalContext, /no open work/i);
+    assert.doesNotMatch(payload.systemMessage, /github\.com/, 'the star ask rides RECOVERY only');
+    assert.match(payload.hookSpecificOutput.additionalContext, /no open contracts/i);
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('open contracts that are NOT yours summarize without celebration or the star ask', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-offered-'));
+  try {
+    // An unclaimed task carries no workspace yet, so every folder's list offers it.
+    await substrate.query(`
+      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                             verify_by, claim_mode, created_at)
+      VALUES ('oathe', 'unsigned-task', 'founder', 'anyone may sign', 'minted_at_claim',
+              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
+      { OATHE_PRINCIPAL: 'firia' });
+    assert.equal(out.status, 0, out.stderr);
+    const payload = JSON.parse(out.stdout);
+    assert.match(payload.systemMessage, /open for signing/i);
+    assert.doesNotMatch(payload.systemMessage, /\u{1F389}/u);
+    assert.doesNotMatch(payload.systemMessage, /github\.com/);
+  } finally {
+    await substrate.query("DELETE FROM cell.task WHERE task_id = 'unsigned-task'");
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

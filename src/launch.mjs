@@ -30,9 +30,10 @@ function fenceBody(workspace) {
   return [
     '## Oathe',
     '',
-    `This folder has an Oathe board (workspace \`${workspace}\`). Claims are speech acts: claim`,
-    'before you build, record progress as statements, yield what you cannot finish — via the',
-    '`oathe_*` MCP tools. The board renders at SessionStart; `continue <task>` picks work up.',
+    `This folder's work runs on Oathe contracts (workspace \`${workspace}\`). Claims are speech`,
+    'acts: take a contract before you build, record progress as statements, yield what you',
+    'cannot finish — via the `oathe_*` MCP tools. Open contracts render at SessionStart;',
+    '`continue <task>` picks one back up.',
   ].join('\n');
 }
 

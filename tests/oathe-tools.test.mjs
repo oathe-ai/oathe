@@ -17,7 +17,7 @@ test('initialize advertises the legacy protocol version and tool capability', as
 test('tools/list names the five oathe tools with schemas', async () => {
   const out = await dispatch({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { tools: {} });
   assert.deepEqual(out.result.tools.map((t) => t.name),
-    ['oathe_claim', 'oathe_board', 'oathe_statement', 'oathe_yield', 'oathe_pickup']);
+    ['oathe_claim', 'oathe_contracts', 'oathe_statement', 'oathe_yield', 'oathe_pickup']);
   assert.ok(out.result.tools.every((t) => t.inputSchema?.type === 'object'));
 });
 
@@ -91,7 +91,7 @@ test('a second claim on the same task is REFUSED by the substrate and surfaces t
     (e) => /second|active|exclusive|refus|already/i.test(String(e.message)));
 });
 
-test('oathe_board renders only this workspace unless all is asked', async () => {
+test('oathe_contracts renders only this workspace unless all is asked', async () => {
   const client = substrate;
   await client.query(`
     INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
@@ -102,11 +102,11 @@ test('oathe_board renders only this workspace unless all is asked', async () => 
     `SELECT cell.claim_work('oathe', 'elsewhere', gen_random_uuid(), NULL, 'firia', 'founder',
             'exclusive', now() + interval '4 hours', 'workspace:ws-000000000000;contract:oathe/elsewhere@v1',
             now(), gen_random_uuid())`);
-  const mine = await tools.oathe_board({});
-  assert.ok(mine.board.some((r) => r.task_id === 'task-x'));
-  assert.ok(!mine.board.some((r) => r.task_id === 'elsewhere'));
-  const all = await tools.oathe_board({ all: true });
-  assert.ok(all.board.some((r) => r.task_id === 'elsewhere'));
+  const mine = await tools.oathe_contracts({});
+  assert.ok(mine.contracts.some((r) => r.task_id === 'task-x'));
+  assert.ok(!mine.contracts.some((r) => r.task_id === 'elsewhere'));
+  const all = await tools.oathe_contracts({ all: true });
+  assert.ok(all.contracts.some((r) => r.task_id === 'elsewhere'));
 });
 
 test('oathe_statement records a statement (a statement, not truth) against the active claim', async () => {
