@@ -49,3 +49,44 @@ test('exit code and signal reach the caller through child, the contract surface'
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('enumerate() sees the live child and its DESCENDANTS, then answers empty after exit', async () => {
+  const dir = tmp();
+  try {
+    // parent spawns a grandchild sleeper, then both linger briefly
+    const cage = spawnCaged({
+      unit: 'test-enum', env: { PATH: process.env.PATH },
+      cmd: SH, args: ['-c', 'sleep 0.6 & sleep 0.4'], cwd: dir, stdio: 'ignore',
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    const alive = cage.enumerate();
+    assert.ok(alive.length >= 2, `expected parent+grandchild in the group, saw [${alive}]`);
+    await exited(cage);
+    const done = await cage.teardownProvenEmpty();
+    assert.equal(done.empty, true);
+    assert.equal(cage.enumerate().length, 0, 'after proven-empty teardown nothing lives');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a SIGSTOPped child still counts as LIVE — held is not gone', async () => {
+  const dir = tmp();
+  try {
+    const cage = spawnCaged({
+      unit: 'test-stop', env: { PATH: process.env.PATH },
+      cmd: SH, args: ['-c', 'sleep 5'], cwd: dir, stdio: 'ignore',
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    process.kill(cage.child.pid, 'SIGSTOP');
+    try {
+      assert.ok(cage.enumerate().length > 0, 'stopped processes are enumerated as live');
+    } finally {
+      process.kill(cage.child.pid, 'SIGCONT');
+    }
+    const out = await cage.teardownProvenEmpty();
+    assert.equal(out.empty, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
