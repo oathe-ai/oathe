@@ -30,11 +30,11 @@ import { spawnSync } from 'node:child_process';
 import { createOatheTools } from './mcp/oathe-tools.mjs';
 import { projectorFor, renderEvidenceView } from './atif.mjs';
 import { standardPlan, verificationTaskId, isVerificationTask, ACCEPTANCE_CLAUSE_KEY } from './plans.mjs';
+import { applyRecordedVerdict, RECORDED_VERDICT_CHECKER } from './runtime/discharge.mjs';
 
 const require = createRequire(import.meta.url);
 
 const VERDICTS = ['accepted', 'rejected'];
-const CUSTOM_CHECKER = 'oathe-verdict';
 
 export class VerifierError extends Error {
   constructor(code, message, details = {}) {
@@ -88,22 +88,8 @@ export class Verifier {
       // The composed deterministic checker: the standard conditions must discharge AND the
       // RECORDED engine verdict (data on the clause, provenance in the verification task's
       // completion statement) decides accept/reject. No model runs here.
-      const oatheVerdict = (statement, clause) => {
-        const conditions = base(statement, clause);
-        if (conditions.verdict !== 'accepted') return conditions;
-        const recorded = clause.oathe_recorded_verdict;
-        if (recorded === 'accepted') return conditions;
-        if (recorded === 'rejected') {
-          return {
-            verdict: 'rejected',
-            reason: 'the assigned verifier engine rejected the completion against its traces',
-            checks: conditions.checks,
-            evidence: conditions.evidence,
-          };
-        }
-        return { verdict: 'blocked', reason: `recorded verdict '${recorded}' is not a verdict` };
-      };
-      const registry = checkers.runtimeRegistry({ specs, extra: { [CUSTOM_CHECKER]: oatheVerdict } });
+      const oatheVerdict = (statement, clause) => applyRecordedVerdict(base(statement, clause), clause);
+      const registry = checkers.runtimeRegistry({ specs, extra: { [RECORDED_VERDICT_CHECKER]: oatheVerdict } });
       this.runtime = {
         SETTLE: lane.SETTLE,
         laneFor: (seatPrincipal) => composition.buildProductionAcceptanceLane({
@@ -250,7 +236,7 @@ export class Verifier {
       agent_statement: statementFor(completion),
       task_id: originalTask,
       clause: clauseFor(originalTask, taskRows[0].verification_plan, completion,
-        { checker: CUSTOM_CHECKER, oathe_recorded_verdict: raw.verdict }),
+        { checker: RECORDED_VERDICT_CHECKER, oathe_recorded_verdict: raw.verdict }),
     }, { settle: SETTLE.CLAIM });
 
     if (outcome.verification?.verdict === 'blocked' || (!outcome.settled && raw.verdict === 'accepted')) {
