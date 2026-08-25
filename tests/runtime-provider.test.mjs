@@ -44,3 +44,22 @@ test('the firia provider serves the real spawnCaged through cage()', async () =>
   const { spawnCaged } = await new FiriaRuntimeProvider({ paths: HERE }).cage();
   assert.equal(typeof spawnCaged, 'function');
 });
+
+test('both providers serve the same acceptanceRuntime surface: SETTLE.CLAIM and laneFor', async () => {
+  const { Substrate } = await import('../src/substrate.mjs');
+  const substrate = new Substrate({ database: 'postgres', paths: HERE, env: process.env });
+  const { createRequire } = await import('node:module');
+  const pg = createRequire(import.meta.url)('pg');
+  const pool = new pg.Pool(substrate.connectionConfig());
+  try {
+    for (const provider of [new FiriaRuntimeProvider({ paths: HERE }), new StandaloneRuntimeProvider()]) {
+      const runtime = await provider.acceptanceRuntime({ pool, orgId: 'oathe' });
+      assert.ok(runtime.SETTLE.CLAIM, `${provider.name}: SETTLE.CLAIM exists`);
+      const lane = runtime.laneFor('oathe-verifier');
+      assert.equal(typeof lane.verify, 'function', `${provider.name}: laneFor returns a lane`);
+    }
+  } finally {
+    await pool.end();
+    await substrate.close();
+  }
+});

@@ -29,8 +29,8 @@ import { spawnSync } from 'node:child_process';
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
 import { projectorFor, renderEvidenceView } from './atif.mjs';
-import { standardPlan, verificationTaskId, isVerificationTask, ACCEPTANCE_CLAUSE_KEY } from './plans.mjs';
-import { applyRecordedVerdict, RECORDED_VERDICT_CHECKER } from './runtime/discharge.mjs';
+import { verificationTaskId, isVerificationTask, ACCEPTANCE_CLAUSE_KEY } from './plans.mjs';
+import { RECORDED_VERDICT_CHECKER } from './runtime/discharge.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -51,7 +51,7 @@ export class Verifier {
    *          config: import('./config.mjs').OatheConfig, operatorPrincipal: string,
    *          engineRunner?: ({engine, prompt}) => Promise<{verdict: string, reason: string}>}} o
    */
-  constructor({ substrate, paths, workspace, config, operatorPrincipal, engineRunner }) {
+  constructor({ substrate, paths, workspace, config, operatorPrincipal, engineRunner, provider = null }) {
     this.substrate = substrate;
     this.paths = paths;
     this.workspace = workspace;
@@ -60,6 +60,7 @@ export class Verifier {
     this.verifierPrincipal = config.get('verifierPrincipal');
     this.engineRunner = engineRunner ?? defaultEngineRunner;
     this.orgId = config.get('org');
+    this.provider = provider;
     this.tools = createOatheTools({
       client: substrate,
       identity: {
@@ -75,28 +76,13 @@ export class Verifier {
   }
 
   async #runtime() {
-    if (!this.runtime) {
-      const [composition, checkers, lane] = await Promise.all([
-        import('firia-runtime/composition-root'),
-        import('firia-runtime/checkers'),
-        import('firia-runtime/acceptance-lane'),
-      ]);
-      const pg = require('pg');
-      this.pool = new pg.Pool(this.substrate.connectionConfig());
-      const specs = standardPlan().clause_spec;
-      const base = checkers.clauseChecker({ specs });
-      // The composed deterministic checker: the standard conditions must discharge AND the
-      // RECORDED engine verdict (data on the clause, provenance in the verification task's
-      // completion statement) decides accept/reject. No model runs here.
-      const oatheVerdict = (statement, clause) => applyRecordedVerdict(base(statement, clause), clause);
-      const registry = checkers.runtimeRegistry({ specs, extra: { [RECORDED_VERDICT_CHECKER]: oatheVerdict } });
-      this.runtime = {
-        SETTLE: lane.SETTLE,
-        laneFor: (seatPrincipal) => composition.buildProductionAcceptanceLane({
-          pool: this.pool, seatPrincipal, registry,
-        }),
-      };
-    }
+    if (this.runtime) return this.runtime;
+    const provider = this.provider
+      ?? (await import('./runtime/provider.mjs')).resolveRuntimeProvider({
+        config: this.config, paths: this.paths });
+    const pg = require('pg');
+    this.pool = new pg.Pool(this.substrate.connectionConfig());
+    this.runtime = await provider.acceptanceRuntime({ pool: this.pool, orgId: this.orgId });
     return this.runtime;
   }
 

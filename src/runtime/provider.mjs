@@ -8,6 +8,9 @@
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+import { standardPlan } from '../plans.mjs';
+import { applyRecordedVerdict, RECORDED_VERDICT_CHECKER } from './discharge.mjs';
+
 export class RuntimeError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -33,6 +36,23 @@ export class FiriaRuntimeProvider {
     const { spawnCaged } = await import(pathToFileURL(this.paths.cagePath).href);
     return { spawnCaged };
   }
+
+  /** The estate's acceptance lane, composed here behind the seam — verbatim from the verifier. */
+  async acceptanceRuntime({ pool }) {
+    const [composition, checkers, lane] = await Promise.all([
+      import('firia-runtime/composition-root'),
+      import('firia-runtime/checkers'),
+      import('firia-runtime/acceptance-lane'),
+    ]);
+    const specs = standardPlan().clause_spec;
+    const base = checkers.clauseChecker({ specs });
+    const oatheVerdict = (statement, clause) => applyRecordedVerdict(base(statement, clause), clause);
+    const registry = checkers.runtimeRegistry({ specs, extra: { [RECORDED_VERDICT_CHECKER]: oatheVerdict } });
+    return {
+      SETTLE: lane.SETTLE,
+      laneFor: (seatPrincipal) => composition.buildProductionAcceptanceLane({ pool, seatPrincipal, registry }),
+    };
+  }
 }
 
 export class StandaloneRuntimeProvider {
@@ -45,6 +65,18 @@ export class StandaloneRuntimeProvider {
   async cage() {
     const { spawnCaged } = await import('./simple-cage.mjs');
     return { spawnCaged };
+  }
+
+  /** The standalone package's own settlement path — the SQL-equivalent lane, lazily imported
+   *  to keep this module from cycling with sql-acceptance-lane.mjs (which imports RuntimeError
+   *  from here). */
+  async acceptanceRuntime({ pool, orgId }) {
+    const { SqlAcceptanceLane, SETTLE } = await import('./sql-acceptance-lane.mjs');
+    const specs = standardPlan().clause_spec;
+    return {
+      SETTLE,
+      laneFor: (seatPrincipal) => new SqlAcceptanceLane({ pool, orgId, seatPrincipal, specs }),
+    };
   }
 }
 
