@@ -9,6 +9,11 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
+/** Which harness a trace path belongs to — the codex store dir is the discriminator. */
+export function harnessForTracePath(file) {
+  return String(file).includes(`${path.sep}.codex${path.sep}`) ? 'codex' : 'claude';
+}
+
 export class TraceContractError extends Error {
   constructor(code, message, details = {}) {
     super(message);

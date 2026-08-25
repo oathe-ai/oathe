@@ -28,7 +28,7 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
-import { ClaudeTraceStore, CodexTraceStore } from './traces.mjs';
+import { ClaudeTraceStore, CodexTraceStore, harnessForTracePath } from './traces.mjs';
 import { standardPlan, verificationTaskId, isVerificationTask, ACCEPTANCE_CLAUSE_KEY } from './plans.mjs';
 
 const require = createRequire(import.meta.url);
@@ -142,7 +142,7 @@ export class Verifier {
     const excerpts = [];
     for (const row of rows) {
       for (const file of row.evidence_refs) {
-        const store = String(file).includes(`${path.sep}.codex${path.sep}`) ? codex : claude;
+        const store = harnessForTracePath(file) === 'codex' ? codex : claude;
         const seen = store.describe(file); // throws TraceContractError — the loud refusal
         excerpts.push({
           session_id: seen.session_id,

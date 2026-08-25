@@ -7,8 +7,8 @@
 import { Substrate } from '../../src/substrate.mjs';
 import { buildPaths } from '../../src/paths.mjs';
 import { workspaceRef } from '../../src/workspace.mjs';
-import path from 'node:path';
 import { OatheConfig } from '../../src/config.mjs';
+import { harnessForTracePath } from '../../src/traces.mjs';
 
 /** The hook's JSON input on stdin (Claude and Codex both deliver {cwd, hook_event_name, …}). */
 export async function readHookInput() {
@@ -26,7 +26,7 @@ export function buildHookContext(input, env = process.env) {
     ? {
       sessionId: input.session_id,
       transcriptPath: input.transcript_path ?? null,
-      harness: String(input.transcript_path ?? '').includes(`${path.sep}.codex${path.sep}`) ? 'codex' : 'claude',
+      harness: harnessForTracePath(input.transcript_path ?? ''),
     }
     : null;
   return {

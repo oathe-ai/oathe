@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ClaudeTraceStore, CodexTraceStore, TraceContractError } from '../src/traces.mjs';
+import { ClaudeTraceStore, CodexTraceStore, TraceContractError, harnessForTracePath } from '../src/traces.mjs';
 
 // ---------------------------------------------------------------- fixtures (synthetic)
 
@@ -46,6 +46,12 @@ function codexFixture() {
   fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n'));
   return { home, store, threadId, file };
 }
+
+test('harnessForTracePath keys on the codex store dir, defaulting to claude', () => {
+  assert.equal(harnessForTracePath('/Users/x/.codex/sessions/2026/08/25/rollout-a.jsonl'), 'codex');
+  assert.equal(harnessForTracePath('/Users/x/.claude/projects/p/s.jsonl'), 'claude');
+  assert.equal(harnessForTracePath('/tmp/random.jsonl'), 'claude');
+});
 
 // ---------------------------------------------------------------- Claude store
 
