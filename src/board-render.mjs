@@ -51,5 +51,37 @@ export async function renderBoard({ client, identity, workspace }) {
   } else {
     message = '🍺 No open tasks in this folder — Oathe is keeping track.';
   }
-  return { context: lines.join('\n'), message };
+  return { context: lines.join('\n'), message, sections: { mine, offered, theirs } };
+}
+
+const BOLD = '\x1b[1m';
+const DIM = '\x1b[2m';
+const RESET = '\x1b[0m';
+const OBJECTIVE_WIDTH = 48;
+
+/**
+ * The board as an ANSI terminal splash — the launcher's human-facing render. No markdown:
+ * bold ids, aligned columns, dim detail. An empty board is just the state line.
+ */
+export function renderSplash({ message, sections, workspace }) {
+  const { mine, offered, theirs } = sections;
+  const all = [...mine, ...offered, ...theirs];
+  const out = ['', `  ${message}   ${DIM}${workspace}${RESET}`, ''];
+  if (all.length === 0) return `${out.join('\n')}\n`;
+
+  const idWidth = Math.max(...all.map((r) => r.task_id.length));
+  const clip = (text) => (text.length > OBJECTIVE_WIDTH ? `${text.slice(0, OBJECTIVE_WIDTH - 1)}…` : text);
+  const row = (r, detail) => `    ${BOLD}${r.task_id.padEnd(idWidth)}${RESET}  `
+    + `${clip(r.objective).padEnd(OBJECTIVE_WIDTH)}  ${DIM}${detail}${RESET}`;
+
+  const section = (header, rows, detailFor) => {
+    if (rows.length === 0) return;
+    out.push(`  ${BOLD}${DIM}${header}${RESET}`);
+    for (const r of rows) out.push(row(r, detailFor(r)));
+    out.push('');
+  };
+  section('YOURS', mine, (r) => `lease until ${r.lease_until}`);
+  section('OPEN', offered, (r) => r.state ?? 'unclaimed');
+  section('HELD', theirs, (r) => r.principal_id);
+  return `${out.join('\n')}\n`;
 }

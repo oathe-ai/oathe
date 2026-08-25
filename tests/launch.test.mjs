@@ -103,14 +103,22 @@ test('runCodex launches Codex in the same cage with the same host — the W2 pre
   assert.ok(fs.existsSync(path.join(cwd, 'AGENTS.md')), 'pre-flight wrote the Codex surface');
 });
 
-test('the launcher prints the board into the terminal BEFORE the harness starts — TUIs bury hook output', async () => {
+test('oathe codex opens with the ANSI splash — no markdown, no pause off-TTY', async () => {
   const cwd = projectDir();
   const printed = [];
-  const capture = { write: (text) => { printed.push(text); return true; } };
+  const capture = { isTTY: false, write: (text) => { printed.push(text); return true; } };
   await runCodex({ env: sb.env, cwd, args: [], renewIntervalMs: 50, out: capture });
   const all = printed.join('');
   assert.match(all, /\u{1F37A}|\u{1F389}|\u{1F512}/u, 'the visible state line leads');
-  assert.match(all, /## Oathe board/, 'the full board follows in scrollback');
+  assert.doesNotMatch(all, /##|\*\*/, 'no markdown syntax in the splash');
+});
+
+test('oathe claude prints NOTHING before the TUI — its own banner does the talking', async () => {
+  const cwd = projectDir();
+  const printed = [];
+  const capture = { isTTY: false, write: (text) => { printed.push(text); return true; } };
+  await runClaude({ env: sb.env, cwd, args: [], renewIntervalMs: 50, out: capture });
+  assert.equal(printed.join(''), '');
 });
 
 test('runCodex refuses when Codex was never onboarded (no codex rows in the manifest)', async () => {

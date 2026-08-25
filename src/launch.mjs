@@ -125,20 +125,26 @@ function curatedEnv(env, { hermetic, extra }) {
  */
 export async function runHarness({
   harness, env = process.env, cwd = process.cwd(), args = [], hermetic = false, exec,
-  renewIntervalMs = 60_000, out = process.stdout,
+  renewIntervalMs = 60_000, out = process.stdout, stdin = process.stdin, pauseMs = 3000,
 } = {}) {
   const { workspace } = await preflight({ env, cwd, exec, harness });
   const ctx = buildContext({ env, exec });
   const { paths, substrate, identity } = ctx;
 
-  // The board, printed into terminal SCROLLBACK before the TUI starts — harness TUIs (Codex
-  // especially) bury hook output in transcript overlays, and launch-time state was the point.
-  try {
-    const { renderBoard } = await import('./board-render.mjs');
-    const seen = await renderBoard({ client: substrate, identity, workspace });
-    out.write(`${seen.message}\n\n${seen.context}\n\n`);
-  } catch (e) {
-    out.write(`Oathe board unavailable (${String(e?.message || e).slice(0, 120)})\n`);
+  // CODEX ONLY: the ANSI splash into terminal scrollback before the TUI starts, with a short
+  // readable pause. Codex buries hook output in its ctrl+T transcript overlay, unrendered;
+  // Claude Code shows the systemMessage banner inside its own TUI, so it launches clean.
+  if (harness === 'codex') {
+    let openWork = false;
+    try {
+      const { renderBoard, renderSplash } = await import('./board-render.mjs');
+      const seen = await renderBoard({ client: substrate, identity, workspace });
+      out.write(renderSplash({ message: seen.message, sections: seen.sections, workspace }));
+      openWork = Object.values(seen.sections).some((rows) => rows.length > 0);
+    } catch (e) {
+      out.write(`Oathe board unavailable (${String(e?.message || e).slice(0, 120)})\n`);
+    }
+    if (openWork) await waitForLaunch({ harness, pauseMs, stdin, out });
   }
 
   const { spawnCaged } = await import(pathToFileURL(paths.cagePath).href);
@@ -180,6 +186,29 @@ export async function runHarness({
   }
   const teardown = await cage.teardownProvenEmpty();
   return { exitCode, teardown, workspace };
+}
+
+/**
+ * The readable-moment gate: give the splash `pauseMs` on screen, let Enter cut it short.
+ * TTY-only on BOTH ends — scripts, pipes, and tests never wait. The stdin listener is removed
+ * and the stream paused before the harness inherits it.
+ */
+export function waitForLaunch({ harness, pauseMs, stdin, out }) {
+  if (stdin?.isTTY !== true || out?.isTTY !== true) return Promise.resolve();
+  out.write(`  \x1b[2mstarting ${harness} in ${Math.round(pauseMs / 1000)}s — Enter to go now\x1b[0m\n`);
+  return new Promise((resolve) => {
+    let timer = null;
+    const finish = () => {
+      stdin.removeListener('data', finish);
+      if (timer) clearTimeout(timer);
+      stdin.pause();
+      resolve();
+    };
+    timer = setTimeout(finish, pauseMs);
+    timer.unref?.();
+    stdin.on('data', finish);
+    stdin.resume?.();
+  });
 }
 
 export function runClaude(o = {}) {
