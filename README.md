@@ -18,7 +18,13 @@ not a fabricated goodbye.
     oathe claim <id> [objective]  # claim a task (minting it honestly when new)
     oathe ls [--all]              # this workspace's board (--all: every workspace)
     oathe note <id> <text> [ref]  # a progress statement — a statement, not truth
-    oathe done <id> <what> [ref]  # assert completion (terminal via the substrate; not settled)
+    oathe done <id> <what> [ref]  # assert completion; binds the policy-standard plan (G2-b)
+                                  # and mints verify:<id> on the board — a different principal verifies
+    oathe verify [task|--all]     # the verification lane: a fresh headless engine (claude|codex,
+                                  # assigned at claim) judges the completion against its recorded
+                                  # session traces; a DETERMINISTIC acceptance lane settles under
+                                  # the non-author seat (accepted → settled; rejected → reopened)
+    oathe config <key> [value]    # read/write tunables (workspace .oathe.json or --global)
     oathe yield <id> <note>       # the task goes back on the board, unowned
     oathe doctor                  # verify every managed surface against the manifest
     oathe status                  # the substrate half of doctor
@@ -42,7 +48,19 @@ task-x" runs the `oathe_pickup` MCP tool, which drives the verified successor se
 The monorepo is consumed **read-only** (a `file:` dependency plus one sanctioned path import
 for the cage); nothing here edits it, and nothing here is published anywhere.
 
+## Verification, honestly bounded
+
+Completion is a statement; settlement needs a verdict from a principal that did not author
+the work (FC010 — and your own sub-agents count as you). `oathe done` binds the
+policy-standard plan and mints a verification task; `oathe verify` allocates one fresh
+engine run per obligation (never a standing grader), records its verdict as durable
+evidence, and the deterministic acceptance lane signs and settles through the substrate's
+own verbs. The deterministic bar checks the verdict's presence and provenance — the judgment
+quality is the engine's, and the linked traces (`docs/traces.md`) exist precisely so that
+judgment stays auditable. A rejection reopens the work (R8): the same task, the prior
+principal, visibly back on the board.
+
 ## Tests
 
-    npm test        # 96 tests: unit (fences, manifest, harnesses, workspace, host) +
+    npm test        # the suite: unit (fences, manifest, harnesses, workspace, host) +
                     # real-Postgres substrate/tools/successor + the scripted W1 exit loop
