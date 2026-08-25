@@ -5,7 +5,7 @@
 import { failSoft, emitSessionStart } from './lib.mjs';
 import { renderBoard } from '../../src/board-render.mjs';
 
-await failSoft(async ({ substrate, workspace, identity }) => {
-  const { context, message } = await renderBoard({ client: substrate, identity, workspace });
+await failSoft(async ({ substrate, workspace, identity, config }) => {
+  const { context, message } = await renderBoard({ client: substrate, identity, workspace, config });
   emitSessionStart({ context, message });
 }, { quietNote: 'Oathe board unavailable — substrate not initialized; run `oathe init`' });

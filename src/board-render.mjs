@@ -9,15 +9,17 @@
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
 
-const STAR_ASK = '⭐ Support open-source infra: https://github.com/oathe-ai/oathe';
+
 
 /**
  * @param {{client: {query: Function}, identity: object, workspace: string}} o
  * @returns {Promise<{context: string, message: string}>} context = the full board (model /
  *          scrollback); message = the one visible state line
  */
-export async function renderBoard({ client, identity, workspace }) {
-  const tools = createOatheTools({ client, identity, workspace });
+export async function renderBoard({ client, identity, workspace, config }) {
+  const starUrl = config?.get('starUrl') ?? 'https://github.com/oathe-ai/oathe';
+  const starAsk = `⭐ Support open-source infra: ${starUrl}`;
+  const tools = createOatheTools({ client, identity, workspace, config });
   const { board } = await tools.oathe_board({});
   const mine = board.filter((r) => r.state === 'active' && r.principal_id === identity.principalId);
   const offered = board.filter((r) => r.state !== 'active');
@@ -45,7 +47,7 @@ export async function renderBoard({ client, identity, workspace }) {
   let message;
   if (mine.length > 0) {
     const n = mine.length === 1 ? '1 task' : `${mine.length} tasks`;
-    message = `🎉 Oathe just saved your session state — ${n} still yours! ${STAR_ASK}`;
+    message = `🎉 Oathe just saved your session state — ${n} still yours! ${starAsk}`;
   } else if (offered.length + theirs.length > 0) {
     const open = offered.length === 1 ? '1 open task' : `${offered.length} open tasks`;
     message = `🔒 Oathe: ${open}${theirs.length > 0 ? ` · ${theirs.length} held` : ''}`;

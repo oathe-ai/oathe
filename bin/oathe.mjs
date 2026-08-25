@@ -5,7 +5,7 @@
 
 import { parseArgs } from 'node:util';
 
-const VERBS = ['init', 'claude', 'codex', 'claim', 'ls', 'note', 'done', 'yield', 'doctor', 'uninstall', 'status', 'hook', 'mcp'];
+const VERBS = ['init', 'claude', 'codex', 'claim', 'ls', 'note', 'done', 'yield', 'config', 'doctor', 'uninstall', 'status', 'hook', 'mcp'];
 
 const USAGE = `usage: oathe <verb> [args]
 
@@ -20,6 +20,7 @@ verbs:
   yield <task-id> <note>       yield: the task goes back on the board, unowned
   doctor                       verify every managed surface against the install manifest
   status                       the substrate half of doctor
+  config <key> [value] [--global]  read or write a config key (workspace scope by default)
   uninstall [--purge-db]       remove exactly what init recorded (the database stays put)
   hook <name> · mcp            internal: the plugin's hook/server entry points (bin-addressed)
 `;
@@ -45,6 +46,7 @@ async function toolsForCwd(env = process.env) {
     tools: createOatheTools({
       client: ctx.substrate,
       identity: ctx.identity,
+      config: ctx.config,
       workspace: workspaceRef(process.cwd()),
     }),
   };
@@ -161,6 +163,24 @@ const handlers = {
     } finally {
       await ctx.substrate.close();
     }
+  },
+
+  async config(argv) {
+    const { values, positionals } = parseArgs({
+      args: argv, options: { global: { type: 'boolean', default: false } }, allowPositionals: true,
+    });
+    const [key, raw] = positionals;
+    if (!key) throw new Error('usage: oathe config <key> [value] [--global]');
+    const { OatheConfig, CONFIG_KEYS } = await import('../src/config.mjs');
+    const cfg = new OatheConfig({});
+    if (raw === undefined) {
+      process.stdout.write(`${key} = ${JSON.stringify(cfg.get(key)).replaceAll('"', '')}\n`);
+    } else {
+      const value = /^\d+$/.test(raw) ? Number(raw) : raw;
+      const out = cfg.set(key, value, { scope: values.global ? 'global' : 'workspace' });
+      process.stdout.write(`${key} = ${raw} (${out.file})\n`);
+    }
+    summary('config', 'ok');
   },
 
   async doctor() {

@@ -4,13 +4,11 @@
 
 import { failSoft } from './lib.mjs';
 
-const LEASE = "interval '4 hours'";
-
-await failSoft(async ({ substrate, workspace, identity }) => {
+await failSoft(async ({ substrate, workspace, identity, config }) => {
   await substrate.query(
     `UPDATE cell.work_claim
-        SET ownership_valid_until = now() + ${LEASE}
+        SET ownership_valid_until = now() + make_interval(hours => $4)
       WHERE org_id = $1 AND principal_id = $2 AND state = 'active'
         AND contract_ref LIKE $3`,
-    [identity.orgId, identity.principalId, `workspace:${workspace};%`]);
+    [identity.orgId, identity.principalId, `workspace:${workspace};%`, config.get('leaseHours')]);
 });

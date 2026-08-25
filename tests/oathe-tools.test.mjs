@@ -85,6 +85,22 @@ test('oathe_claim mints the task honestly (plan_status unknown) and claims it wi
   assert.equal(rows[0].ps, 'unknown');
 });
 
+test('the lease duration flows from config — nothing hardcoded', async () => {
+  const { OatheConfig } = await import('../src/config.mjs');
+  const longTools = createOatheTools({
+    client: substrate,
+    identity: { orgId: 'oathe', principalId: 'firia', department: 'founder' },
+    workspace: WS,
+    config: new OatheConfig({ env: { ...process.env, OATHE_LEASE_HOURS: '12' } }),
+  });
+  await longTools.oathe_claim({ task_id: 'long-lease', objective: 'twelve hour shift' });
+  const { rows } = await substrate.query(
+    "SELECT extract(epoch FROM (ownership_valid_until - now())) / 3600 AS h "
+    + "FROM cell.work_claim WHERE task_id = 'long-lease' AND state = 'active'");
+  assert.ok(Number(rows[0].h) > 11, `lease hours: ${rows[0].h}`);
+  await longTools.oathe_yield({ task_id: 'long-lease', note: 'shift over' });
+});
+
 test('a second claim on the same task is REFUSED by the substrate and surfaces typed', async () => {
   await assert.rejects(
     () => tools.oathe_claim({ task_id: 'task-x', objective: 'second claimant' }),

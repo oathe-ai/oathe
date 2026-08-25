@@ -128,8 +128,8 @@ export async function runHarness({
   renewIntervalMs = 60_000, out = process.stdout, stdin = process.stdin, pauseMs = 3000,
 } = {}) {
   const { workspace } = await preflight({ env, cwd, exec, harness });
-  const ctx = buildContext({ env, exec });
-  const { paths, substrate, identity } = ctx;
+  const ctx = buildContext({ env, exec, cwd });
+  const { paths, substrate, identity, config } = ctx;
 
   // CODEX ONLY: the ANSI splash into terminal scrollback before the TUI starts, with a short
   // readable pause. Codex buries hook output in its ctrl+T transcript overlay, unrendered;
@@ -151,7 +151,7 @@ export async function runHarness({
 
   const unit = `oathe-${Date.now().toString(36)}-${process.pid}`;
   const extra = {
-    OATHE_DB: env.OATHE_DB || 'oathe_local',
+    OATHE_DB: config.get('db'),
     OATHE_ORG: identity.orgId,
     OATHE_PRINCIPAL: identity.principalId,
     OATHE_DEPARTMENT: identity.department,
@@ -172,6 +172,7 @@ export async function runHarness({
     workspace,
     liveness: () => cage.enumerate().length > 0,
     renewIntervalMs,
+    leaseHours: config.get('leaseHours'),
   });
   host.start();
 

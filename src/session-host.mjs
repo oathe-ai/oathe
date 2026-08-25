@@ -10,14 +10,15 @@
 
 import crypto from 'node:crypto';
 
-const LEASE = "interval '4 hours'";
+
 
 export class SessionHost {
   /**
    * @param {{client: {query: Function}, identity: {orgId: string, principalId: string},
    *          workspace: string, liveness: () => boolean, renewIntervalMs?: number}} o
    */
-  constructor({ client, identity, workspace, liveness, renewIntervalMs = 60_000 }) {
+  constructor({ client, identity, workspace, liveness, renewIntervalMs = 60_000, leaseHours = 4 }) {
+    this.leaseHours = leaseHours;
     this.client = client;
     this.identity = identity;
     this.workspace = workspace;
@@ -49,10 +50,10 @@ export class SessionHost {
     try {
       await this.client.query(
         `UPDATE cell.work_claim
-            SET ownership_valid_until = now() + ${LEASE}
+            SET ownership_valid_until = now() + make_interval(hours => $4)
           WHERE org_id = $1 AND principal_id = $2 AND state = 'active'
             AND contract_ref LIKE $3`,
-        [this.identity.orgId, this.identity.principalId, `workspace:${this.workspace};%`]);
+        [this.identity.orgId, this.identity.principalId, `workspace:${this.workspace};%`, this.leaseHours]);
     } catch {
       // A failed renewal is not a death: the next tick tries again; expiry stays the substrate's
       // honest answer if the failures persist.

@@ -17,8 +17,8 @@ import crypto from 'node:crypto';
 export const PROTOCOL_VERSION = '2025-06-18';
 export const SERVER_NAME = 'oathe-tools';
 
-const LEASE = "interval '4 hours'";
-const VERIFY_BY = "interval '1 day'";
+// Durations flow from OatheConfig (founder ruling: never hardcode); SQL uses make_interval
+// with a parameter, so the value is data, not a spliced literal.
 
 export class OatheToolError extends Error {
   constructor(code, message, details = {}) {
@@ -118,8 +118,10 @@ export function makeToolDefs() {
  *          workspace: string, executionActor?: string,
  *          successor?: (o: {task_id: string, work_claim_id: string}) => Promise<object>}} o
  */
-export function createOatheTools({ client, identity, workspace, executionActor, successor }) {
+export function createOatheTools({ client, identity, workspace, executionActor, successor, config }) {
   const { orgId, principalId, department } = identity;
+  const leaseHours = config?.get('leaseHours') ?? 4;
+  const verifyByHours = config?.get('verifyByHours') ?? 24;
   const actor = executionActor
     ?? (process.env.FIRIA_EXECUTION_ATTEMPT_ID
       ? `attempt:${process.env.FIRIA_EXECUTION_ATTEMPT_ID}`
@@ -152,21 +154,21 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
           `INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
                                   verify_by, claim_mode, created_at)
            VALUES ($1, $2, $3, $4, 'minted_at_claim', '{"plan_status":"unknown"}'::jsonb,
-                   now() + ${VERIFY_BY}, 'exclusive', now())
+                   now() + make_interval(hours => $5), 'exclusive', now())
            ON CONFLICT DO NOTHING`,
-          [orgId, task_id, department, objective]);
+          [orgId, task_id, department, objective, verifyByHours]);
       }
       const workClaimId = crypto.randomUUID();
       await client.query(
         `SELECT cell.claim_work($1, $2, $3, NULL, $4, $5, 'exclusive',
-                now() + ${LEASE}, $6, now(), $7)`,
-        [orgId, task_id, workClaimId, principalId, department, contractRef, crypto.randomUUID()]);
+                now() + make_interval(hours => $6), $7, now(), $8)`,
+        [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
       return {
         claimed: true,
         task_id,
         work_claim_id: workClaimId,
         contract_ref: contractRef,
-        lease: '4 hours',
+        lease: `${leaseHours} hours`,
         note: existing.length === 0
           ? "task minted at claim — plan_status is honestly 'unknown'; a real cell pages you at verify_by"
           : 'existing task claimed',
@@ -322,11 +324,13 @@ export async function main(env = process.env) {
   const { buildPaths } = await import('../paths.mjs');
   const { workspaceRef } = await import('../workspace.mjs');
   const paths = buildPaths(env);
-  const substrate = new Substrate({ database: env.OATHE_DB || 'oathe_local', paths, env });
+  const { OatheConfig } = await import('../config.mjs');
+  const config = new OatheConfig({ env, cwd: env.OATHE_WORKSPACE_DIR || process.cwd() });
+  const substrate = new Substrate({ database: config.get('db'), paths, env, config });
   const identity = {
-    orgId: env.OATHE_ORG || 'oathe',
-    principalId: env.OATHE_PRINCIPAL || env.USER || 'operator',
-    department: env.OATHE_DEPARTMENT || 'founder',
+    orgId: config.get('org'),
+    principalId: config.get('principal') || env.USER || 'operator',
+    department: config.get('department'),
   };
   // The successor is built LAZILY on the first pickup: a session that never picks up never pays
   // for the runtime wiring, and a wiring failure surfaces as that call's typed error.
@@ -334,6 +338,7 @@ export async function main(env = process.env) {
   const tools = createOatheTools({
     client: substrate,
     identity,
+    config,
     workspace: workspaceRef(env.OATHE_WORKSPACE_DIR || process.cwd()),
     successor: async (o) => {
       if (!successorPromise) {

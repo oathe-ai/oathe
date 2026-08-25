@@ -99,6 +99,19 @@ test('oathe mcp serves the stdio JSON-RPC loop through the bin', () => {
   assert.equal(msg.result.protocolVersion, '2025-06-18');
 });
 
+test('oathe config gets and sets known keys, refuses unknown ones', () => {
+  const get = oathe(['config', 'verifier']);
+  assert.equal(get.status, 0, get.stderr);
+  assert.match(get.stdout, /verifier = claude/);
+  const set = oathe(['config', 'verifier', 'codex']);
+  assert.equal(set.status, 0, set.stderr);
+  const reread = oathe(['config', 'verifier']);
+  assert.match(reread.stdout, /verifier = codex/);
+  const bad = oathe(['config', 'made-up-key']);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /unknown config key/);
+});
+
 test('a second claim is the substrate refusal, faithfully non-zero', () => {
   oathe(['claim', 'twice-task', 'claim me once']);
   const second = oathe(['claim', 'twice-task', 'claim me twice']);

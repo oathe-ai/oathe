@@ -15,6 +15,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const pg = require('pg');
 
+import { OatheConfig } from './config.mjs';
+
 export const DDL_FILES = Object.freeze([
   '001_core.sql',
   '002_claim.sql',
@@ -57,12 +59,15 @@ export class SubstrateError extends Error {
 }
 
 export class Substrate {
-  /** @param {{database?: string, paths: object, env?: NodeJS.ProcessEnv}} o */
-  constructor({ database = 'oathe_local', paths, env = process.env }) {
-    this.database = database;
+  /** @param {{database?: string, paths: object, env?: NodeJS.ProcessEnv, config?: import('./config.mjs').OatheConfig}} o */
+  constructor({ database, paths, env = process.env, config }) {
+    // Connection facts flow from OatheConfig (env overrides ride its env layer) — the only
+    // fallback here is constructing that config from env when the caller didn't.
+    const cfg = config ?? new OatheConfig({ env, cwd: paths.packageRoot });
+    this.database = database ?? cfg.get('db');
     this.paths = paths;
-    this.host = env.OATHE_PG_HOST || '/tmp'; // homebrew's default socket dir on this machine
-    this.port = Number(env.OATHE_PG_PORT || 5432);
+    this.host = cfg.get('pgHost');
+    this.port = cfg.get('pgPort');
     /** @type {import('pg').Client|null} */
     this.client = null;
   }

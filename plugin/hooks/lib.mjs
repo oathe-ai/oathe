@@ -7,6 +7,7 @@
 import { Substrate } from '../../src/substrate.mjs';
 import { buildPaths } from '../../src/paths.mjs';
 import { workspaceRef } from '../../src/workspace.mjs';
+import { OatheConfig } from '../../src/config.mjs';
 
 /** The hook's JSON input on stdin (Claude and Codex both deliver {cwd, hook_event_name, …}). */
 export async function readHookInput() {
@@ -18,14 +19,16 @@ export async function readHookInput() {
 export function buildHookContext(input, env = process.env) {
   const paths = buildPaths(env);
   const cwd = input.cwd || process.cwd();
+  const config = new OatheConfig({ env, cwd });
   return {
-    substrate: new Substrate({ database: env.OATHE_DB || 'oathe_local', paths, env }),
+    substrate: new Substrate({ database: config.get('db'), paths, env, config }),
     workspace: workspaceRef(cwd),
     identity: {
-      orgId: env.OATHE_ORG || 'oathe',
-      principalId: env.OATHE_PRINCIPAL || env.USER || 'operator',
-      department: env.OATHE_DEPARTMENT || 'founder',
+      orgId: config.get('org'),
+      principalId: config.get('principal') || env.USER || 'operator',
+      department: config.get('department'),
     },
+    config,
     cwd,
   };
 }
