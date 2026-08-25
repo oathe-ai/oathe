@@ -28,13 +28,12 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
-import { ClaudeTraceStore, CodexTraceStore, harnessForTracePath } from './traces.mjs';
+import { projectorFor, renderEvidenceView } from './atif.mjs';
 import { standardPlan, verificationTaskId, isVerificationTask, ACCEPTANCE_CLAUSE_KEY } from './plans.mjs';
 
 const require = createRequire(import.meta.url);
 
 const VERDICTS = ['accepted', 'rejected'];
-const TRACE_TAIL_CHARS = 4000;
 const CUSTOM_CHECKER = 'oathe-verdict';
 
 export class VerifierError extends Error {
@@ -130,58 +129,34 @@ export class Verifier {
     return rows[0];
   }
 
-  /** Linked traces (C1 statements), expanded to fan-out and excerpted. Contract failures REFUSE. */
+  /**
+   * Linked traces (C1 statements), projected to ATIF at read time — fan-out embedded,
+   * validated. Contract/projection failures REFUSE loudly (TraceContractError/AtifError):
+   * never less evidence than the claim recorded.
+   */
   async #traceEvidence(workClaimId) {
     const { rows } = await this.substrate.query(
       `SELECT subject_ref, evidence_refs FROM cell.agent_statement
         WHERE org_id = $1 AND work_claim_id = $2 AND subject_ref LIKE 'trace:%'`,
       [this.orgId, workClaimId]);
-    const home = this.substrate.paths ? undefined : undefined;
-    const claude = new ClaudeTraceStore({});
-    const codex = new CodexTraceStore({});
-    const excerpts = [];
+    const traces = [];
     for (const row of rows) {
       for (const file of row.evidence_refs) {
-        const store = harnessForTracePath(file) === 'codex' ? codex : claude;
-        const seen = store.describe(file); // throws TraceContractError — the loud refusal
-        excerpts.push({
-          session_id: seen.session_id,
-          harness: seen.harness,
-          path: file,
-          excerpt: this.#excerpt(store, file),
-          subagents: seen.harness === 'claude'
-            ? claude.subagentsFor(file).map((sub) => ({ agent_id: sub.agent_id, meta: sub.meta }))
-            : codex.childThreads(seen.session_id),
-        });
+        traces.push({ path: file, trajectory: projectorFor(file).project(file) });
       }
     }
-    return excerpts;
-  }
-
-  /** Tool-call inventory + tail text — transcripts run to MBs; the verdict needs the shape. */
-  #excerpt(store, file) {
-    const toolCalls = [];
-    const texts = [];
-    for (const entry of store.entries(file)) {
-      const content = entry?.message?.content ?? entry?.payload?.content;
-      const items = Array.isArray(content) ? content : [];
-      for (const item of items) {
-        if (item?.type === 'tool_use' && item.name) toolCalls.push(item.name);
-        if (item?.type === 'function_call' && item.name) toolCalls.push(item.name);
-        if (item?.type === 'text' && item.text) texts.push(item.text);
-      }
-      if (entry?.type === 'response_item' && entry.payload?.name) toolCalls.push(entry.payload.name);
-    }
-    return {
-      tool_calls: toolCalls,
-      tail: texts.join('\n').slice(-TRACE_TAIL_CHARS),
-    };
+    return traces;
   }
 
   #prompt({ taskRow, completion, traces, taskId }) {
+    const budget = this.config.get('verifierEvidenceBudget');
+    const perTrace = Math.max(1, Math.floor(budget / Math.max(1, traces.length)));
     return [
-      'You are a verification agent. Judge ONE question: does the recorded evidence support the',
-      'completion assertion for this task? Be strict: absence of evidence is absence.',
+      'You are a verification agent. Judge ONE question: do the recorded ACTIONS and OUTCOMES',
+      'support the completion assertion? In the trace views below, SAID lines are the agent\'s',
+      'own claims; CLAIM lines are its on-the-record speech acts; DID lines are the actions it',
+      'actually took; GOT lines are what actually came back. Judge claims against actions and',
+      'outcomes — be strict: absence of evidence is absence.',
       '',
       `TASK: ${taskId}`,
       `OBJECTIVE: ${taskRow.objective}`,
@@ -190,7 +165,7 @@ export class Verifier {
       `ASSERTED EVIDENCE: ${JSON.stringify(completion.evidence_refs)}`,
       '',
       `SESSION TRACES (${traces.length}):`,
-      JSON.stringify(traces, null, 1),
+      ...traces.map(({ trajectory }) => renderEvidenceView(trajectory, { budget: perTrace })),
       '',
       'Reply with ONLY a JSON object, no other text:',
       '{"verdict": "accepted" | "rejected", "reason": "<one sentence naming the evidence>"}',

@@ -33,7 +33,11 @@ function fixtureTranscript(name) {
     JSON.stringify({ type: 'user', uuid: 'u1', sessionId, cwd: dir, message: { role: 'user', content: 'work' } }),
     JSON.stringify({
       type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId, cwd: dir,
-      message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Bash', input: {} }, { type: 'text', text: 'did the work' }] },
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_f1', name: 'Bash', input: { command: 'make it' } }, { type: 'text', text: 'did the work' }] },
+    }),
+    JSON.stringify({
+      type: 'user', uuid: 'u2', parentUuid: 'a1', sessionId, cwd: dir,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_f1', content: 'made it\nExit code 0' }] },
     }),
   ].join('\n'));
   return { file, sessionId };
@@ -130,11 +134,13 @@ test('ACCEPTED: the whole lane — verdict recorded, verification row signed by 
     'settled work no longer shows as asserted');
   assert.ok(!sections.open.some((r) => r.task_id === 'settle-me'));
 
-  // the engine saw the evidence: objective, completion assertion, and the real trace path
+  // the engine saw the ALIGNED evidence: objective, assertion, and SAID/DID/GOT per step
   const prompt = engineCalls.at(-1).prompt;
   assert.match(prompt, /be verified for real/);
   assert.match(prompt, /work complete/);
-  assert.match(prompt, /did the work/, 'trace excerpt reached the engine');
+  assert.match(prompt, /SAID: did the work/, 'the claim channel');
+  assert.match(prompt, /DID: Bash\(/, 'the action channel');
+  assert.match(prompt, /GOT \[exit 0\]: made it/, 'the outcome channel');
 });
 
 test('REJECTED: verification row records the rejection and the task REOPENS (R8)', async () => {

@@ -383,6 +383,85 @@ export function projectorFor(file, { claudeHome, codexHome } = {}) {
     : new ClaudeAtifProjector({ store: new ClaudeTraceStore({ home: claudeHome }) });
 }
 
+// --------------------------------------------------------------------------- evidence view
+
+const CLIP = { message: 300, args: 140, result: 200, user: 200 };
+const SUBAGENT_BUDGET_SHARE = 0.3;
+
+function clip(text, max) {
+  const flat = String(text).replaceAll('\n', ' ⏎ ');
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** One step → its aligned lines: SAID (the claims), CLAIM (speech acts), DID (actions), GOT (outcomes). */
+function stepLines(step) {
+  const lines = [];
+  if (step.source === 'user') return [`USER: ${clip(step.message, CLIP.user)}`];
+  if (step.source === 'system') return [`SYSTEM: ${clip(step.message, CLIP.user)}`];
+  if (step.message) lines.push(`SAID: ${clip(step.message, CLIP.message)}`);
+  for (const event of step.extra?.oathe?.claim_events ?? []) {
+    lines.push(`CLAIM(${event.verb}${event.task_id ? ` ${event.task_id}` : ''})`);
+  }
+  for (const call of step.tool_calls ?? []) {
+    lines.push(`DID: ${call.function_name}(${clip(JSON.stringify(call.arguments), CLIP.args)})`);
+  }
+  for (const result of step.observation?.results ?? []) {
+    const exit = result.extra?.oathe?.observed?.exit_code;
+    lines.push(`GOT${exit !== undefined ? ` [exit ${exit}]` : ''}: ${clip(result.content, CLIP.result)}`);
+  }
+  return lines;
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * The deterministic human/engine-facing rendering of a trajectory: aligned SAID/DID/GOT per
+ * step under a character budget. Truncation is TAIL-PRIORITIZED (the most recent steps
+ * survive whole) and ANNOUNCED — an elision the reader cannot see is evidence silently lost.
+ */
+export function renderEvidenceView(trajectory, { budget }) {
+  const oathe = trajectory.extra?.oathe ?? {};
+  const header = [
+    `TRACE ${trajectory.session_id} (${oathe.harness ?? trajectory.agent?.name}`
+      + `${oathe.session_title ? ` — "${oathe.session_title}"` : ''})`,
+    ...(oathe.files_touched?.length ? [`files touched: ${oathe.files_touched.join(', ')}`] : []),
+  ];
+  const subagents = trajectory.subagent_trajectories ?? [];
+  const mainBudget = subagents.length > 0 ? Math.floor(budget * (1 - SUBAGENT_BUDGET_SHARE)) : budget;
+
+  const blocks = trajectory.steps.map((step) => stepLines(step).map((l) => `  ${l}`).join('\n'));
+  const kept = [];
+  let spent = 0;
+  for (let at = blocks.length - 1; at >= 0; at -= 1) {
+    if (spent + blocks[at].length > mainBudget && kept.length > 0) break;
+    kept.unshift(at);
+    spent += blocks[at].length;
+    if (spent > mainBudget) break;
+  }
+  const elidedSteps = trajectory.steps.slice(0, kept[0] ?? 0);
+  const body = [];
+  if (elidedSteps.length > 0) {
+    const toolCalls = elidedSteps.reduce((n, s) => n + (s.tool_calls?.length ?? 0), 0);
+    const claims = elidedSteps.reduce((n, s) => n + (s.extra?.oathe?.claim_events?.length ?? 0), 0);
+    body.push(`  [${plural(elidedSteps.length, 'earlier step')} elided: `
+      + `${plural(toolCalls, 'tool call')}, ${plural(claims, 'claim')}]`);
+  }
+  for (const at of kept) body.push(blocks[at]);
+
+  const out = [...header, ...body];
+  if (subagents.length > 0) {
+    const each = Math.floor((budget * SUBAGENT_BUDGET_SHARE) / subagents.length);
+    for (const child of subagents) {
+      const meta = child.extra?.oathe?.subagent_meta;
+      out.push(`SUBAGENT ${child.trajectory_id}${meta?.agentType ? ` (${meta.agentType})` : ''}`);
+      out.push(renderEvidenceView(child, { budget: each }));
+    }
+  }
+  return out.join('\n');
+}
+
 // --------------------------------------------------------------------------- validator
 
 /** Known fields per object — the reference models' extra:'forbid' posture, re-implemented. */

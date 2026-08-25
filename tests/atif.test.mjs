@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import {
   projectorFor, ClaudeAtifProjector, CodexAtifProjector, AtifValidator, AtifError,
-  ATIF_SCHEMA_VERSION, OATHE_CONVENTION_VERSION,
+  renderEvidenceView, ATIF_SCHEMA_VERSION, OATHE_CONVENTION_VERSION,
 } from '../src/atif.mjs';
 import { ClaudeTraceStore, CodexTraceStore } from '../src/traces.mjs';
 
@@ -235,6 +235,31 @@ test('each broken invariant refuses with its OWN typed code', () => {
     assert.match(seen.detail, pattern);
     assert.throws(() => v.assert(t), (e) => e instanceof AtifError && e.code === 'ATIF_INVALID');
   }
+});
+
+// ------------------------------------------------------------------ evidence view
+
+test('renderEvidenceView aligns SAID/DID/GOT per step and marks the speech acts', () => {
+  const { home, file } = claudeFixture();
+  const t = new ClaudeAtifProjector({ store: new ClaudeTraceStore({ home }) }).project(file);
+  const view = renderEvidenceView(t, { budget: 100000 });
+  assert.match(view, /SAID: Running the tests now\./);
+  assert.match(view, /DID: Bash\(/);
+  assert.match(view, /GOT \[exit 1\]: FAIL: 3 tests failed/);
+  assert.match(view, /CLAIM\(oathe_done task-x\)/);
+  assert.match(view, /USER: run the tests then claim done/);
+  assert.match(view, /SUBAGENT sub1 \(Explore\)/);
+  assert.match(view, /files touched: \/work\/proj\/fix\.js/);
+});
+
+test('renderEvidenceView under budget pressure elides the HEAD, announces it, keeps the tail whole', () => {
+  const { home, file } = claudeFixture();
+  const t = new ClaudeAtifProjector({ store: new ClaudeTraceStore({ home }) }).project(file);
+  const view = renderEvidenceView(t, { budget: 420 });
+  assert.ok(view.length <= 1000, 'bounded output');
+  assert.match(view, /\[\d+ earlier steps? elided: \d+ tool calls?, \d+ claims?\]/);
+  assert.match(view, /CLAIM\(oathe_done task-x\)/, 'the tail (most recent steps) survives');
+  assert.doesNotMatch(view, /SAID: Running the tests now/, 'the head was elided');
 });
 
 // ------------------------------------------------------------------ golden cross-check

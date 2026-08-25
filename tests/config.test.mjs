@@ -24,6 +24,7 @@ test('defaults are named once and reachable — no consumer hardcodes them', () 
   assert.equal(cfg.get('verifier'), 'claude');
   assert.equal(cfg.get('verifierPrincipal'), 'oathe-verifier');
   assert.match(cfg.get('starUrl'), /^https:\/\//);
+  assert.equal(cfg.get('verifierEvidenceBudget'), 24000);
 });
 
 test('layering: global file overrides defaults, workspace file overrides global, env overrides all', () => {
