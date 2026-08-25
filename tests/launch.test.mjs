@@ -70,40 +70,44 @@ test('preflight refuses when the global install is missing (manifest has no clau
     (e) => e.code === 'OATHE_NOT_INSTALLED');
 });
 
-test('runClaude launches the harness in the cage, proves the scope empty, and the clean exit speaks', async () => {
-  const cwd = projectDir();
-  const out = await runClaude({ env: sb.env, cwd, args: [], renewIntervalMs: 50 });
-  assert.equal(out.exitCode, 0);
-  assert.equal(out.teardown.empty, true, 'the cage was proven empty after exit');
-  assert.ok(fs.existsSync(path.join(cwd, 'CLAUDE.md')), 'pre-flight ran');
-});
+for (const providerName of ['auto', 'standalone']) {
+  const penv = (env) => ({ ...env, OATHE_RUNTIME_PROVIDER: providerName });
 
-test('runClaude --hermetic hands the child a REPLACED minimal environment', async () => {
-  const cwd = projectDir();
-  const probe = sandbox({ scratchDb: SCRATCH_DB });
-  const dump = path.join(probe.home, 'envdump.txt');
-  fs.writeFileSync(path.join(probe.bin, 'claude'), `#!/bin/sh\nenv > "${dump}"; exit 0\n`);
-  fs.chmodSync(path.join(probe.bin, 'claude'), 0o755);
-  await runInit({ env: probe.env, exec: probe.exec });
-  const env = { ...probe.env, SUPER_SECRET_TOKEN: 'leak-me' };
-  await runClaude({ env, cwd, args: [], hermetic: true, renewIntervalMs: 50 });
-  const seen = fs.readFileSync(dump, 'utf8');
-  assert.ok(!seen.includes('SUPER_SECRET_TOKEN'), 'hermetic env must not leak arbitrary vars');
-  assert.match(seen, /FIRIA_EXECUTION_ATTEMPT_ID=/, 'the fence stamp reaches the child');
-  assert.match(seen, /OATHE_DB=/, 'oathe wiring reaches the child');
-  assert.match(seen, /^OATHE_LAUNCHED_HARNESS=claude$/m,
-    'the launch marker reaches the child — the plugin only fires in sessions that carry it');
-});
+  test(`[${providerName}] runClaude launches the harness in the cage, proves the scope empty, and the clean exit speaks`, async () => {
+    const cwd = projectDir();
+    const out = await runClaude({ env: penv(sb.env), cwd, args: [], renewIntervalMs: 50 });
+    assert.equal(out.exitCode, 0);
+    assert.equal(out.teardown.empty, true, 'the cage was proven empty after exit');
+    assert.ok(fs.existsSync(path.join(cwd, 'CLAUDE.md')), 'pre-flight ran');
+  });
 
-test('runCodex launches Codex in the same cage with the same host — the W2 premise died in research', async () => {
-  const cwd = projectDir();
-  fs.writeFileSync(path.join(sb.bin, 'codex'), '#!/bin/sh\necho codex-session-ran; exit 0\n');
-  fs.chmodSync(path.join(sb.bin, 'codex'), 0o755);
-  const out = await runCodex({ env: sb.env, cwd, args: [], renewIntervalMs: 50 });
-  assert.equal(out.exitCode, 0);
-  assert.equal(out.teardown.empty, true, 'the cage was proven empty after exit');
-  assert.ok(fs.existsSync(path.join(cwd, 'AGENTS.md')), 'pre-flight wrote the Codex surface');
-});
+  test(`[${providerName}] runClaude --hermetic hands the child a REPLACED minimal environment`, async () => {
+    const cwd = projectDir();
+    const probe = sandbox({ scratchDb: SCRATCH_DB });
+    const dump = path.join(probe.home, 'envdump.txt');
+    fs.writeFileSync(path.join(probe.bin, 'claude'), `#!/bin/sh\nenv > "${dump}"; exit 0\n`);
+    fs.chmodSync(path.join(probe.bin, 'claude'), 0o755);
+    await runInit({ env: probe.env, exec: probe.exec });
+    const env = penv({ ...probe.env, SUPER_SECRET_TOKEN: 'leak-me' });
+    await runClaude({ env, cwd, args: [], hermetic: true, renewIntervalMs: 50 });
+    const seen = fs.readFileSync(dump, 'utf8');
+    assert.ok(!seen.includes('SUPER_SECRET_TOKEN'), 'hermetic env must not leak arbitrary vars');
+    assert.match(seen, /FIRIA_EXECUTION_ATTEMPT_ID=/, 'the fence stamp reaches the child');
+    assert.match(seen, /OATHE_DB=/, 'oathe wiring reaches the child');
+    assert.match(seen, /^OATHE_LAUNCHED_HARNESS=claude$/m,
+      'the launch marker reaches the child — the plugin only fires in sessions that carry it');
+  });
+
+  test(`[${providerName}] runCodex launches Codex in the same cage with the same host — the W2 premise died in research`, async () => {
+    const cwd = projectDir();
+    fs.writeFileSync(path.join(sb.bin, 'codex'), '#!/bin/sh\necho codex-session-ran; exit 0\n');
+    fs.chmodSync(path.join(sb.bin, 'codex'), 0o755);
+    const out = await runCodex({ env: penv(sb.env), cwd, args: [], renewIntervalMs: 50 });
+    assert.equal(out.exitCode, 0);
+    assert.equal(out.teardown.empty, true, 'the cage was proven empty after exit');
+    assert.ok(fs.existsSync(path.join(cwd, 'AGENTS.md')), 'pre-flight wrote the Codex surface');
+  });
+}
 
 test('oathe codex opens with the ANSI splash — no markdown, no pause off-TTY', async () => {
   const cwd = projectDir();

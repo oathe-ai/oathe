@@ -2,12 +2,12 @@
 // the cage (spawnCaged: replaced environment, stamped fence, proven-empty teardown) with the
 // session host renewing leases exactly as long as the cage shows life.
 //
-// The cage lives outside firia-runtime's exports map (pre-extraction), so it is imported by
-// PATH from paths.cagePath — the one sanctioned path import, named in the plan.
+// The cage is reached through the runtime seam (resolveRuntimeProvider), not by a path import
+// here — firia's cage lives outside firia-runtime's exports map (pre-extraction) and is
+// resolved by PATH from paths.cagePath inside FiriaRuntimeProvider itself.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import { buildContext } from './context.mjs';
 import { VERIFIER_ENGINES } from './config.mjs';
@@ -152,7 +152,8 @@ export async function runHarness({
     if (openWork) await waitForLaunch({ harness, pauseMs, stdin, out });
   }
 
-  const { spawnCaged } = await import(pathToFileURL(paths.cagePath).href);
+  const { resolveRuntimeProvider } = await import('./runtime/provider.mjs');
+  const { spawnCaged } = await resolveRuntimeProvider({ config, paths }).cage();
 
   const unit = `oathe-${Date.now().toString(36)}-${process.pid}`;
   const extra = launchSessionEnv({ config, identity, cwd, harness });
