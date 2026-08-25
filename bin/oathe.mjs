@@ -1,0 +1,194 @@
+#!/usr/bin/env node
+// oathe — the subcommand router. Deliberate divergence from the monorepo's env-only bins:
+// oathe is a USER tool, so it speaks argv (node:util parseArgs); it keeps the estate's
+// machine-parseable summary line (`oathe: <verb> <status>`) as the last line of every run.
+
+import { parseArgs } from 'node:util';
+
+const VERBS = ['init', 'claude', 'claim', 'ls', 'note', 'yield', 'doctor', 'uninstall', 'status'];
+
+const USAGE = `usage: oathe <verb> [args]
+
+verbs:
+  init                         onboard installed harnesses + bring up the local cell substrate
+  claude [--hermetic] [args…]  launch interactive Claude Code inside the cage, board attached
+  claim <task-id> [objective]  claim a task (minting it when new — objective required then)
+  ls [--all]                   this workspace's board (--all: every workspace)
+  note <task-id> <text> [ref]  record a progress statement against your active claim
+  yield <task-id> <note>       yield your claim: the obligation returns to the board
+  doctor                       verify every managed surface against the install manifest
+  status                       the substrate half of doctor
+  uninstall [--purge-db]       remove exactly what init recorded (the database stays put)
+`;
+
+function summary(verb, status) {
+  process.stdout.write(`oathe: ${verb} ${status}\n`);
+}
+
+function fail(verb, e) {
+  process.stderr.write(`${e?.message || e}\n`);
+  const status = /refus|REFUSED|already|second|active claim/i.test(String(e?.message)) ? 'refused' : 'error';
+  process.stderr.write(`oathe: ${verb} ${status}\n`);
+  process.exit(1);
+}
+
+async function toolsForCwd(env = process.env) {
+  const [{ buildContext }, { createOatheTools }, { workspaceRef }] = await Promise.all([
+    import('../src/context.mjs'), import('../src/mcp/oathe-tools.mjs'), import('../src/workspace.mjs'),
+  ]);
+  const ctx = buildContext({ env });
+  return {
+    ctx,
+    tools: createOatheTools({
+      client: ctx.substrate,
+      identity: ctx.identity,
+      workspace: workspaceRef(process.cwd()),
+    }),
+  };
+}
+
+const handlers = {
+  async init() {
+    const { runInit } = await import('../src/init.mjs');
+    const result = await runInit({});
+    process.stdout.write('harness census:\n');
+    for (const c of result.census) {
+      process.stdout.write(`  ${c.name.padEnd(8)} ${c.installed ? 'onboarded' : 'not installed — skipped'}\n`);
+    }
+    const s = result.substrate;
+    process.stdout.write(`substrate: db up, ${s.ddl_applied} DDL files applied, `
+      + `yield cause ${s.yield_cause_registered ? 'registered' : 'MISSING'}\n`);
+    process.stdout.write(`principal: ${result.principal.principal_id} (${result.principal.role})\n`);
+    for (const a of result.actions) {
+      process.stdout.write(`  ${a.harness.padEnd(8)} ${a.action}\n`);
+    }
+    summary('init', 'ok');
+  },
+
+  async claude(argv) {
+    const { values, positionals } = parseArgs({
+      args: argv, options: { hermetic: { type: 'boolean', default: false } },
+      allowPositionals: true, strict: false,
+    });
+    const { runClaude } = await import('../src/launch.mjs');
+    const out = await runClaude({ args: positionals, hermetic: values.hermetic === true });
+    if (!out.teardown.empty) {
+      process.stderr.write(`cage not proven empty: ${out.teardown.detail}\n`);
+      summary('claude', 'cage-unclean');
+      process.exit(out.exitCode || 1);
+    }
+    summary('claude', `exit ${out.exitCode}`);
+    process.exit(out.exitCode);
+  },
+
+  async claim(argv) {
+    const [taskId, objective] = argv;
+    if (!taskId) throw new Error('usage: oathe claim <task-id> [objective]');
+    const { ctx, tools } = await toolsForCwd();
+    try {
+      const out = await tools.oathe_claim({ task_id: taskId, objective });
+      process.stdout.write(`claimed: ${out.task_id} (lease ${out.lease}) — ${out.note}\n`);
+      summary('claim', 'ok');
+    } finally {
+      await ctx.substrate.close();
+    }
+  },
+
+  async ls(argv) {
+    const { values } = parseArgs({
+      args: argv, options: { all: { type: 'boolean', default: false } }, allowPositionals: true,
+    });
+    const { ctx, tools } = await toolsForCwd();
+    try {
+      const { board, workspace } = await tools.oathe_board({ all: values.all === true });
+      process.stdout.write(`board${workspace ? ` (${workspace})` : ' (all workspaces)'}:\n`);
+      if (board.length === 0) process.stdout.write('  (empty)\n');
+      for (const r of board) {
+        const holder = r.state === 'active' ? `${r.principal_id}, lease until ${r.lease_until}` : (r.state ?? 'unclaimed');
+        process.stdout.write(`  [${(r.state ?? 'open').padEnd(8)}] ${r.task_id} — ${r.objective} (${holder})\n`);
+      }
+      summary('ls', 'ok');
+    } finally {
+      await ctx.substrate.close();
+    }
+  },
+
+  async note(argv) {
+    const [taskId, proposition, evidenceRef] = argv;
+    if (!taskId || !proposition) throw new Error('usage: oathe note <task-id> <text> [evidence-ref]');
+    const { ctx, tools } = await toolsForCwd();
+    try {
+      const out = await tools.oathe_statement({ task_id: taskId, proposition, evidence_ref: evidenceRef });
+      process.stdout.write(`statement recorded (${out.note})\n`);
+      summary('note', 'ok');
+    } finally {
+      await ctx.substrate.close();
+    }
+  },
+
+  async yield(argv) {
+    const [taskId, note] = argv;
+    if (!taskId || !note) throw new Error('usage: oathe yield <task-id> <note>');
+    const { ctx, tools } = await toolsForCwd();
+    try {
+      const out = await tools.oathe_yield({ task_id: taskId, note });
+      process.stdout.write(`yielded: ${out.task_id} — ${out.note}\n`);
+      summary('yield', 'ok');
+    } finally {
+      await ctx.substrate.close();
+    }
+  },
+
+  async doctor() {
+    const { runDoctor } = await import('../src/doctor.mjs');
+    const result = await runDoctor({});
+    const s = result.substrate;
+    process.stdout.write(`substrate: ${s.reachable ? 'reachable' : 'UNREACHABLE'}, `
+      + `db ${s.database_exists ? 'present' : 'ABSENT'}, ddl ${s.ddl_applied}, `
+      + `yield cause ${s.yield_cause_registered ? 'ok' : 'MISSING'}\n`);
+    process.stdout.write(`plugin: ${result.plugin.resolves ? 'resolves' : `BROKEN (${result.plugin.detail})`}\n`);
+    for (const row of result.rows) {
+      process.stdout.write(`  ${row.status.padEnd(12)} ${row.harness.padEnd(8)} ${row.kind.padEnd(12)} ${row.file}\n`);
+    }
+    const healthy = s.reachable && s.database_exists && result.plugin.resolves
+      && result.rows.every((r) => r.status === 'ok');
+    summary('doctor', healthy ? 'ok' : 'attention');
+    if (!healthy) process.exit(1);
+  },
+
+  async status() {
+    const { buildContext } = await import('../src/context.mjs');
+    const ctx = buildContext({});
+    try {
+      const s = await ctx.substrate.status();
+      process.stdout.write(`database: ${ctx.substrate.database} — `
+        + `${s.reachable ? 'reachable' : 'UNREACHABLE'}, ${s.database_exists ? 'present' : 'absent'}, `
+        + `ddl ${s.ddl_applied}, yield cause ${s.yield_cause_registered ? 'ok' : 'missing'}\n`);
+      summary('status', 'ok');
+    } finally {
+      await ctx.substrate.close();
+    }
+  },
+
+  async uninstall(argv) {
+    const { values } = parseArgs({
+      args: argv, options: { 'purge-db': { type: 'boolean', default: false } }, allowPositionals: true,
+    });
+    const { runUninstall } = await import('../src/uninstall.mjs');
+    const result = await runUninstall({ purgeDb: values['purge-db'] === true });
+    for (const a of result.actions) process.stdout.write(`  ${a.action}${a.file ? ` ${a.file}` : ''}\n`);
+    process.stdout.write(`database: ${result.database_dropped ? 'DROPPED (--purge-db)' : 'kept'}\n`);
+    summary('uninstall', 'ok');
+  },
+};
+
+const [verb, ...rest] = process.argv.slice(2);
+if (!verb || !VERBS.includes(verb)) {
+  process.stderr.write(USAGE);
+  process.exit(2);
+}
+try {
+  await handlers[verb](rest);
+} catch (e) {
+  fail(verb, e);
+}
