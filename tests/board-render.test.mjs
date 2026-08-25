@@ -7,11 +7,12 @@ import { waitForLaunch } from '../src/launch.mjs';
 
 const SECTIONS = {
   mine: [{ task_id: 'mine-1', objective: 'A task of mine', lease_until: '2026-08-25 05:34', state: 'active', principal_id: 'firiya' }],
-  offered: [
-    { task_id: 'beer-check', objective: 'See all three lines', state: 'completion_asserted' },
+  open: [
+    { task_id: 'beer-check', objective: 'See all three lines', state: 'yielded' },
     { task_id: 'demo-smoke', objective: 'Prove the real loop end to end with a very long objective that must be truncated for the terminal', state: 'yielded' },
   ],
-  theirs: [{ task_id: 'held-1', objective: 'Someone else is on it', state: 'active', principal_id: 'athena' }],
+  asserted: [{ task_id: 'asserted-1', objective: 'Done, awaiting a verdict', state: 'completion_asserted' }],
+  held: [{ task_id: 'held-1', objective: 'Someone else is on it', state: 'active', principal_id: 'athena' }],
 };
 
 test('renderSplash is ANSI, aligned, and carries NO markdown syntax', () => {
@@ -26,7 +27,7 @@ test('renderSplash is ANSI, aligned, and carries NO markdown syntax', () => {
   assert.doesNotMatch(splash, /\*\*|##|^- /m, 'no markdown tokens');
   assert.match(splash, /🔒 Oathe: 2 open tasks · 1 held/);
   assert.match(splash, /ws-63d60b8f9275/);
-  for (const header of ['YOURS', 'OPEN', 'HELD']) assert.match(splash, new RegExp(header));
+  for (const header of ['YOURS', 'OPEN', 'ASSERTED', 'HELD']) assert.match(splash, new RegExp(header));
   assert.match(splash, /beer-check/);
   // Task-id column is padded to one width: both offered ids are followed by
   // enough spaces to align (beer-check is 10 chars, demo-smoke is 10 — same pad).
@@ -40,12 +41,12 @@ test('renderSplash is ANSI, aligned, and carries NO markdown syntax', () => {
 test('renderSplash on an empty board is the single state line', () => {
   const splash = renderSplash({
     message: '🍺 No open tasks in this folder — Oathe is keeping track.',
-    sections: { mine: [], offered: [], theirs: [] },
+    sections: { mine: [], open: [], asserted: [], held: [] },
     workspace: 'ws-000000000000',
   });
   const plain = splash.replaceAll(/\x1b\[[0-9]+m/g, '');
   assert.match(plain, /🍺 No open tasks/);
-  assert.doesNotMatch(plain, /YOURS|OPEN|HELD/);
+  assert.doesNotMatch(plain, /YOURS|OPEN|ASSERTED|HELD/);
 });
 
 test('waitForLaunch resolves early on stdin data and cleans up its listener', async () => {

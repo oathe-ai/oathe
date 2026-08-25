@@ -7,6 +7,7 @@
 import { Substrate } from '../../src/substrate.mjs';
 import { buildPaths } from '../../src/paths.mjs';
 import { workspaceRef } from '../../src/workspace.mjs';
+import path from 'node:path';
 import { OatheConfig } from '../../src/config.mjs';
 
 /** The hook's JSON input on stdin (Claude and Codex both deliver {cwd, hook_event_name, …}). */
@@ -20,7 +21,16 @@ export function buildHookContext(input, env = process.env) {
   const paths = buildPaths(env);
   const cwd = input.cwd || process.cwd();
   const config = new OatheConfig({ env, cwd });
+  // The session identity both harnesses hand every hook — the trace linkage rides on it.
+  const session = input.session_id
+    ? {
+      sessionId: input.session_id,
+      transcriptPath: input.transcript_path ?? null,
+      harness: String(input.transcript_path ?? '').includes(`${path.sep}.codex${path.sep}`) ? 'codex' : 'claude',
+    }
+    : null;
   return {
+    session,
     substrate: new Substrate({ database: config.get('db'), paths, env, config }),
     workspace: workspaceRef(cwd),
     identity: {

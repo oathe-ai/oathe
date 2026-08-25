@@ -192,7 +192,15 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
             ORDER BY t.task_id, w.claimed_at DESC NULLS LAST
          ) latest ORDER BY created_at DESC`,
         params);
-      return { workspace: all ? null : workspace, board: rows };
+      // ONE classification, consumed by every render: active-yours / active-theirs /
+      // asserted-awaiting-verdict / open. Asserted is NOT open — it awaits verification.
+      const sections = { mine: [], open: [], asserted: [], held: [] };
+      for (const row of rows) {
+        if (row.state === 'active') sections[row.principal_id === principalId ? 'mine' : 'held'].push(row);
+        else if (row.state === 'completion_asserted') sections.asserted.push(row);
+        else sections.open.push(row);
+      }
+      return { workspace: all ? null : workspace, board: rows, sections };
     },
 
     async oathe_statement({ task_id, proposition, evidence_ref }) {

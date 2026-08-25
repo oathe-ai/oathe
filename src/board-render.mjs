@@ -20,13 +20,12 @@ export async function renderBoard({ client, identity, workspace, config }) {
   const starUrl = config?.get('starUrl') ?? 'https://github.com/oathe-ai/oathe';
   const starAsk = `⭐ Support open-source infra: ${starUrl}`;
   const tools = createOatheTools({ client, identity, workspace, config });
-  const { board } = await tools.oathe_board({});
-  const mine = board.filter((r) => r.state === 'active' && r.principal_id === identity.principalId);
-  const offered = board.filter((r) => r.state !== 'active');
-  const theirs = board.filter((r) => r.state === 'active' && r.principal_id !== identity.principalId);
+  const { sections } = await tools.oathe_board({});
+  const { mine, open, asserted, held } = sections;
+  const total = mine.length + open.length + asserted.length + held.length;
 
   const lines = [`## Oathe board (${workspace})`, ''];
-  if (mine.length === 0 && offered.length === 0 && theirs.length === 0) {
+  if (total === 0) {
     lines.push('_No open tasks in this workspace. Claim before you build: `oathe_claim`._');
   }
   if (mine.length > 0) {
@@ -34,27 +33,35 @@ export async function renderBoard({ client, identity, workspace, config }) {
     for (const r of mine) lines.push(`- [${r.task_id}] ${r.objective} — lease until ${r.lease_until}`);
     lines.push('');
   }
-  if (offered.length > 0) {
+  if (open.length > 0) {
     lines.push('**Open (claimable):**');
-    for (const r of offered) lines.push(`- [${r.task_id}] ${r.objective}${r.state ? ` (${r.state})` : ''}`);
+    for (const r of open) lines.push(`- [${r.task_id}] ${r.objective}${r.state ? ` (${r.state})` : ''}`);
     lines.push('');
   }
-  if (theirs.length > 0) {
+  if (asserted.length > 0) {
+    lines.push('**Asserted (completion claimed — awaiting a non-author verdict; `oathe verify` runs it):**');
+    for (const r of asserted) lines.push(`- [${r.task_id}] ${r.objective}`);
+    lines.push('');
+  }
+  if (held.length > 0) {
     lines.push('**Held:**');
-    for (const r of theirs) lines.push(`- [${r.task_id}] ${r.objective} (${r.principal_id})`);
+    for (const r of held) lines.push(`- [${r.task_id}] ${r.objective} (${r.principal_id})`);
   }
 
   let message;
   if (mine.length > 0) {
     const n = mine.length === 1 ? '1 task' : `${mine.length} tasks`;
     message = `🎉 Oathe just saved your session state — ${n} still yours! ${starAsk}`;
-  } else if (offered.length + theirs.length > 0) {
-    const open = offered.length === 1 ? '1 open task' : `${offered.length} open tasks`;
-    message = `🔒 Oathe: ${open}${theirs.length > 0 ? ` · ${theirs.length} held` : ''}`;
+  } else if (total > 0) {
+    const parts = [];
+    parts.push(open.length === 1 ? '1 open task' : `${open.length} open tasks`);
+    if (asserted.length > 0) parts.push(`${asserted.length} asserted`);
+    if (held.length > 0) parts.push(`${held.length} held`);
+    message = `🔒 Oathe: ${parts.join(' · ')}`;
   } else {
     message = '🍺 No open tasks in this folder — Oathe is keeping track.';
   }
-  return { context: lines.join('\n'), message, sections: { mine, offered, theirs } };
+  return { context: lines.join('\n'), message, sections };
 }
 
 const BOLD = '\x1b[1m';
@@ -67,8 +74,8 @@ const OBJECTIVE_WIDTH = 48;
  * bold ids, aligned columns, dim detail. An empty board is just the state line.
  */
 export function renderSplash({ message, sections, workspace }) {
-  const { mine, offered, theirs } = sections;
-  const all = [...mine, ...offered, ...theirs];
+  const { mine, open, asserted, held } = sections;
+  const all = [...mine, ...open, ...asserted, ...held];
   const out = ['', `  ${message}   ${DIM}${workspace}${RESET}`, ''];
   if (all.length === 0) return `${out.join('\n')}\n`;
 
@@ -84,7 +91,8 @@ export function renderSplash({ message, sections, workspace }) {
     out.push('');
   };
   section('YOURS', mine, (r) => `lease until ${r.lease_until}`);
-  section('OPEN', offered, (r) => r.state ?? 'unclaimed');
-  section('HELD', theirs, (r) => r.principal_id);
+  section('OPEN', open, (r) => r.state ?? 'unclaimed');
+  section('ASSERTED', asserted, () => 'awaiting verdict');
+  section('HELD', held, (r) => r.principal_id);
   return `${out.join('\n')}\n`;
 }

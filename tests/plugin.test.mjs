@@ -173,6 +173,7 @@ test('open tasks that are NOT yours summarize without celebration or the star as
     assert.match(payload.systemMessage, /\u{1F512}/u); // the lock
     assert.match(payload.systemMessage, /1 open task\b/);
     assert.doesNotMatch(payload.systemMessage, /held/, 'zero held stays unsaid');
+    assert.doesNotMatch(payload.systemMessage, /asserted/, 'zero asserted stays unsaid');
     assert.doesNotMatch(payload.systemMessage, /contracts|for signing|elsewhere/i);
     assert.doesNotMatch(payload.systemMessage, /\u{1F389}/u);
     assert.doesNotMatch(payload.systemMessage, /github\.com/);
@@ -202,6 +203,39 @@ test('heartbeat (Stop) renews the active lease for this workspace', async () => 
       "SELECT ownership_valid_until > now() + interval '3 hours' AS renewed "
       + "FROM cell.work_claim WHERE task_id = 'beat-me' AND state = 'active'");
     assert.equal(rows[0].renewed, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('heartbeat LINKS the session trace to active claims — one statement per claim x session, idempotent', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-link-'));
+  try {
+    const { workspaceRef } = await import('../src/workspace.mjs');
+    const ws = workspaceRef(dir);
+    await substrate.query(`
+      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                             verify_by, claim_mode, created_at)
+      VALUES ('oathe', 'link-me', 'founder', 'trace linkage', 'minted_at_claim',
+              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
+    await substrate.query(
+      `SELECT cell.claim_work('oathe', 'link-me', gen_random_uuid(), NULL, 'firia', 'founder',
+              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
+      [`workspace:${ws};contract:oathe/link-me@v1`]);
+    const hookInput = {
+      cwd: dir, hook_event_name: 'Stop',
+      session_id: 'sess-link-0001', transcript_path: '/fake/home/.claude/projects/x/sess-link-0001.jsonl',
+    };
+    const first = runHook('heartbeat.mjs', hookInput, { OATHE_PRINCIPAL: 'firia' });
+    assert.equal(first.status, 0, first.stderr);
+    const second = runHook('heartbeat.mjs', hookInput, { OATHE_PRINCIPAL: 'firia' });
+    assert.equal(second.status, 0, second.stderr);
+    const { rows } = await substrate.query(
+      "SELECT proposition, evidence_refs FROM cell.agent_statement "
+      + "WHERE task_id = 'link-me' AND subject_ref = 'trace:sess-link-0001'");
+    assert.equal(rows.length, 1, 'exactly ONE trace statement per claim x session');
+    assert.match(rows[0].proposition, /claude/);
+    assert.deepEqual(rows[0].evidence_refs, ['/fake/home/.claude/projects/x/sess-link-0001.jsonl']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

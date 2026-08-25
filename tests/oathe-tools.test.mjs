@@ -208,6 +208,15 @@ test('oathe_done without an active claim is a typed refusal', async () => {
     (e) => e.code === 'OATHE_NO_ACTIVE_CLAIM');
 });
 
+test('the board classifies into four buckets — asserted work is NOT open', async () => {
+  // done-task reached completion_asserted earlier in this suite; task-x is yielded (open).
+  const { sections } = await tools.oathe_board({});
+  assert.ok(sections.asserted.some((r) => r.task_id === 'done-task'), JSON.stringify(sections.asserted));
+  assert.ok(!sections.open.some((r) => r.task_id === 'done-task'), 'asserted excluded from open');
+  assert.ok(sections.open.some((r) => r.task_id === 'task-x'));
+  assert.deepEqual(Object.keys(sections).sort(), ['asserted', 'held', 'mine', 'open']);
+});
+
 test('the board collapses to ONE row per task: the latest claim wins', async () => {
   // task-x now has multiple claims (yielded, re-claimed, yielded again) — one row, the latest.
   const { board } = await tools.oathe_board({});
