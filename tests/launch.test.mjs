@@ -103,6 +103,16 @@ test('runCodex launches Codex in the same cage with the same host — the W2 pre
   assert.ok(fs.existsSync(path.join(cwd, 'AGENTS.md')), 'pre-flight wrote the Codex surface');
 });
 
+test('the launcher prints the board into the terminal BEFORE the harness starts — TUIs bury hook output', async () => {
+  const cwd = projectDir();
+  const printed = [];
+  const capture = { write: (text) => { printed.push(text); return true; } };
+  await runCodex({ env: sb.env, cwd, args: [], renewIntervalMs: 50, out: capture });
+  const all = printed.join('');
+  assert.match(all, /\u{1F37A}|\u{1F389}|\u{1F512}/u, 'the visible state line leads');
+  assert.match(all, /## Oathe board/, 'the full board follows in scrollback');
+});
+
 test('runCodex refuses when Codex was never onboarded (no codex rows in the manifest)', async () => {
   const bare = sandbox({ scratchDb: SCRATCH_DB });
   fs.rmSync(path.join(bare.home, '.codex'), { recursive: true }); // codex not installed at init time

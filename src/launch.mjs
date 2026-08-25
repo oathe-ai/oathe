@@ -125,11 +125,22 @@ function curatedEnv(env, { hermetic, extra }) {
  */
 export async function runHarness({
   harness, env = process.env, cwd = process.cwd(), args = [], hermetic = false, exec,
-  renewIntervalMs = 60_000,
+  renewIntervalMs = 60_000, out = process.stdout,
 } = {}) {
   const { workspace } = await preflight({ env, cwd, exec, harness });
   const ctx = buildContext({ env, exec });
   const { paths, substrate, identity } = ctx;
+
+  // The board, printed into terminal SCROLLBACK before the TUI starts — harness TUIs (Codex
+  // especially) bury hook output in transcript overlays, and launch-time state was the point.
+  try {
+    const { renderBoard } = await import('./board-render.mjs');
+    const seen = await renderBoard({ client: substrate, identity, workspace });
+    out.write(`${seen.message}\n\n${seen.context}\n\n`);
+  } catch (e) {
+    out.write(`Oathe board unavailable (${String(e?.message || e).slice(0, 120)})\n`);
+  }
+
   const { spawnCaged } = await import(pathToFileURL(paths.cagePath).href);
 
   const unit = `oathe-${Date.now().toString(36)}-${process.pid}`;
