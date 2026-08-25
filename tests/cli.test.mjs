@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 import { sandbox } from './helpers.mjs';
@@ -65,6 +66,37 @@ test('claim → done closes the loop from the CLI', () => {
   assert.equal(done.status, 0, done.stderr);
   assert.match(done.stdout, /completion ASSERTED, not settled/);
   assert.match(done.stdout, /^oathe: done ok$/m);
+});
+
+test('everything after claude/codex passes through VERBATIM — flags included; only --hermetic (and one --) is ours', () => {
+  const argsFile = path.join(sb.home, 'claude-args.txt');
+  fs.writeFileSync(path.join(sb.bin, 'claude'),
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\nexit 0\n`);
+  fs.chmodSync(path.join(sb.bin, 'claude'), 0o755);
+  const out = oathe(['claude', '--hermetic', '-p', 'hello world', '--model', 'haiku', '--', '--hermetic']);
+  assert.equal(out.status, 0, out.stderr);
+  const got = fs.readFileSync(argsFile, 'utf8').split('\n').filter((l) => l !== '');
+  assert.deepEqual(got, ['-p', 'hello world', '--model', 'haiku', '--hermetic']);
+});
+
+test('oathe hook render-board runs the SessionStart hook through the bin', () => {
+  const out = spawnSync('node', [BIN, 'hook', 'render-board'], {
+    input: JSON.stringify({ cwd: sb.home, hook_event_name: 'SessionStart' }),
+    encoding: 'utf8', env: sb.env,
+  });
+  assert.equal(out.status, 0, out.stderr);
+  const payload = JSON.parse(out.stdout);
+  assert.equal(payload.hookSpecificOutput.hookEventName, 'SessionStart');
+});
+
+test('oathe mcp serves the stdio JSON-RPC loop through the bin', () => {
+  const out = spawnSync('node', [BIN, 'mcp'], {
+    input: `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })}\n`,
+    encoding: 'utf8', env: sb.env, timeout: 15000,
+  });
+  const line = out.stdout.trim().split('\n')[0];
+  const msg = JSON.parse(line);
+  assert.equal(msg.result.protocolVersion, '2025-06-18');
 });
 
 test('a second claim is the substrate refusal, faithfully non-zero', () => {

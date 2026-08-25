@@ -258,7 +258,7 @@ test('CodexHarness.onboard runs the sanctioned CLIs, verifies config.toml, and r
   const flat = exec.calls.map((c) => c.join(' '));
   assert.ok(flat.some((c) => c.startsWith(`codex plugin marketplace add ${paths.packageRoot}`)), flat.join('|'));
   assert.ok(flat.some((c) => c.startsWith('codex plugin add oathe@oathe')));
-  assert.ok(flat.some((c) => c.startsWith(`codex mcp add oathe -- node ${paths.mcpServerPath}`)));
+  assert.ok(flat.some((c) => c.startsWith('codex mcp add oathe -- oathe mcp')), flat.join('|'));
 
   const rows = manifest.rows.filter((r) => r.harness === 'codex');
   assert.equal(rows.length, 3);

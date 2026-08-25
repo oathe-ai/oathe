@@ -217,7 +217,7 @@ export class CodexHarness extends Harness {
       },
       {
         id: 'mcp-server',
-        add: ['mcp', 'add', 'oathe', '--', 'node', this.paths.mcpServerPath],
+        add: ['mcp', 'add', 'oathe', '--', 'oathe', 'mcp'],
         proof: '[mcp_servers.oathe]',
         undo: ['mcp', 'remove', 'oathe'],
       },

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { sandbox } from './helpers.mjs';
-import { preflight, runClaude } from '../src/launch.mjs';
+import { preflight, runClaude, runCodex } from '../src/launch.mjs';
 import { runInit } from '../src/init.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
@@ -91,4 +91,23 @@ test('runClaude --hermetic hands the child a REPLACED minimal environment', asyn
   assert.ok(!seen.includes('SUPER_SECRET_TOKEN'), 'hermetic env must not leak arbitrary vars');
   assert.match(seen, /FIRIA_EXECUTION_ATTEMPT_ID=/, 'the fence stamp reaches the child');
   assert.match(seen, /OATHE_DB=/, 'oathe wiring reaches the child');
+});
+
+test('runCodex launches Codex in the same cage with the same host — the W2 premise died in research', async () => {
+  const cwd = projectDir();
+  fs.writeFileSync(path.join(sb.bin, 'codex'), '#!/bin/sh\necho codex-session-ran; exit 0\n');
+  fs.chmodSync(path.join(sb.bin, 'codex'), 0o755);
+  const out = await runCodex({ env: sb.env, cwd, args: [], renewIntervalMs: 50 });
+  assert.equal(out.exitCode, 0);
+  assert.equal(out.teardown.empty, true, 'the cage was proven empty after exit');
+  assert.ok(fs.existsSync(path.join(cwd, 'AGENTS.md')), 'pre-flight wrote the Codex surface');
+});
+
+test('runCodex refuses when Codex was never onboarded (no codex rows in the manifest)', async () => {
+  const bare = sandbox({ scratchDb: SCRATCH_DB });
+  fs.rmSync(path.join(bare.home, '.codex'), { recursive: true }); // codex not installed at init time
+  await runInit({ env: bare.env, exec: bare.exec });
+  await assert.rejects(
+    () => runCodex({ env: bare.env, cwd: projectDir(), renewIntervalMs: 50 }),
+    (e) => e.code === 'OATHE_NOT_INSTALLED' && /codex/i.test(e.message));
 });

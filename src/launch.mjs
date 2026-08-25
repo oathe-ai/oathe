@@ -42,13 +42,14 @@ function fenceBody(workspace) {
  * section, and that the global install exists. Creates a minimal file holding only the fence
  * when absent — recorded as a project-scope manifest row either way.
  */
-export async function preflight({ env = process.env, cwd = process.cwd(), exec } = {}) {
+export async function preflight({ env = process.env, cwd = process.cwd(), exec, harness = 'claude' } = {}) {
   const ctx = buildContext({ env, exec });
   const { manifest, harnesses, version, substrate } = ctx;
   await substrate.close(); // preflight itself never talks to the database
-  if (!manifest.rows.some((r) => r.harness === 'claude')) {
+  if (!manifest.rows.some((r) => r.harness === harness)) {
     throw new LaunchError('OATHE_NOT_INSTALLED',
-      'the global install is missing (no claude rows in the install manifest) — run `oathe init` first');
+      `the ${harness} install is missing (no ${harness} rows in the install manifest) — `
+      + 'run `oathe init` with that harness present first');
   }
   const seen = census(harnesses);
   const workspace = workspaceRef(cwd);
@@ -114,14 +115,19 @@ function curatedEnv(env, { hermetic, extra }) {
 }
 
 /**
- * @param {{env?: object, cwd?: string, args?: string[], hermetic?: boolean,
- *          exec?: object, renewIntervalMs?: number}} o
+ * ONE launcher, both harnesses — same cage, same session host, same pre-flight; only the
+ * binary differs. (The plan parked `oathe codex` in W2 on the premise that Codex lacked
+ * Stop/PreCompact; the docs pass proved both exist, so the premise — and the wait — died.)
+ *
+ * @param {{harness: 'claude'|'codex', env?: object, cwd?: string, args?: string[],
+ *          hermetic?: boolean, exec?: object, renewIntervalMs?: number}} o
  * @returns {Promise<{exitCode: number, teardown: object, workspace: string}>}
  */
-export async function runClaude({
-  env = process.env, cwd = process.cwd(), args = [], hermetic = false, exec, renewIntervalMs = 60_000,
+export async function runHarness({
+  harness, env = process.env, cwd = process.cwd(), args = [], hermetic = false, exec,
+  renewIntervalMs = 60_000,
 } = {}) {
-  const { workspace } = await preflight({ env, cwd, exec });
+  const { workspace } = await preflight({ env, cwd, exec, harness });
   const ctx = buildContext({ env, exec });
   const { paths, substrate, identity } = ctx;
   const { spawnCaged } = await import(pathToFileURL(paths.cagePath).href);
@@ -137,7 +143,7 @@ export async function runClaude({
   const cage = spawnCaged({
     unit,
     env: curatedEnv(env, { hermetic, extra }),
-    cmd: resolveOnPath(env.PATH, 'claude'),
+    cmd: resolveOnPath(env.PATH, harness),
     args,
     cwd,
     stdio: 'inherit', // an interactive daily driver owns the terminal
@@ -163,4 +169,12 @@ export async function runClaude({
   }
   const teardown = await cage.teardownProvenEmpty();
   return { exitCode, teardown, workspace };
+}
+
+export function runClaude(o = {}) {
+  return runHarness({ ...o, harness: 'claude' });
+}
+
+export function runCodex(o = {}) {
+  return runHarness({ ...o, harness: 'codex' });
 }

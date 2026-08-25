@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "oathe": {
-      "command": "node",
-      "args": ["/Users/firiya/oathe-playground/src/mcp/oathe-tools.mjs"],
+      "command": "oathe",
+      "args": [
+        "mcp"
+      ],
       "env": {
         "OATHE_WORKSPACE_DIR": "${CLAUDE_PROJECT_DIR}"
       }

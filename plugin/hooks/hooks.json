@@ -1,5 +1,5 @@
 {
-  "description": "Oathe session lifecycle: the folder's board at SessionStart, lease heartbeat at Stop, frame note before compaction. Same three events exist verbatim in Claude Code and Codex. Commands are ABSOLUTE paths into the package: Claude Code copies the plugin to its cache on install, so plugin-root-relative escapes would dangle.",
+  "description": "Oathe session lifecycle: the board at SessionStart, lease heartbeat at Stop, frame note before compaction. Same three events exist verbatim in Claude Code and Codex. Commands go through the oathe bin on PATH \u2014 the plugin is cached by copy in both harnesses, so the tree carries no paths.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /Users/firiya/oathe-playground/plugin/hooks/render-board.mjs",
+            "command": "oathe hook render-board",
             "timeout": 8
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /Users/firiya/oathe-playground/plugin/hooks/heartbeat.mjs",
+            "command": "oathe hook heartbeat",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /Users/firiya/oathe-playground/plugin/hooks/frame-note.mjs",
+            "command": "oathe hook frame-note",
             "timeout": 5
           }
         ]

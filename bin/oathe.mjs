@@ -5,13 +5,14 @@
 
 import { parseArgs } from 'node:util';
 
-const VERBS = ['init', 'claude', 'claim', 'ls', 'note', 'done', 'yield', 'doctor', 'uninstall', 'status'];
+const VERBS = ['init', 'claude', 'codex', 'claim', 'ls', 'note', 'done', 'yield', 'doctor', 'uninstall', 'status', 'hook', 'mcp'];
 
 const USAGE = `usage: oathe <verb> [args]
 
 verbs:
   init                         onboard installed harnesses + bring up the local cell substrate
   claude [--hermetic] [args…]  launch interactive Claude Code inside the cage, board attached
+  codex  [--hermetic] [args…]  launch interactive Codex inside the cage, board attached
   claim <task-id> [objective]  claim a task (minting it when new — objective required then)
   ls [--all]                   this workspace's board (--all: every workspace)
   note <task-id> <text> [ref]  record a progress statement against your active claim
@@ -20,6 +21,7 @@ verbs:
   doctor                       verify every managed surface against the install manifest
   status                       the substrate half of doctor
   uninstall [--purge-db]       remove exactly what init recorded (the database stays put)
+  hook <name> · mcp            internal: the plugin's hook/server entry points (bin-addressed)
 `;
 
 function summary(verb, status) {
@@ -67,19 +69,27 @@ const handlers = {
   },
 
   async claude(argv) {
-    const { values, positionals } = parseArgs({
-      args: argv, options: { hermetic: { type: 'boolean', default: false } },
-      allowPositionals: true, strict: false,
-    });
-    const { runClaude } = await import('../src/launch.mjs');
-    const out = await runClaude({ args: positionals, hermetic: values.hermetic === true });
-    if (!out.teardown.empty) {
-      process.stderr.write(`cage not proven empty: ${out.teardown.detail}\n`);
-      summary('claude', 'cage-unclean');
-      process.exit(out.exitCode || 1);
-    }
-    summary('claude', `exit ${out.exitCode}`);
-    process.exit(out.exitCode);
+    return launchHarness('claude', argv);
+  },
+
+  async codex(argv) {
+    return launchHarness('codex', argv);
+  },
+
+  async hook(argv) {
+    const scripts = {
+      'render-board': 'render-board.mjs', heartbeat: 'heartbeat.mjs', 'frame-note': 'frame-note.mjs',
+    };
+    const script = scripts[argv[0]];
+    if (!script) throw new Error(`usage: oathe hook <${Object.keys(scripts).join('|')}>`);
+    const { buildPaths } = await import('../src/paths.mjs');
+    // The hook module runs on import (reads stdin, writes its frame, exits 0 itself).
+    await import(`${buildPaths(process.env).pluginDir}/hooks/${script}`);
+  },
+
+  async mcp() {
+    const { main } = await import('../src/mcp/oathe-tools.mjs');
+    await main();
   },
 
   async claim(argv) {
@@ -195,6 +205,36 @@ const handlers = {
     summary('uninstall', 'ok');
   },
 };
+
+/**
+ * Everything after the verb is the HARNESS's, verbatim — flags included. oathe consumes only
+ * its own `--hermetic` (first occurrence) and one `--` separator; `oathe claude -- --hermetic`
+ * hands the harness a literal --hermetic.
+ */
+function splitLaunchArgs(argv) {
+  const args = [];
+  let hermetic = false;
+  let passthrough = false;
+  for (const a of argv) {
+    if (!passthrough && a === '--') { passthrough = true; continue; }
+    if (!passthrough && !hermetic && a === '--hermetic') { hermetic = true; continue; }
+    args.push(a);
+  }
+  return { hermetic, args };
+}
+
+async function launchHarness(harness, argv) {
+  const { hermetic, args } = splitLaunchArgs(argv);
+  const { runHarness } = await import('../src/launch.mjs');
+  const out = await runHarness({ harness, args, hermetic });
+  if (!out.teardown.empty) {
+    process.stderr.write(`cage not proven empty: ${out.teardown.detail}\n`);
+    summary(harness, 'cage-unclean');
+    process.exit(out.exitCode || 1);
+  }
+  summary(harness, `exit ${out.exitCode}`);
+  process.exit(out.exitCode);
+}
 
 const [verb, ...rest] = process.argv.slice(2);
 if (!verb || !VERBS.includes(verb)) {
