@@ -23,16 +23,51 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0' }
   for (const name of ['claude', 'codex']) fs.chmodSync(path.join(bin, name), 0o755);
 
   const configPath = path.join(home, '.codex/config.toml');
-  const exec = {
-    calls: [],
-    run(cmd, args) {
-      this.calls.push([cmd, ...args]);
+  const registryDir = path.join(home, '.claude/plugins');
+  const readJson = (file, fallback) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback);
+  const writeJson = (file, doc) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+  };
+  // One fake per real CLI, each mirroring the files the real one writes so verification has
+  // bytes to read: codex -> config.toml stanzas; claude -> the plugins registry.
+  const fakes = {
+    codex(args) {
       const prior = fs.readFileSync(configPath, 'utf8');
       const stanza = { marketplace: '[marketplaces.oathe]', add: '[plugins."oathe@oathe"]', mcp: '[mcp_servers.oathe]' };
       const key = args[0] === 'mcp' ? 'mcp' : (args[1] === 'marketplace' ? 'marketplace' : 'add');
       const line = stanza[key];
       if (args.includes('remove')) fs.writeFileSync(configPath, prior.replace(`${line}\n`, ''));
       else if (!prior.includes(line)) fs.writeFileSync(configPath, `${prior}${line}\n`);
+    },
+    claude(args) {
+      const marketplacesFile = path.join(registryDir, 'known_marketplaces.json');
+      const installedFile = path.join(registryDir, 'installed_plugins.json');
+      if (args[1] === 'marketplace' && args[2] === 'add') {
+        const doc = readJson(marketplacesFile, {});
+        doc.oathe = { source: { source: 'directory', path: args[3] } };
+        writeJson(marketplacesFile, doc);
+      } else if (args[1] === 'marketplace' && args[2] === 'remove') {
+        const doc = readJson(marketplacesFile, {});
+        delete doc.oathe;
+        writeJson(marketplacesFile, doc);
+      } else if (args[1] === 'install') {
+        const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+        const doc = readJson(installedFile, { version: 2, plugins: {} });
+        doc.plugins[args[2]] = [{ scope: 'user', version: pkg.version }];
+        writeJson(installedFile, doc);
+      } else if (args[1] === 'uninstall') {
+        const doc = readJson(installedFile, { version: 2, plugins: {} });
+        delete doc.plugins[args[2]];
+        writeJson(installedFile, doc);
+      }
+    },
+  };
+  const exec = {
+    calls: [],
+    run(cmd, args) {
+      this.calls.push([cmd, ...args]);
+      fakes[cmd]?.(args);
       return { status: 0, stdout: '', stderr: '' };
     },
   };

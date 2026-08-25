@@ -41,7 +41,9 @@ test('hooks.json uses only events BOTH harnesses know, with plugin-root commands
     for (const group of hooks[event]) {
       for (const hook of group.hooks) {
         assert.equal(hook.type, 'command');
-        assert.match(hook.command, /\$\{CLAUDE_PLUGIN_ROOT\}/);
+        // ABSOLUTE paths into the package: the plugin is COPIED to Claude's cache on install,
+        // so ${CLAUDE_PLUGIN_ROOT}-relative escapes (../src) would dangle. Verified 2.1.241.
+        assert.ok(hook.command.startsWith(`node ${paths.packageRoot}/plugin/hooks/`), hook.command);
         assert.ok(Number.isInteger(hook.timeout) && hook.timeout <= 10, 'timeout in seconds, snappy');
       }
     }
@@ -62,11 +64,11 @@ test('the skill obeys the Agent Skills spec: name equals its directory, bounded 
   assert.ok(fm[2].split('\n').length < 500, 'body under 500 lines');
 });
 
-test('.mcp.json registers the oathe server relative to the plugin root with project-scoped workspace', () => {
+test('.mcp.json registers the oathe server by ABSOLUTE package path with project-scoped workspace', () => {
   const mcp = JSON.parse(fs.readFileSync(path.join(paths.pluginDir, '.mcp.json'), 'utf8'));
   const server = mcp.mcpServers?.oathe ?? mcp.oathe;
   assert.equal(server.command, 'node');
-  assert.match(server.args[0], /\$\{CLAUDE_PLUGIN_ROOT\}/);
+  assert.equal(server.args[0], path.join(paths.packageRoot, 'src/mcp/oathe-tools.mjs'));
   assert.equal(server.env.OATHE_WORKSPACE_DIR, '${CLAUDE_PROJECT_DIR}');
 });
 

@@ -11,6 +11,7 @@ import { buildPaths } from '../src/paths.mjs';
 
 const paths = buildPaths({});
 const SCRATCH_DB = `oathe_launch_test_${process.pid}`;
+const VERSION = JSON.parse(fs.readFileSync(path.join(paths.packageRoot, 'package.json'), 'utf8')).version;
 
 let sb;
 
@@ -33,7 +34,7 @@ test('preflight creates a minimal CLAUDE.md carrying only the fence when none ex
   const cwd = projectDir();
   const result = await preflight({ env: sb.env, cwd });
   const claudeMd = fs.readFileSync(path.join(cwd, 'CLAUDE.md'), 'utf8');
-  assert.match(claudeMd, /<!-- >>> oathe v0\.1\.0 >>> -->/);
+  assert.match(claudeMd, new RegExp(`<!-- >>> oathe v${VERSION.replaceAll('.', '\\.')} >>> -->`));
   assert.match(claudeMd, /## Oathe/);
   assert.match(claudeMd, /oathe/);
   const manifest = JSON.parse(fs.readFileSync(path.join(sb.env.OATHE_HOME, 'install-manifest.json'), 'utf8'));
@@ -58,7 +59,7 @@ test('preflight writes the AGENTS.md fence too when Codex is detected', async ()
   const cwd = projectDir();
   await preflight({ env: sb.env, cwd });
   const agents = fs.readFileSync(path.join(cwd, 'AGENTS.md'), 'utf8');
-  assert.match(agents, /<!-- >>> oathe v0\.1\.0 >>> -->/);
+  assert.match(agents, new RegExp(`<!-- >>> oathe v${VERSION.replaceAll('.', '\\.')} >>> -->`));
   assert.ok(agents.length < 600, 'the fence stays tiny — Codex caps project docs at 32KB');
 });
 

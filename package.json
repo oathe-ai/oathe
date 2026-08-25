@@ -1,6 +1,6 @@
 {
   "name": "oathe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "The Oathe interface: an npm package whose init onboards both installed harnesses (Claude Code, Codex) onto the local cell substrate, and whose launchers bind interactive sessions to claims.",

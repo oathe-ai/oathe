@@ -77,11 +77,44 @@ export class ClaudeHarness extends Harness {
   #ownedEntries() {
     return [
       {
+        // "directory" is what the INSTALLED CLI's settings schema accepts (verified empirically
+        // on 2.1.241: the pre-existing custom-plugins entry validates, a "local" entry is
+        // rejected with "Invalid input" and the whole file is skipped). The docs say "local";
+        // the binary outranks the docs.
         path: ['extraKnownMarketplaces', 'oathe'],
-        value: { source: { source: 'local', path: this.paths.packageRoot } },
+        value: { source: { source: 'directory', path: this.paths.packageRoot } },
       },
       { path: ['enabledPlugins', 'oathe@oathe'], value: true },
     ];
+  }
+
+  get registryDir() {
+    return path.join(this.configHome, 'plugins');
+  }
+
+  get installedFile() {
+    return path.join(this.registryDir, 'installed_plugins.json');
+  }
+
+  #readRegistry(file) {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+  }
+
+  #installedVersion() {
+    return this.#readRegistry(this.installedFile)?.plugins?.['oathe@oathe']?.[0]?.version ?? null;
+  }
+
+  #marketplaceKnown() {
+    return this.#readRegistry(path.join(this.registryDir, 'known_marketplaces.json'))?.oathe !== undefined;
+  }
+
+  #cli(args) {
+    const result = this.exec.run('claude', args);
+    if (result.status !== 0) {
+      throw new HarnessOnboardError('CLAUDE_CLI_FAILED',
+        `claude ${args.join(' ')} exited ${result.status}: ${result.stderr.trim()}`, { args });
+    }
+    return result;
   }
 
   onboard({ manifest, version }) {
@@ -101,17 +134,57 @@ export class ClaudeHarness extends Harness {
       blockVersion: version,
       sha256: sha256Hex(JSON.stringify(entries)),
     });
-    return [{ action: 'settings-owned-paths', file: this.settingsPath, changed }];
+
+    // MATERIALIZE via the CLI. The settings entries above are the declarative pin, but the CLI's
+    // own registry (installed_plugins.json) is what sessions load from — and the install is a
+    // CACHED COPY keyed by version, so a version change must evict the stale copy.
+    const installed = this.#installedVersion();
+    let materialized = false;
+    if (installed !== version) {
+      if (!this.#marketplaceKnown()) this.#cli(['plugin', 'marketplace', 'add', this.paths.packageRoot]);
+      if (installed !== null) this.#cli(['plugin', 'uninstall', 'oathe@oathe']);
+      this.#cli(['plugin', 'install', 'oathe@oathe']);
+      if (this.#installedVersion() !== version) {
+        throw new HarnessOnboardError('CLAUDE_VERIFICATION_FAILED',
+          'verification failed: `claude plugin install oathe@oathe` reported success but '
+          + `${this.installedFile} does not record version ${version} — refusing to record an `
+          + 'install that cannot be proven');
+      }
+      materialized = true;
+    }
+    manifest.upsert({
+      harness: this.name,
+      file: this.installedFile,
+      kind: 'cli-managed',
+      detail: {
+        id: 'plugin-install',
+        proof: 'oathe@oathe',
+        undo: [['plugin', 'uninstall', 'oathe@oathe'], ['plugin', 'marketplace', 'remove', 'oathe']],
+      },
+      blockVersion: version,
+      sha256: sha256Hex('oathe@oathe'),
+    });
+    return [
+      { action: 'settings-owned-paths', file: this.settingsPath, changed },
+      { action: materialized ? 'plugin-installed' : 'plugin-already-current', file: this.installedFile },
+    ];
   }
 
   offboard({ manifest }) {
     const rows = manifest.removeWhere((r) => r.harness === this.name);
-    if (!fs.existsSync(this.settingsPath)) return [{ action: 'settings-absent' }];
+    const actions = [];
+    for (const row of rows.filter((r) => r.kind === 'cli-managed')) {
+      for (const undo of row.detail?.undo ?? []) {
+        const result = this.exec.run('claude', undo);
+        actions.push({ action: `claude-undo-${undo.join('-')}`, status: result.status });
+      }
+    }
+    if (!fs.existsSync(this.settingsPath)) return [...actions, { action: 'settings-absent' }];
     const before = fs.readFileSync(this.settingsPath, 'utf8');
     const ownedPaths = rows.flatMap((r) => r.detail?.paths ?? []);
     const { content, changed } = this.entries.remove(before, ownedPaths);
     if (changed) fs.writeFileSync(this.settingsPath, content);
-    return [{ action: 'settings-owned-paths-removed', file: this.settingsPath, changed }];
+    return [...actions, { action: 'settings-owned-paths-removed', file: this.settingsPath, changed }];
   }
 }
 

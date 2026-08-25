@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { sandbox as sharedSandbox } from './helpers.mjs';
 import { runInit } from '../src/init.mjs';
 import { runDoctor } from '../src/doctor.mjs';
 import { runUninstall } from '../src/uninstall.mjs';
@@ -13,43 +14,9 @@ import { buildPaths } from '../src/paths.mjs';
 const SCRATCH_DB = `oathe_init_test_${process.pid}`;
 const paths = buildPaths({});
 
-/** A sandbox HOME with both harnesses "installed", plus a codex CLI fake that writes config.toml. */
 function sandbox() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-init-'));
-  fs.mkdirSync(path.join(home, '.claude'));
-  fs.mkdirSync(path.join(home, '.codex'));
-  fs.writeFileSync(path.join(home, '.claude/settings.json'),
-    `${JSON.stringify({ theme: 'dark' }, null, 2)}\n`);
-  fs.writeFileSync(path.join(home, '.codex/config.toml'), '# user config\n');
-  const bin = path.join(home, 'bin');
-  fs.mkdirSync(bin);
-  for (const name of ['claude', 'codex']) {
-    fs.writeFileSync(path.join(bin, name), '#!/bin/sh\n');
-    fs.chmodSync(path.join(bin, name), 0o755);
-  }
-  const configPath = path.join(home, '.codex/config.toml');
-  const exec = {
-    calls: [],
-    run(cmd, args) {
-      this.calls.push([cmd, ...args]);
-      const prior = fs.readFileSync(configPath, 'utf8');
-      const stanza = { marketplace: '[marketplaces.oathe]', add: '[plugins."oathe@oathe"]', mcp: '[mcp_servers.oathe]' };
-      const key = args[0] === 'mcp' ? 'mcp' : (args[1] === 'marketplace' ? 'marketplace' : 'add');
-      const line = stanza[key];
-      if (args.includes('remove')) fs.writeFileSync(configPath, prior.replace(`${line}\n`, ''));
-      else if (!prior.includes(line)) fs.writeFileSync(configPath, `${prior}${line}\n`);
-      return { status: 0, stdout: '', stderr: '' };
-    },
-  };
-  const env = {
-    ...process.env,
-    HOME: home,
-    PATH: bin,
-    OATHE_HOME: path.join(home, '.oathe'),
-    OATHE_DB: SCRATCH_DB,
-    OATHE_PRINCIPAL: 'firia',
-  };
-  return { home, env, exec };
+  const sb = sharedSandbox({ scratchDb: SCRATCH_DB });
+  return { home: sb.home, env: sb.env, exec: sb.exec };
 }
 
 after(async () => {

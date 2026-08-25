@@ -44,6 +44,28 @@ function fakeExec(script = {}) {
   };
 }
 
+
+/** An exec fake that mirrors the claude CLI's registry writes on install. */
+function registryExec(home, version) {
+  const installedFile = path.join(home, '.claude/plugins/installed_plugins.json');
+  return {
+    calls: [],
+    run(cmd, args) {
+      this.calls.push([cmd, ...args]);
+      if (cmd === 'claude' && args[1] === 'install') {
+        fs.mkdirSync(path.dirname(installedFile), { recursive: true });
+        fs.writeFileSync(installedFile, JSON.stringify({
+          version: 2, plugins: { 'oathe@oathe': [{ scope: 'user', version }] },
+        }));
+      }
+      if (cmd === 'claude' && args[1] === 'uninstall') {
+        fs.writeFileSync(installedFile, JSON.stringify({ version: 2, plugins: {} }));
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  };
+}
+
 const paths = buildPaths({});
 
 // ---------------------------------------------------------------- detection
@@ -87,13 +109,13 @@ test('ClaudeHarness.onboard writes marketplace + enablement into settings.json v
   const settingsPath = path.join(home, '.claude/settings.json');
   fs.writeFileSync(settingsPath, `${JSON.stringify({ theme: 'dark' }, null, 2)}\n`);
 
-  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths });
+  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec: registryExec(home, '0.1.0') });
   const actions = h.onboard({ manifest, version: '0.1.0' });
 
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   assert.equal(settings.theme, 'dark');
   assert.deepEqual(settings.extraKnownMarketplaces.oathe, {
-    source: { source: 'local', path: paths.packageRoot },
+    source: { source: 'directory', path: paths.packageRoot },
   });
   assert.equal(settings.enabledPlugins['oathe@oathe'], true);
 
@@ -111,12 +133,12 @@ test('ClaudeHarness.onboard twice is byte-idempotent', () => {
   const { home, manifest } = scratchHome();
   fs.mkdirSync(path.join(home, '.claude'));
   const settingsPath = path.join(home, '.claude/settings.json');
-  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths });
+  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec: registryExec(home, '0.1.0') });
   h.onboard({ manifest, version: '0.1.0' });
   const first = fs.readFileSync(settingsPath, 'utf8');
   h.onboard({ manifest, version: '0.1.0' });
   assert.equal(fs.readFileSync(settingsPath, 'utf8'), first);
-  assert.equal(manifest.rows.filter((r) => r.harness === 'claude').length, 1);
+  assert.equal(manifest.rows.filter((r) => r.harness === 'claude').length, 2); // settings + cli install
   assert.equal(manifest.backups.filter((b) => b.file === settingsPath).length, 1);
 });
 
@@ -125,14 +147,90 @@ test('ClaudeHarness.offboard removes exactly the owned keys and drops its manife
   fs.mkdirSync(path.join(home, '.claude'));
   const settingsPath = path.join(home, '.claude/settings.json');
   fs.writeFileSync(settingsPath, `${JSON.stringify({ theme: 'dark', enabledPlugins: { 'x@y': true } }, null, 2)}\n`);
-  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths });
+  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec: registryExec(home, '0.1.0') });
   h.onboard({ manifest, version: '0.1.0' });
+  const offExec = h.exec;
+  offExec.calls.length = 0;
   h.offboard({ manifest });
+  const offFlat = offExec.calls.map((c) => c.join(' '));
+  assert.ok(offFlat.some((c) => c.startsWith('claude plugin uninstall oathe@oathe')), offFlat.join('|'));
+  assert.ok(offFlat.some((c) => c.startsWith('claude plugin marketplace remove oathe')));
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   assert.equal(settings.theme, 'dark');
   assert.deepEqual(settings.enabledPlugins, { 'x@y': true });
   assert.equal('extraKnownMarketplaces' in settings, false);
   assert.equal(manifest.rows.filter((r) => r.harness === 'claude').length, 0);
+});
+
+test('ClaudeHarness.onboard MATERIALIZES the install via the claude CLI and verifies the registry', () => {
+  const { home, manifest } = scratchHome();
+  fs.mkdirSync(path.join(home, '.claude'));
+  const installedFile = path.join(home, '.claude/plugins/installed_plugins.json');
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(paths.packageRoot, 'package.json'), 'utf8')).version;
+  const exec = {
+    calls: [],
+    run(cmd, args) {
+      this.calls.push([cmd, ...args]);
+      if (cmd === 'claude' && args[1] === 'install') {
+        fs.mkdirSync(path.dirname(installedFile), { recursive: true });
+        fs.writeFileSync(installedFile, JSON.stringify({
+          version: 2, plugins: { 'oathe@oathe': [{ scope: 'user', version: pkgVersion }] },
+        }));
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  };
+  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec });
+  h.onboard({ manifest, version: pkgVersion });
+  const flat = exec.calls.map((c) => c.join(' '));
+  assert.ok(flat.some((c) => c.startsWith(`claude plugin marketplace add ${paths.packageRoot}`)), flat.join('|'));
+  assert.ok(flat.some((c) => c.startsWith('claude plugin install oathe@oathe')));
+  const cliRow = manifest.rows.find((r) => r.harness === 'claude' && r.kind === 'cli-managed');
+  assert.ok(cliRow, 'the materialized install is manifest-recorded');
+  assert.equal(cliRow.file, installedFile);
+});
+
+test('ClaudeHarness.onboard skips the CLIs when the registry already holds the right version, and REFRESHES on a version mismatch', () => {
+  const { home, manifest } = scratchHome();
+  fs.mkdirSync(path.join(home, '.claude/plugins'), { recursive: true });
+  const installedFile = path.join(home, '.claude/plugins/installed_plugins.json');
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(paths.packageRoot, 'package.json'), 'utf8')).version;
+  fs.writeFileSync(installedFile, JSON.stringify({
+    version: 2, plugins: { 'oathe@oathe': [{ scope: 'user', version: pkgVersion }] },
+  }));
+  const exec = fakeExec();
+  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec });
+  h.onboard({ manifest, version: pkgVersion });
+  assert.equal(exec.calls.length, 0, 'right version already installed: no CLI churn');
+
+  fs.writeFileSync(installedFile, JSON.stringify({
+    version: 2, plugins: { 'oathe@oathe': [{ scope: 'user', version: '0.0.9' }] },
+  }));
+  const exec2 = {
+    calls: [],
+    run(cmd, args) {
+      this.calls.push([cmd, ...args]);
+      if (args[1] === 'install') {
+        fs.writeFileSync(installedFile, JSON.stringify({
+          version: 2, plugins: { 'oathe@oathe': [{ scope: 'user', version: pkgVersion }] },
+        }));
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  };
+  const h2 = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec: exec2 });
+  h2.onboard({ manifest, version: pkgVersion });
+  const flat = exec2.calls.map((c) => c.join(' '));
+  assert.ok(flat.some((c) => c.startsWith('claude plugin uninstall oathe@oathe')), 'stale version evicted');
+  assert.ok(flat.some((c) => c.startsWith('claude plugin install oathe@oathe')));
+});
+
+test('ClaudeHarness.onboard fails loudly when the CLI reports success but the registry disagrees', () => {
+  const { home, manifest } = scratchHome();
+  fs.mkdirSync(path.join(home, '.claude'));
+  const exec = fakeExec(); // succeeds, writes nothing
+  const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec });
+  assert.throws(() => h.onboard({ manifest, version: '0.1.1' }), /verif/i);
 });
 
 // ---------------------------------------------------------------- Codex onboarding
