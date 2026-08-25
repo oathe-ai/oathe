@@ -115,7 +115,7 @@ test('oathe_board renders only this workspace unless all is asked', async () => 
     VALUES ('oathe', 'elsewhere', 'founder', 'other workspace task', 'minted_at_claim',
             '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
   await client.query(
-    `SELECT cell.claim_work('oathe', 'elsewhere', gen_random_uuid(), NULL, 'firia', 'founder',
+    `SELECT cell.claim_work('oathe', 'elsewhere', gen_random_uuid(), NULL, NULL, 'firia', 'founder',
             'exclusive', now() + interval '4 hours', 'workspace:ws-000000000000;contract:oathe/elsewhere@v1',
             now(), gen_random_uuid())`);
   const mine = await tools.oathe_board({});

@@ -190,7 +190,7 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
         }
       } else {
         await client.query(
-          `SELECT cell.claim_work($1, $2, $3, NULL, $4, $5, 'exclusive',
+          `SELECT cell.claim_work($1, $2, $3, NULL, NULL, $4, $5, 'exclusive',
                   now() + make_interval(hours => $6), $7, now(), $8)`,
           [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
       }

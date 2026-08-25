@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -27,7 +28,8 @@ test('buildPaths honours env overrides and derives dependents from them', () => 
 
 test('buildPaths locates the package root and the plugin tree it ships', () => {
   const p = buildPaths({});
-  assert.ok(p.packageRoot.endsWith('oathe-playground'));
+  const manifest = JSON.parse(fs.readFileSync(path.join(p.packageRoot, 'package.json'), 'utf8'));
+  assert.equal(manifest.name, 'oathe');
   assert.equal(p.pluginDir, path.join(p.packageRoot, 'plugin'));
   assert.equal(p.mcpServerPath, path.join(p.packageRoot, 'src/mcp/oathe-tools.mjs'));
 });

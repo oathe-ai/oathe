@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 
 import { sandbox } from './helpers.mjs';
 import { runInit } from '../src/init.mjs';
-import { Substrate } from '../src/substrate.mjs';
+import { Substrate, DDL_FILES } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
 
 const paths = buildPaths({});
@@ -159,7 +159,7 @@ test('doctor prints per-row verdicts and the substrate summary', () => {
   const out = oathe(['doctor']);
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /substrate.*reachable/i);
-  assert.match(out.stdout, /ddl.*26/i);
+  assert.match(out.stdout, new RegExp(`ddl.*${DDL_FILES.length}`, 'i'));
   assert.match(out.stdout, /ok/);
   assert.match(out.stdout, /^oathe: doctor ok$/m);
 });

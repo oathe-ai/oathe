@@ -17,7 +17,7 @@ const COMPILER_BUDGET_BYTES = 64 * 1024;
 /** The runtime config env for the local cell. Secrets are placeholders: the homebrew socket
  *  authenticates by peer, and no Anthropic call is made on this path — the loader just refuses
  *  UNRESOLVED secrets, so they must exist. */
-function runtimeEnv(substrate) {
+function runtimeEnv(substrate, paths) {
   return {
     FIRIA_RUNTIME_PG_URL: substrate.connectionString(),
     FIRIA_RUNTIME_POOLER: 'direct',
@@ -25,6 +25,9 @@ function runtimeEnv(substrate) {
     FIRIA_RUNTIME_MODEL: 'claude-fable-5',
     FIRIA_RUNTIME_MAX_BUDGET_USD: '10',
     FIRIA_RUNTIME_EGRESS_CLASS: 'cell_only',
+    // The per-attempt work root (<workRoot>/<attempt_id>/...) — the pickup path spawns no
+    // attempt, but the loader fail-closes, so oathe declares the dir it owns for that purpose.
+    FIRIA_RUNTIME_WORK_ROOT: paths.workRoot,
     FIRIA_RUNTIME_PG_PASSWORD: 'unused-local-socket-auth',
     FIRIA_RUNTIME_ANTHROPIC_API_KEY: 'unused-no-remote-call-on-this-path',
   };
@@ -45,7 +48,7 @@ export async function buildSuccessor({ substrate, identity, paths, env = process
 
   const pg = require('pg');
   const pool = new pg.Pool(substrate.connectionConfig());
-  const config = loadConfig({ ...runtimeEnv(substrate) });
+  const config = loadConfig({ ...runtimeEnv(substrate, paths) });
   const seam = new thinPath.SeamContextCompiler({
     client: pool,
     reader: new reader.CompanyContextReader({ client: pool, orgId: identity.orgId }),

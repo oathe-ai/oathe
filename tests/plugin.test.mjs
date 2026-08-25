@@ -110,7 +110,7 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
       VALUES ('oathe', 'render-me', 'founder', 'shown on the board', 'minted_at_claim',
               '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
     await substrate.query(
-      `SELECT cell.claim_work('oathe', 'render-me', gen_random_uuid(), NULL, 'firia', 'founder',
+      `SELECT cell.claim_work('oathe', 'render-me', gen_random_uuid(), NULL, NULL, 'firia', 'founder',
               'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
       [`workspace:${ws};contract:oathe/render-me@v1`]);
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
@@ -194,7 +194,7 @@ test('heartbeat (Stop) renews the active lease for this workspace', async () => 
       VALUES ('oathe', 'beat-me', 'founder', 'lease renewal', 'minted_at_claim',
               '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
     await substrate.query(
-      `SELECT cell.claim_work('oathe', 'beat-me', gen_random_uuid(), NULL, 'firia', 'founder',
+      `SELECT cell.claim_work('oathe', 'beat-me', gen_random_uuid(), NULL, NULL, 'firia', 'founder',
               'exclusive', now() + interval '1 minute', $1, now(), gen_random_uuid())`,
       [`workspace:${ws};contract:oathe/beat-me@v1`]);
     const out = runHook('heartbeat.mjs', { cwd: dir, hook_event_name: 'Stop' }, { OATHE_PRINCIPAL: 'firia' });
@@ -219,7 +219,7 @@ test('heartbeat LINKS the session trace to active claims — one statement per c
       VALUES ('oathe', 'link-me', 'founder', 'trace linkage', 'minted_at_claim',
               '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
     await substrate.query(
-      `SELECT cell.claim_work('oathe', 'link-me', gen_random_uuid(), NULL, 'firia', 'founder',
+      `SELECT cell.claim_work('oathe', 'link-me', gen_random_uuid(), NULL, NULL, 'firia', 'founder',
               'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
       [`workspace:${ws};contract:oathe/link-me@v1`]);
     const hookInput = {
@@ -281,7 +281,7 @@ test('frame-note (PreCompact) records a compaction statement against active clai
       VALUES ('oathe', 'note-me', 'founder', 'compaction note', 'minted_at_claim',
               '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
     await substrate.query(
-      `SELECT cell.claim_work('oathe', 'note-me', gen_random_uuid(), NULL, 'firia', 'founder',
+      `SELECT cell.claim_work('oathe', 'note-me', gen_random_uuid(), NULL, NULL, 'firia', 'founder',
               'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
       [`workspace:${ws};contract:oathe/note-me@v1`]);
     const out = runHook('frame-note.mjs', { cwd: dir, hook_event_name: 'PreCompact' }, { OATHE_PRINCIPAL: 'firia' });

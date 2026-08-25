@@ -1,7 +1,7 @@
 // oathe — the local cell substrate: detect Postgres, create the cell database, apply the shipped
 // DDL additively, seed the operator principal, register the operator yield cause.
 //
-// The DDL source of truth is the monorepo's 26 files, applied in DDL_FILES order — the list is
+// The DDL source of truth is the monorepo's DDL set, applied in DDL_FILES order — the list is
 // carried here VERBATIM because the DDL README binds "applied in DDL_FILES order from apply.py,
 // never by glob"; a unit test cross-checks this list against both apply.py and the directory, so
 // drift fails the suite rather than reordering a schema. Idempotency is oathe's own bookkeeping
@@ -44,6 +44,8 @@ export const DDL_FILES = Object.freeze([
   '024_executor_role_hardening.sql',
   '025_running_attempt_uniqueness.sql',
   '026_acceptance_authority.sql',
+  '027_ownership_return.sql',
+  '028_attempt_bind_ownership.sql',
 ]);
 
 const YIELD_CAUSE_FN = 'cell.oathe_yield_operator';

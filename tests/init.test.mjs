@@ -8,7 +8,7 @@ import { sandbox as sharedSandbox } from './helpers.mjs';
 import { runInit } from '../src/init.mjs';
 import { runDoctor } from '../src/doctor.mjs';
 import { runUninstall } from '../src/uninstall.mjs';
-import { Substrate } from '../src/substrate.mjs';
+import { Substrate, DDL_FILES } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
 
 const SCRATCH_DB = `oathe_init_test_${process.pid}`;
@@ -31,7 +31,7 @@ test('init end-to-end: substrate up, both harnesses onboarded, manifest written,
 
   assert.deepEqual(result.census.map((c) => [c.name, c.installed]), [['claude', true], ['codex', true]]);
   assert.equal(result.substrate.database_exists, true);
-  assert.equal(result.substrate.ddl_applied, 26);
+  assert.equal(result.substrate.ddl_applied, DDL_FILES.length);
   assert.equal(result.substrate.yield_cause_registered, true);
   assert.equal(result.principal.principal_id, 'firia');
   assert.equal(result.verifier.principal_id, 'oathe-verifier');

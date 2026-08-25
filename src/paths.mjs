@@ -13,7 +13,7 @@ const DEFAULT_MONOREPO = '/Users/firiya/firia-monorepo';
 /**
  * @param {NodeJS.ProcessEnv} env
  * @returns {{monorepo: string, ddlDir: string, cagePath: string, oatheHome: string,
- *            manifestPath: string, backupsDir: string, artifactDir: string,
+ *            manifestPath: string, backupsDir: string, artifactDir: string, workRoot: string,
  *            packageRoot: string, pluginDir: string, mcpServerPath: string}}
  */
 export function buildPaths(env = process.env) {
@@ -28,6 +28,7 @@ export function buildPaths(env = process.env) {
     manifestPath: path.join(oatheHome, 'install-manifest.json'),
     backupsDir: path.join(oatheHome, 'backups'),
     artifactDir: path.join(oatheHome, 'artifacts'),
+    workRoot: path.join(oatheHome, 'work'),
     packageRoot,
     pluginDir: path.join(packageRoot, 'plugin'),
     mcpServerPath: path.join(packageRoot, 'src/mcp/oathe-tools.mjs'),
