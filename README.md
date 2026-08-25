@@ -60,6 +60,12 @@ quality is the engine's, and the linked traces (`docs/traces.md`) exist precisel
 judgment stays auditable. A rejection reopens the work (R8): the same task, the prior
 principal, visibly back on the board.
 
+## Handoff
+
+`docs/PRODUCT.md` is the complete technical handoff — architecture, contracts, refusal
+vocabulary, live-proven results, and the roadmap. An agent reading nothing else can work on
+this codebase from it.
+
 ## Tests
 
     npm test        # the suite: unit (fences, manifest, harnesses, workspace, host) +
