@@ -271,14 +271,26 @@ export async function main(env = process.env) {
   const { workspaceRef } = await import('../workspace.mjs');
   const paths = buildPaths(env);
   const substrate = new Substrate({ database: env.OATHE_DB || 'oathe_local', paths, env });
+  const identity = {
+    orgId: env.OATHE_ORG || 'oathe',
+    principalId: env.OATHE_PRINCIPAL || env.USER || 'operator',
+    department: env.OATHE_DEPARTMENT || 'founder',
+  };
+  // The successor is built LAZILY on the first pickup: a session that never picks up never pays
+  // for the runtime wiring, and a wiring failure surfaces as that call's typed error.
+  let successorPromise = null;
   const tools = createOatheTools({
     client: substrate,
-    identity: {
-      orgId: env.OATHE_ORG || 'oathe',
-      principalId: env.OATHE_PRINCIPAL || env.USER || 'operator',
-      department: env.OATHE_DEPARTMENT || 'founder',
-    },
+    identity,
     workspace: workspaceRef(env.OATHE_WORKSPACE_DIR || process.cwd()),
+    successor: async (o) => {
+      if (!successorPromise) {
+        successorPromise = import('../successor.mjs')
+          .then(({ buildSuccessor }) => buildSuccessor({ substrate, identity, paths, env }));
+        successorPromise.catch(() => { successorPromise = null; }); // a failed build must not poison retries
+      }
+      return (await successorPromise).pickup(o);
+    },
   });
   const rl = readline.createInterface({ input: process.stdin });
   rl.on('line', async (line) => {
