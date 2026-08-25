@@ -1,8 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
 
 import { SqlAcceptanceLane, SETTLE } from '../src/runtime/sql-acceptance-lane.mjs';
+import { RuntimeError } from '../src/runtime/provider.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
 import { standardPlan, ACCEPTANCE_CLAUSE_KEY } from '../src/plans.mjs';
@@ -61,7 +63,7 @@ function laneInput(taskId, stmt, recorded) {
       verification_plan: standardPlan(), author_principal: 'firia',
       executor_principal: 'oathe-operator', seat_principal: null,
       evidence_refs: [`verdict://${taskId}`], trace_ref: '/traces/fake-session.jsonl',
-      privacy_class: 'org_internal', transfer_scope: 'org_internal',
+      privacy_class: 'org_internal', transfer_scope: 'exportable',
       checker: RECORDED_VERDICT_CHECKER, oathe_recorded_verdict: recorded },
   };
 }
@@ -73,19 +75,33 @@ function lane(seat) {
 
 test('accepted: ONE verified row and the claim settles in the SAME transaction (FC113 by equality)', async () => {
   const stmt = await assertedCompletion('lane-accept');
-  const out = await lane('oathe-verifier').verify(laneInput('lane-accept', stmt, 'accepted'),
-    { settle: SETTLE.CLAIM });
+  const input = laneInput('lane-accept', stmt, 'accepted');
+  const out = await lane('oathe-verifier').verify(input, { settle: SETTLE.CLAIM });
   assert.equal(out.settled, true);
   assert.equal(out.verification.verdict, 'accepted');
   const { rows: vs } = await substrate.query(
-    "SELECT result, verifier_principal, verifier_type, source, verification_plan_ref, recorded_at "
-    + "FROM cell.verification WHERE task_id = 'lane-accept'");
+    "SELECT org_id, statement_id, result, verifier_principal, verifier_type, source, "
+    + "verification_plan_ref, checks, evidence_refs, trace_ref, privacy_class, transfer_scope, "
+    + "state_version, recorded_at FROM cell.verification WHERE task_id = 'lane-accept'");
   assert.equal(vs.length, 1, 'exactly ONE verification row per settlement');
+  assert.equal(vs[0].org_id, 'oathe');
+  assert.equal(vs[0].statement_id, stmt.statement_id, 'statement_id === the completion statement id');
   assert.equal(vs[0].result, 'verified');
   assert.equal(vs[0].verifier_principal, 'oathe-verifier');
   assert.equal(vs[0].verifier_type, 'seat');
   assert.equal(vs[0].source, 'acceptance_package');
   assert.equal(vs[0].verification_plan_ref, ACCEPTANCE_CLAUSE_KEY);
+  assert.deepEqual(vs[0].checks,
+    [{ kind: 'statement_kind', pass: true }, { kind: 'evidence_present', pass: true },
+      { kind: 'trace_ref_present', pass: true }],
+    'checks parses back as the discharge\'s own array, in order');
+  assert.deepEqual(vs[0].evidence_refs, input.clause.evidence_refs,
+    'evidence_refs deep-equals the clause\'s, not the statement\'s');
+  assert.equal(vs[0].trace_ref, input.clause.trace_ref);
+  assert.equal(vs[0].privacy_class, 'org_internal');
+  assert.equal(vs[0].transfer_scope, 'exportable',
+    'privacy_class and transfer_scope are DISTINCT values here — a positional $11/$12 swap would fail this');
+  assert.equal(vs[0].state_version, null, 'state_version is bound to confirm_token_consume only');
   const { rows: [claim] } = await substrate.query(
     'SELECT settled_at FROM cell.work_claim WHERE work_claim_id = $1', [stmt.work_claim_id]);
   assert.ok(claim.settled_at, 'cell.settle_work_claim ran — FC113/FC114 held');
@@ -133,4 +149,25 @@ test('the seat law: a seat outside the registered roster is BLOCKED', async () =
     { settle: SETTLE.CLAIM });
   assert.equal(out.verification.verdict, 'blocked');
   assert.match(out.verification.reason, /roster|seats/i);
+});
+
+test('rollback: a substrate refusal inside the transaction is typed AND leaves NO row (ROLLBACK held)', async () => {
+  const stmt = await assertedCompletion('lane-rollback');
+  const input = laneInput('lane-rollback', stmt, 'accepted');
+  // A statement_ref with no matching cell.agent_statement row: the composite (org_id, task_id,
+  // statement_id) FK on cell.verification raises INSIDE the transaction, after the discharge
+  // check has already passed (discharge never looks at statement_ref) — this is the FC* raise
+  // path, not the pre-substrate blocked path.
+  input.agent_statement.statement_ref = crypto.randomUUID();
+  await assert.rejects(
+    () => lane('oathe-verifier').verify(input, { settle: SETTLE.CLAIM }),
+    (e) => e instanceof RuntimeError
+      && e.code === 'OATHE_SETTLEMENT_REFUSED'
+      && typeof e.details.sqlstate === 'string' && e.details.sqlstate.length > 0);
+  const { rows: vs } = await substrate.query(
+    "SELECT 1 FROM cell.verification WHERE task_id = 'lane-rollback'");
+  assert.equal(vs.length, 0, 'the rollback held — no partial row survives the refused transaction');
+  const { rows: [claim] } = await substrate.query(
+    'SELECT settled_at FROM cell.work_claim WHERE work_claim_id = $1', [stmt.work_claim_id]);
+  assert.equal(claim.settled_at, null, 'settlement never ran either — the whole transaction unwound');
 });
