@@ -161,6 +161,8 @@ test('doctor prints per-row verdicts and the substrate summary', () => {
   assert.match(out.stdout, /substrate.*reachable/i);
   assert.match(out.stdout, new RegExp(`ddl.*${DDL_FILES.length}`, 'i'));
   assert.match(out.stdout, /ok/);
+  assert.match(out.stdout, /^runtime: (firia|standalone) \(requested auto\)/m,
+    'the doctor names which runtime provider is active');
   assert.match(out.stdout, /^oathe: doctor ok$/m);
 });
 

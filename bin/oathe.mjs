@@ -283,6 +283,11 @@ const handlers = {
       + `db ${s.database_exists ? 'present' : 'ABSENT'}, ddl ${s.ddl_applied}, `
       + `yield cause ${s.yield_cause_registered ? 'ok' : 'MISSING'}\n`);
     process.stdout.write(`plugin: ${result.plugin.resolves ? 'resolves' : `BROKEN (${result.plugin.detail})`}\n`);
+    const rt = result.runtime;
+    process.stdout.write(rt.provider
+      ? `runtime: ${rt.provider} (requested ${rt.requested}) — cage ${rt.capabilities.cage}, `
+        + `settlement ${rt.capabilities.settlement}, pickup ${rt.capabilities.pickup}\n`
+      : `runtime: UNRESOLVED (requested ${rt.requested}) — ${rt.error}\n`);
     for (const [harness, trace] of Object.entries(result.traces)) {
       process.stdout.write(`traces: ${harness.padEnd(8)} ${trace.status}`
         + `${trace.status === 'DRIFT' ? ` — ${trace.detail} (${trace.newest})` : ''}\n`);
@@ -290,7 +295,7 @@ const handlers = {
     for (const row of result.rows) {
       process.stdout.write(`  ${row.status.padEnd(12)} ${row.harness.padEnd(8)} ${row.kind.padEnd(12)} ${row.file}\n`);
     }
-    const healthy = s.reachable && s.database_exists && result.plugin.resolves
+    const healthy = s.reachable && s.database_exists && result.plugin.resolves && result.runtime.provider !== null
       && result.rows.every((r) => r.status === 'ok')
       && Object.values(result.traces).every((t) => t.status !== 'DRIFT');
     summary('doctor', healthy ? 'ok' : 'attention');

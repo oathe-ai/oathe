@@ -86,7 +86,19 @@ export async function runDoctor({ env = process.env } = {}) {
     } catch (e) {
       plugin = { resolves: false, detail: String(e?.message || e) };
     }
-    return { rows, substrate: await substrate.status(), plugin, traces };
+
+    let runtime;
+    try {
+      const { resolveRuntimeProvider } = await import('./runtime/provider.mjs');
+      const provider = resolveRuntimeProvider({ config: ctx.config, paths });
+      runtime = { provider: provider.name, requested: ctx.config.get('runtimeProvider'),
+        capabilities: provider.capabilities(), error: null };
+    } catch (e) {
+      runtime = { provider: null, requested: ctx.config.get('runtimeProvider'),
+        capabilities: null, error: String(e?.message || e) };
+    }
+
+    return { rows, substrate: await substrate.status(), plugin, traces, runtime };
   } finally {
     await substrate.close();
   }
