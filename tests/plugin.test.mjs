@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 import { buildPaths } from '../src/paths.mjs';
@@ -115,18 +116,41 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
       { OATHE_PRINCIPAL: 'firia' });
     assert.equal(out.status, 0, out.stderr);
-    assert.match(out.stdout, /## Oathe board/);
-    assert.match(out.stdout, /render-me/);
-    assert.match(out.stdout, /yours/i);
+    const payload = JSON.parse(out.stdout);
+    const context = payload.hookSpecificOutput.additionalContext;
+    assert.equal(payload.hookSpecificOutput.hookEventName, 'SessionStart');
+    assert.match(context, /## Oathe board/);
+    assert.match(context, /render-me/);
+    assert.match(context, /yours/i);
+    // The visible confirmation: the user sees the oathe state at session load.
+    assert.match(payload.systemMessage, /Oathe/);
+    assert.match(payload.systemMessage, /1 yours/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('render-board NEVER breaks a session: with the substrate absent it exits 0 with a quiet note', () => {
+test('render-board NEVER breaks a session: with the substrate absent it exits 0 with a visible quiet note', () => {
   const out = runHook('render-board.mjs', { cwd: paths.packageRoot }, { OATHE_DB: 'oathe_never_created' });
   assert.equal(out.status, 0);
-  assert.match(out.stdout, /unavailable|not initialized/i);
+  const payload = JSON.parse(out.stdout);
+  assert.match(payload.systemMessage, /unavailable|not initialized/i);
+});
+
+test('render-board on a workspace with NOTHING open confirms visibly that oathe is on watch', () => {
+  // OUTSIDE the repo: any dir under packageRoot resolves to the repo's own workspace ref.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-empty-'));
+  try {
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
+      { OATHE_PRINCIPAL: 'firia' });
+    assert.equal(out.status, 0, out.stderr);
+    const payload = JSON.parse(out.stdout);
+    assert.match(payload.systemMessage, /\u{1F389}/u); // the party popper
+    assert.match(payload.systemMessage, /keeping track/i);
+    assert.match(payload.hookSpecificOutput.additionalContext, /no open work/i);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('heartbeat (Stop) renews the active lease for this workspace', async () => {

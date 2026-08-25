@@ -31,8 +31,21 @@ export function buildHookContext(input, env = process.env) {
 }
 
 /**
- * Run `fn`; on any failure print `quietNote` (when given) and exit 0 regardless. The board being
- * unavailable is information for the session, never an error that blocks it.
+ * The SessionStart hook's JSON frame: `context` reaches the MODEL as additional context,
+ * `message` is the line the USER sees when the session loads — the visible confirmation that
+ * oathe is watching this folder.
+ */
+export function emitSessionStart({ context, message }) {
+  process.stdout.write(`${JSON.stringify({
+    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context },
+    systemMessage: message,
+  })}\n`);
+}
+
+/**
+ * Run `fn`; on any failure print `quietNote` (when given) as a visible session-load line and
+ * exit 0 regardless. The board being unavailable is information for the session, never an
+ * error that blocks it.
  */
 export async function failSoft(fn, { quietNote = null } = {}) {
   let substrate = null;
@@ -42,8 +55,9 @@ export async function failSoft(fn, { quietNote = null } = {}) {
     substrate = ctx.substrate;
     await fn(ctx, input);
   } catch (e) {
-    if (quietNote) process.stdout.write(`${quietNote} (${String(e?.message || e).slice(0, 120)})\n`);
-    process.stderr.write(`oathe hook: ${String(e?.message || e)}\n`);
+    const detail = String(e?.message || e);
+    if (quietNote) emitSessionStart({ context: quietNote, message: `${quietNote} (${detail.slice(0, 120)})` });
+    process.stderr.write(`oathe hook: ${detail}\n`);
   } finally {
     if (substrate) await substrate.close().catch(() => {});
   }

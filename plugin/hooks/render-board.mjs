@@ -1,8 +1,9 @@
-// SessionStart — the folder's open work, rendered into the session's opening context.
-// Yours (leased) first, then what this workspace offers (claimable). Harness-agnostic:
-// the same stdout reaches Claude Code and Codex as session context.
+// SessionStart — the folder's open work, delivered twice over: the full board as additional
+// context for the MODEL, and one visible line for the USER as the session loads. A workspace
+// with nothing open still confirms, party popper and all, that oathe is keeping track —
+// silence would be indistinguishable from oathe not running.
 
-import { failSoft } from './lib.mjs';
+import { failSoft, emitSessionStart } from './lib.mjs';
 import { createOatheTools } from '../../src/mcp/oathe-tools.mjs';
 
 await failSoft(async ({ substrate, workspace, identity }) => {
@@ -30,5 +31,10 @@ await failSoft(async ({ substrate, workspace, identity }) => {
     lines.push('**Held elsewhere:**');
     for (const r of theirs) lines.push(`- [${r.task_id}] ${r.objective} (${r.principal_id})`);
   }
-  process.stdout.write(`${lines.join('\n')}\n`);
-}, { quietNote: '## Oathe board unavailable — substrate not initialized; run `oathe init`' });
+
+  const open = mine.length + offered.length + theirs.length;
+  const message = open === 0
+    ? '\u{1F389} Oathe is keeping track — no open work in this workspace.'
+    : `Oathe board: ${mine.length} yours · ${offered.length} offered · ${theirs.length} held elsewhere`;
+  emitSessionStart({ context: lines.join('\n'), message });
+}, { quietNote: 'Oathe board unavailable — substrate not initialized; run `oathe init`' });
