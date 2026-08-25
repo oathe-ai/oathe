@@ -87,3 +87,18 @@ test('workspace file is found from a SUBDIRECTORY via the git/workspace root', (
   const cfg = new OatheConfig({ env, cwd: sub });
   assert.equal(cfg.get('verifier'), 'codex');
 });
+
+test('runtimeProvider defaults to auto and accepts the two explicit providers', () => {
+  const config = new OatheConfig({ env: {}, cwd: os.tmpdir() });
+  assert.equal(config.get('runtimeProvider'), 'auto');
+  assert.equal(config.source('runtimeProvider'), 'default');
+  const forced = new OatheConfig({ env: { OATHE_RUNTIME_PROVIDER: 'standalone' }, cwd: os.tmpdir() });
+  assert.equal(forced.get('runtimeProvider'), 'standalone');
+  assert.equal(forced.source('runtimeProvider'), 'env');
+});
+
+test('runtimeProvider refuses an unknown provider name loudly', () => {
+  assert.throws(
+    () => new OatheConfig({ env: { OATHE_RUNTIME_PROVIDER: 'cloud' }, cwd: os.tmpdir() }),
+    (e) => e.name === 'ConfigError' && e.code === 'OATHE_CONFIG_VALUE_INVALID');
+});

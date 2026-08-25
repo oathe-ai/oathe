@@ -31,6 +31,7 @@ const KEYS = Object.freeze({
   verifier: { default: 'claude', env: 'OATHE_VERIFIER', check: oneOf(ENGINES) },
   verifierPrincipal: { default: 'oathe-verifier', env: 'OATHE_VERIFIER_PRINCIPAL', check: nonEmptyString },
   verifierEvidenceBudget: { default: 24000, env: 'OATHE_VERIFIER_EVIDENCE_BUDGET', check: positiveInt },
+  runtimeProvider: { default: 'auto', env: 'OATHE_RUNTIME_PROVIDER', check: oneOf(['auto', 'firia', 'standalone']) },
   starUrl: {
     default: 'https://github.com/oathe-ai/oathe', env: 'OATHE_STAR_URL', check: httpsUrl,
   },
