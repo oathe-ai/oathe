@@ -75,8 +75,11 @@ export class OatheConfig {
     this.globalPath = path.join(env.OATHE_HOME || path.join(env.HOME || os.homedir(), '.oathe'), 'config.json');
     this.workspacePath = path.join(workspaceRoot(cwd), '.oathe.json');
     this.values = { ...Object.fromEntries(Object.entries(KEYS).map(([k, spec]) => [k, spec.default])) };
-    for (const file of [this.globalPath, this.workspacePath]) {
-      Object.assign(this.values, this.#loadFile(file));
+    this.sources = Object.fromEntries(Object.keys(KEYS).map((k) => [k, 'default']));
+    for (const [file, layer] of [[this.globalPath, 'global'], [this.workspacePath, 'workspace']]) {
+      const loaded = this.#loadFile(file);
+      Object.assign(this.values, loaded);
+      for (const key of Object.keys(loaded)) this.sources[key] = layer;
     }
     for (const [key, spec] of Object.entries(KEYS)) {
       if (spec.env && env[spec.env] !== undefined) {
@@ -84,8 +87,18 @@ export class OatheConfig {
         const value = typeof spec.default === 'number' ? Number(raw) : raw;
         this.#checkValue(key, value, `env ${spec.env}`);
         this.values[key] = value;
+        this.sources[key] = 'env';
       }
     }
+  }
+
+  /** Where a key's value came from: 'default' | 'global' | 'workspace' | 'env'. */
+  source(key) {
+    if (!(key in KEYS)) {
+      throw new ConfigError('OATHE_CONFIG_KEY_UNKNOWN',
+        `unknown config key '${key}' — known keys: ${CONFIG_KEYS.join(', ')}`, { key });
+    }
+    return this.sources[key];
   }
 
   #loadFile(file) {
@@ -142,6 +155,7 @@ export class OatheConfig {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
     this.values[key] = value;
+    this.sources[key] = scope;
     return { file, key, value };
   }
 }

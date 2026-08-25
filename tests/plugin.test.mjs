@@ -241,6 +241,35 @@ test('heartbeat LINKS the session trace to active claims — one statement per c
   }
 });
 
+test('heartbeat links traces for ASSERTED claims too — claim-and-done inside one turn still leaves evidence', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-link2-'));
+  try {
+    const { workspaceRef } = await import('../src/workspace.mjs');
+    const { createOatheTools } = await import('../src/mcp/oathe-tools.mjs');
+    const ws = workspaceRef(dir);
+    const tools = createOatheTools({
+      client: substrate,
+      identity: { orgId: 'oathe', principalId: 'firia', department: 'founder' },
+      workspace: ws,
+    });
+    // the same-turn flow: claim → done BEFORE any Stop hook ever fires
+    await tools.oathe_claim({ task_id: 'one-turn', objective: 'claimed and asserted in one turn' });
+    await tools.oathe_done({ task_id: 'one-turn', proposition: 'all in one turn', evidence_ref: 'x' });
+    const hookInput = {
+      cwd: dir, hook_event_name: 'Stop',
+      session_id: 'sess-one-turn', transcript_path: '/fake/home/.claude/projects/x/sess-one-turn.jsonl',
+    };
+    const out = runHook('heartbeat.mjs', hookInput, { OATHE_PRINCIPAL: 'firia' });
+    assert.equal(out.status, 0, out.stderr);
+    const { rows } = await substrate.query(
+      "SELECT count(*)::int AS n FROM cell.agent_statement "
+      + "WHERE task_id = 'one-turn' AND subject_ref = 'trace:sess-one-turn'");
+    assert.equal(rows[0].n, 1, 'the turn-end heartbeat linked the already-asserted claim');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('frame-note (PreCompact) records a compaction statement against active claims here', async () => {
   const dir = fs.mkdtempSync(path.join(paths.packageRoot, 'tmp-fn-'));
   try {

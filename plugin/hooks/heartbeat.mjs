@@ -15,9 +15,13 @@ await failSoft(async ({ substrate, workspace, identity, config, session }) => {
     [identity.orgId, identity.principalId, `workspace:${workspace};%`, config.get('leaseHours')]);
 
   if (!session?.transcriptPath) return; // no identity handed to this hook — nothing to link
+  // Linkage covers ASSERTED claims too: a claim taken and completed inside a single turn has
+  // never seen a heartbeat while active — the turn-end hook is its only chance to leave the
+  // trace evidence the verifier will demand. (Settled claims are closed; nothing to link.)
   const { rows } = await substrate.query(
     `SELECT work_claim_id, task_id FROM cell.work_claim
-      WHERE org_id = $1 AND principal_id = $2 AND state = 'active' AND contract_ref LIKE $3`,
+      WHERE org_id = $1 AND principal_id = $2 AND settled_at IS NULL
+        AND state IN ('active', 'completion_asserted') AND contract_ref LIKE $3`,
     [identity.orgId, identity.principalId, `workspace:${workspace};%`]);
   for (const claim of rows) {
     await substrate.query(

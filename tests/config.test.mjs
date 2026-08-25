@@ -27,6 +27,18 @@ test('defaults are named once and reachable — no consumer hardcodes them', () 
   assert.equal(cfg.get('verifierEvidenceBudget'), 24000);
 });
 
+test('source(key) reports where a value came from — default, global, workspace, or env', () => {
+  const { env, cwd } = scratch();
+  const bare = new OatheConfig({ env, cwd });
+  assert.equal(bare.source('verifier'), 'default');
+  fs.mkdirSync(env.OATHE_HOME, { recursive: true });
+  fs.writeFileSync(path.join(env.OATHE_HOME, 'config.json'), JSON.stringify({ verifier: 'codex' }));
+  assert.equal(new OatheConfig({ env, cwd }).source('verifier'), 'global');
+  fs.writeFileSync(path.join(cwd, '.oathe.json'), JSON.stringify({ verifier: 'claude' }));
+  assert.equal(new OatheConfig({ env, cwd }).source('verifier'), 'workspace');
+  assert.equal(new OatheConfig({ env: { ...env, OATHE_VERIFIER: 'codex' }, cwd }).source('verifier'), 'env');
+});
+
 test('layering: global file overrides defaults, workspace file overrides global, env overrides all', () => {
   const { env, cwd } = scratch();
   fs.mkdirSync(env.OATHE_HOME, { recursive: true });

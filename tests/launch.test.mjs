@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { sandbox } from './helpers.mjs';
-import { preflight, runClaude, runCodex } from '../src/launch.mjs';
+import { preflight, runClaude, runCodex, ensureVerifierChoice } from '../src/launch.mjs';
 import { runInit } from '../src/init.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
@@ -128,4 +128,45 @@ test('runCodex refuses when Codex was never onboarded (no codex rows in the mani
   await assert.rejects(
     () => runCodex({ env: bare.env, cwd: projectDir(), renewIntervalMs: 50 }),
     (e) => e.code === 'OATHE_NOT_INSTALLED' && /codex/i.test(e.message));
+});
+
+test('first launch in a workspace PROMPTS for the verifier and records the choice — never asks again', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { OatheConfig } = await import('../src/config.mjs');
+  const cwd = projectDir();
+  const env = { ...sb.env };
+  const writes = [];
+  const out = { isTTY: true, write: (t) => writes.push(t) };
+  const stdin = Object.assign(new EventEmitter(), { isTTY: true, pause: () => {}, resume: () => {} });
+  const config = new OatheConfig({ env, cwd });
+  const wait = ensureVerifierChoice({ config, harness: 'codex', stdin, out });
+  setTimeout(() => stdin.emit('data', '2\n'), 20);
+  const first = await wait;
+  assert.equal(first.chosen, 'codex');
+  assert.equal(first.prompted, true);
+  assert.ok(writes.some((w) => /verifier/i.test(w) && /codex/.test(w)));
+  // recorded in the workspace file → a fresh config never prompts again
+  const again = await ensureVerifierChoice({
+    config: new OatheConfig({ env, cwd }), harness: 'codex', stdin, out,
+  });
+  assert.equal(again.prompted, false);
+  assert.equal(again.chosen, 'codex');
+});
+
+test('off-TTY the verifier prompt never blocks — the default is announced, not assumed silently', async () => {
+  const { OatheConfig } = await import('../src/config.mjs');
+  const cwd = projectDir();
+  const outWrites = [];
+  const errWrites = [];
+  const result = await ensureVerifierChoice({
+    config: new OatheConfig({ env: sb.env, cwd }),
+    harness: 'claude',
+    stdin: { isTTY: false },
+    out: { isTTY: false, write: (t) => outWrites.push(t) },
+    err: { write: (t) => errWrites.push(t) },
+  });
+  assert.equal(result.prompted, false);
+  assert.equal(result.chosen, 'claude');
+  assert.equal(outWrites.length, 0, 'stdout stays clean off-TTY');
+  assert.ok(errWrites.some((w) => /verifier: claude \(default/.test(w)), errWrites.join('|'));
 });

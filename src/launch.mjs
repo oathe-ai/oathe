@@ -10,6 +10,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { buildContext } from './context.mjs';
+import { VERIFIER_ENGINES } from './config.mjs';
 import { census } from './harness.mjs';
 import { FencedBlock, FENCE_STYLES } from './blocks.mjs';
 import { sha256Hex } from './manifest.mjs';
@@ -131,6 +132,9 @@ export async function runHarness({
   const ctx = buildContext({ env, exec, cwd });
   const { paths, substrate, identity, config } = ctx;
 
+  // First launch in a folder: the verifier is CHOSEN, on the record, before any claim binds it.
+  await ensureVerifierChoice({ config, harness, stdin, out });
+
   // CODEX ONLY: the ANSI splash into terminal scrollback before the TUI starts, with a short
   // readable pause. Codex buries hook output in its ctrl+T transcript overlay, unrendered;
   // Claude Code shows the systemMessage banner inside its own TUI, so it launches clean.
@@ -187,6 +191,43 @@ export async function runHarness({
   }
   const teardown = await cage.teardownProvenEmpty();
   return { exitCode, teardown, workspace };
+}
+
+/**
+ * The one-time verifier choice for a workspace. If the engine was never EXPLICITLY chosen
+ * (config source is 'default'), a TTY launch asks once and records the answer in the
+ * workspace file — silence would assign a judge the founder never picked. Off-TTY the
+ * default is ANNOUNCED, never silently assumed.
+ * @returns {Promise<{chosen: string, prompted: boolean}>}
+ */
+export function ensureVerifierChoice({ config, harness, stdin, out, err = process.stderr }) {
+  const current = config.get('verifier');
+  if (config.source('verifier') !== 'default') return Promise.resolve({ chosen: current, prompted: false });
+  if (stdin?.isTTY !== true || out?.isTTY !== true) {
+    err?.write?.(`verifier: ${current} (default — choose one with \`oathe config verifier <engine>\`)
+`);
+    return Promise.resolve({ chosen: current, prompted: false });
+  }
+  const menu = VERIFIER_ENGINES.map((engine, at) => `[${at + 1}] ${engine}`).join('  ');
+  out.write(`
+  Who verifies this folder's work? ${menu}  (Enter = ${current})
+  > `);
+  return new Promise((resolve) => {
+    const onAnswer = (data) => {
+      stdin.removeListener('data', onAnswer);
+      stdin.pause?.();
+      const raw = String(data).trim();
+      const byIndex = VERIFIER_ENGINES[Number(raw) - 1];
+      const chosen = byIndex ?? (VERIFIER_ENGINES.includes(raw) ? raw : current);
+      config.set('verifier', chosen, { scope: 'workspace' });
+      out.write(`  verifier: ${chosen} (recorded in ${config.workspacePath})
+
+`);
+      resolve({ chosen, prompted: true });
+    };
+    stdin.on('data', onAnswer);
+    stdin.resume?.();
+  });
 }
 
 /**
