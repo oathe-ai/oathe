@@ -16,7 +16,7 @@ const SECTIONS = {
 
 test('renderSplash is ANSI, aligned, and carries NO markdown syntax', () => {
   const splash = renderSplash({
-    message: '🔒 Oathe: 2 open · 1 held',
+    message: '🔒 Oathe: 2 open tasks · 1 held',
     sections: SECTIONS,
     workspace: 'ws-63d60b8f9275',
   });
@@ -24,7 +24,7 @@ test('renderSplash is ANSI, aligned, and carries NO markdown syntax', () => {
   assert.match(splash, /\x1b\[2m/, 'dim ANSI present');
   assert.match(splash, /\x1b\[0m/, 'reset present');
   assert.doesNotMatch(splash, /\*\*|##|^- /m, 'no markdown tokens');
-  assert.match(splash, /🔒 Oathe: 2 open · 1 held/);
+  assert.match(splash, /🔒 Oathe: 2 open tasks · 1 held/);
   assert.match(splash, /ws-63d60b8f9275/);
   for (const header of ['YOURS', 'OPEN', 'HELD']) assert.match(splash, new RegExp(header));
   assert.match(splash, /beer-check/);

@@ -47,7 +47,8 @@ export async function renderBoard({ client, identity, workspace }) {
     const n = mine.length === 1 ? '1 task' : `${mine.length} tasks`;
     message = `🎉 Oathe just saved your session state — ${n} still yours! ${STAR_ASK}`;
   } else if (offered.length + theirs.length > 0) {
-    message = `🔒 Oathe: ${offered.length} open · ${theirs.length} held`;
+    const open = offered.length === 1 ? '1 open task' : `${offered.length} open tasks`;
+    message = `🔒 Oathe: ${open}${theirs.length > 0 ? ` · ${theirs.length} held` : ''}`;
   } else {
     message = '🍺 No open tasks in this folder — Oathe is keeping track.';
   }

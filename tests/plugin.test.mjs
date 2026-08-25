@@ -171,7 +171,8 @@ test('open tasks that are NOT yours summarize without celebration or the star as
     assert.equal(out.status, 0, out.stderr);
     const payload = JSON.parse(out.stdout);
     assert.match(payload.systemMessage, /\u{1F512}/u); // the lock
-    assert.match(payload.systemMessage, /1 open \u00b7 0 held/);
+    assert.match(payload.systemMessage, /1 open task\b/);
+    assert.doesNotMatch(payload.systemMessage, /held/, 'zero held stays unsaid');
     assert.doesNotMatch(payload.systemMessage, /contracts|for signing|elsewhere/i);
     assert.doesNotMatch(payload.systemMessage, /\u{1F389}/u);
     assert.doesNotMatch(payload.systemMessage, /github\.com/);
