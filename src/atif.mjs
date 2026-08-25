@@ -490,7 +490,10 @@ export class AtifValidator {
       this.#knownFields(step.observation, 'observation', `${where}.observation`);
       for (const [ri, result] of (step.observation.results ?? []).entries()) {
         this.#knownFields(result, 'observation_result', `${where}.observation.results[${ri}]`);
-        if (!callIds.has(result.source_call_id)) {
+        // source_call_id is OPTIONAL (free-form environment observations — proven by Harbor's
+        // own golden fixture); when present it must resolve.
+        if (result.source_call_id !== undefined && result.source_call_id !== null
+          && !callIds.has(result.source_call_id)) {
           this.#fail(`${where}.observation.results[${ri}]: source_call_id '${result.source_call_id}' `
             + 'matches no tool call on its step');
         }

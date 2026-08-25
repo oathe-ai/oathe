@@ -237,6 +237,16 @@ test('each broken invariant refuses with its OWN typed code', () => {
   }
 });
 
+// ------------------------------------------------------------------ golden cross-check
+
+test("GOLDEN: Harbor's own reference trajectory passes OUR validator — we implement their rules, not our misreading", () => {
+  // Vendored 2026-08-25 from harbor-framework/harbor tests/golden/terminus_2 (Apache-2.0).
+  const golden = JSON.parse(fs.readFileSync(
+    path.join(import.meta.dirname, 'fixtures/harbor-golden-terminus2.trajectory.json'), 'utf8'));
+  const seen = new AtifValidator().validate(golden);
+  assert.equal(seen.ok, true, `golden refused: ${seen.detail}`);
+});
+
 // ------------------------------------------------------------------ live contract (fail loud on drift)
 
 test('LIVE: the newest real Claude transcript projects to valid ATIF end to end', (t) => {
