@@ -98,7 +98,7 @@ test('oathe trace exports the linked traces of a claim as VALID ATIF on stdout',
     input: JSON.stringify({
       cwd: sb.home, hook_event_name: 'Stop', session_id: sessionId, transcript_path: transcript,
     }),
-    encoding: 'utf8', env: sb.env,
+    encoding: 'utf8', env: { ...sb.env, OATHE_LAUNCHED_HARNESS: 'claude' },
   });
   assert.equal(hook.status, 0, hook.stderr);
 
@@ -118,7 +118,7 @@ test('oathe trace exports the linked traces of a claim as VALID ATIF on stdout',
 test('oathe hook render-board runs the SessionStart hook through the bin', () => {
   const out = spawnSync('node', [BIN, 'hook', 'render-board'], {
     input: JSON.stringify({ cwd: sb.home, hook_event_name: 'SessionStart' }),
-    encoding: 'utf8', env: sb.env,
+    encoding: 'utf8', env: { ...sb.env, OATHE_LAUNCHED_HARNESS: 'claude' },
   });
   assert.equal(out.status, 0, out.stderr);
   const payload = JSON.parse(out.stdout);

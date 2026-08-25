@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
 
 import { standardPlan, verificationTaskId, verificationObjective, isVerificationTask } from '../plans.mjs';
+import { launchedHarness } from '../launch-env.mjs';
 
 export const PROTOCOL_VERSION = '2025-06-18';
 export const SERVER_NAME = 'oathe-tools';
@@ -398,6 +399,22 @@ export async function handleToolCall(params, tools) {
   }
 }
 
+/**
+ * The opt-in gate for the served tools map. A session the oathe launcher started passes
+ * through untouched; anything else gets the same tool NAMES whose every call is the typed
+ * OATHE_NOT_LAUNCHED refusal — loud to the model (a called tool must answer), inert to the
+ * substrate (an unlaunched session never touches the board).
+ */
+export function withLaunchGate(tools, env = process.env) {
+  if (launchedHarness(env)) return tools;
+  const refuse = async () => {
+    throw new OatheToolError('OATHE_NOT_LAUNCHED',
+      'this session was not launched through oathe, so the board is not bound to it — start the '
+      + 'session with `oathe claude` or `oathe codex` to opt in');
+  };
+  return Object.fromEntries(Object.keys(tools).map((name) => [name, refuse]));
+}
+
 /** The pure JSON-RPC dispatcher — a response object, or null for a notification. */
 export async function dispatch(msg, { tools }) {
   const { id, method, params } = msg || {};
@@ -471,13 +488,14 @@ export async function main(env = process.env) {
       return (await successorPromise).pickup(o);
     },
   });
+  const served = withLaunchGate(tools, env);
   const rl = readline.createInterface({ input: process.stdin });
   rl.on('line', async (line) => {
     const s = line.trim();
     if (!s) return;
     let msg;
     try { msg = JSON.parse(s); } catch { return; }
-    const out = await dispatch(msg, { tools });
+    const out = await dispatch(msg, { tools: served });
     if (out) process.stdout.write(`${JSON.stringify(out)}\n`);
   });
 }

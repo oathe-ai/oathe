@@ -40,7 +40,7 @@ after(async () => {
 /** Drive the stdio MCP server with newline-delimited JSON-RPC, collecting responses by id. */
 function mcpSession() {
   const child = spawn('node', [path.join(paths.packageRoot, 'src/mcp/oathe-tools.mjs')], {
-    env: { ...sb.env, OATHE_WORKSPACE_DIR: workDir },
+    env: { ...sb.env, OATHE_WORKSPACE_DIR: workDir, OATHE_LAUNCHED_HARNESS: 'claude' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const pending = new Map();
@@ -113,7 +113,7 @@ test('the SessionStart hook renders the board for the workspace with a live clai
   const out = spawnSync('node', [path.join(paths.pluginDir, 'hooks/render-board.mjs')], {
     input: JSON.stringify({ cwd: workDir, hook_event_name: 'SessionStart' }),
     encoding: 'utf8',
-    env: sb.env,
+    env: { ...sb.env, OATHE_LAUNCHED_HARNESS: 'claude' },
   });
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /board-task/);

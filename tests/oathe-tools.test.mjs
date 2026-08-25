@@ -49,6 +49,20 @@ test('calling a tool the server does not have is a typed error', async () => {
   assert.match(out.result.content[0].text, /unknown_tool/);
 });
 
+test('the launch gate: tools/call in an unlaunched session is the OATHE_NOT_LAUNCHED refusal', async () => {
+  const { withLaunchGate } = await import('../src/mcp/oathe-tools.mjs');
+  const real = { oathe_claim: async () => ({ ok: true }) };
+  const out = await dispatch(
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'oathe_claim', arguments: {} } },
+    { tools: withLaunchGate(real, {}) });
+  assert.equal(out.result.isError, true);
+  const body = JSON.parse(out.result.content[0].text);
+  assert.equal(body.error_code, 'OATHE_NOT_LAUNCHED');
+  assert.match(body.reason, /oathe claude|oathe codex/, 'the refusal coaches the launch path');
+  // a LAUNCHED session passes through the same seam untouched
+  assert.equal(withLaunchGate(real, { OATHE_LAUNCHED_HARNESS: 'claude' }), real);
+});
+
 // ---------------------------------------------------------------- tool semantics (real cell)
 
 const paths = buildPaths({});

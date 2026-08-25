@@ -91,6 +91,8 @@ test('runClaude --hermetic hands the child a REPLACED minimal environment', asyn
   assert.ok(!seen.includes('SUPER_SECRET_TOKEN'), 'hermetic env must not leak arbitrary vars');
   assert.match(seen, /FIRIA_EXECUTION_ATTEMPT_ID=/, 'the fence stamp reaches the child');
   assert.match(seen, /OATHE_DB=/, 'oathe wiring reaches the child');
+  assert.match(seen, /^OATHE_LAUNCHED_HARNESS=claude$/m,
+    'the launch marker reaches the child — the plugin only fires in sessions that carry it');
 });
 
 test('runCodex launches Codex in the same cage with the same host — the W2 premise died in research', async () => {

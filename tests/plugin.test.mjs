@@ -82,7 +82,8 @@ function runHook(script, hookInput, env = {}) {
   return spawnSync('node', [path.join(paths.pluginDir, 'hooks', script)], {
     input: JSON.stringify(hookInput),
     encoding: 'utf8',
-    env: { ...process.env, OATHE_DB: SCRATCH_DB, ...env },
+    // The default models a LAUNCHED session (the marker present); unlaunched tests clear it.
+    env: { ...process.env, OATHE_DB: SCRATCH_DB, OATHE_LAUNCHED_HARNESS: 'claude', ...env },
   });
 }
 
@@ -265,6 +266,84 @@ test('heartbeat links traces for ASSERTED claims too — claim-and-done inside o
       "SELECT count(*)::int AS n FROM cell.agent_statement "
       + "WHERE task_id = 'one-turn' AND subject_ref = 'trace:sess-one-turn'");
     assert.equal(rows[0].n, 1, 'the turn-end heartbeat linked the already-asserted claim');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ------------------------------------------- the launch gate: no `oathe <harness>`, no firing
+// The plugin installs at user scope, so its hooks reach EVERY session on the machine. Only a
+// session the oathe launcher started (marked by OATHE_LAUNCHED_HARNESS in the caged env) has
+// opted in — everything else gets a silent exit 0: no output, no substrate contact.
+
+test('render-board is a SILENT noop in a session not launched by `oathe <harness>`', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-unlaunched-'));
+  try {
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
+      { OATHE_PRINCIPAL: 'firia', OATHE_LAUNCHED_HARNESS: '' });
+    assert.equal(out.status, 0);
+    assert.equal(out.stdout, '', 'an unlaunched session sees no board, no quiet note, nothing');
+    assert.equal(out.stderr, '');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('heartbeat in an unlaunched session touches NOTHING — no renewal, no trace linkage', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-unlaunched-hb-'));
+  try {
+    const { workspaceRef } = await import('../src/workspace.mjs');
+    const ws = workspaceRef(dir);
+    await substrate.query(`
+      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                             verify_by, claim_mode, created_at)
+      VALUES ('oathe', 'unlaunched-beat', 'founder', 'must not renew', 'minted_at_claim',
+              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
+    await substrate.query(
+      `SELECT cell.claim_work('oathe', 'unlaunched-beat', gen_random_uuid(), NULL, NULL, 'firia', 'founder',
+              'exclusive', now() + interval '1 minute', $1, now(), gen_random_uuid())`,
+      [`workspace:${ws};contract:oathe/unlaunched-beat@v1`]);
+    const out = runHook('heartbeat.mjs', {
+      cwd: dir, hook_event_name: 'Stop',
+      session_id: 'sess-unlaunched', transcript_path: '/fake/home/.claude/projects/x/sess-unlaunched.jsonl',
+    }, { OATHE_PRINCIPAL: 'firia', OATHE_LAUNCHED_HARNESS: '' });
+    assert.equal(out.status, 0);
+    assert.equal(out.stdout, '');
+    assert.equal(out.stderr, '');
+    const { rows } = await substrate.query(
+      "SELECT ownership_valid_until < now() + interval '2 minutes' AS untouched "
+      + "FROM cell.work_claim WHERE task_id = 'unlaunched-beat' AND state = 'active'");
+    assert.equal(rows[0].untouched, true, 'the short lease was NOT renewed');
+    const { rows: linked } = await substrate.query(
+      "SELECT count(*)::int AS n FROM cell.agent_statement WHERE subject_ref = 'trace:sess-unlaunched'");
+    assert.equal(linked[0].n, 0, 'no trace statement from a session that never opted in');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('frame-note in an unlaunched session writes NO statements', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-unlaunched-fn-'));
+  try {
+    const { workspaceRef } = await import('../src/workspace.mjs');
+    const ws = workspaceRef(dir);
+    await substrate.query(`
+      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                             verify_by, claim_mode, created_at)
+      VALUES ('oathe', 'unlaunched-note', 'founder', 'must stay silent', 'minted_at_claim',
+              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
+    await substrate.query(
+      `SELECT cell.claim_work('oathe', 'unlaunched-note', gen_random_uuid(), NULL, NULL, 'firia', 'founder',
+              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
+      [`workspace:${ws};contract:oathe/unlaunched-note@v1`]);
+    const out = runHook('frame-note.mjs', { cwd: dir, hook_event_name: 'PreCompact' },
+      { OATHE_PRINCIPAL: 'firia', OATHE_LAUNCHED_HARNESS: '' });
+    assert.equal(out.status, 0);
+    assert.equal(out.stdout, '');
+    assert.equal(out.stderr, '');
+    const { rows } = await substrate.query(
+      "SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'unlaunched-note'");
+    assert.equal(rows[0].n, 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

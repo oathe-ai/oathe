@@ -16,6 +16,7 @@ import { FencedBlock, FENCE_STYLES } from './blocks.mjs';
 import { sha256Hex } from './manifest.mjs';
 import { workspaceRef } from './workspace.mjs';
 import { SessionHost } from './session-host.mjs';
+import { launchSessionEnv } from './launch-env.mjs';
 
 export class LaunchError extends Error {
   constructor(code, message, details = {}) {
@@ -154,13 +155,7 @@ export async function runHarness({
   const { spawnCaged } = await import(pathToFileURL(paths.cagePath).href);
 
   const unit = `oathe-${Date.now().toString(36)}-${process.pid}`;
-  const extra = {
-    OATHE_DB: config.get('db'),
-    OATHE_ORG: identity.orgId,
-    OATHE_PRINCIPAL: identity.principalId,
-    OATHE_DEPARTMENT: identity.department,
-    OATHE_WORKSPACE_DIR: cwd,
-  };
+  const extra = launchSessionEnv({ config, identity, cwd, harness });
   const cage = spawnCaged({
     unit,
     env: curatedEnv(env, { hermetic, extra }),

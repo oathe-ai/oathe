@@ -9,6 +9,7 @@ import { buildPaths } from '../../src/paths.mjs';
 import { workspaceRef } from '../../src/workspace.mjs';
 import { OatheConfig } from '../../src/config.mjs';
 import { harnessForTracePath } from '../../src/traces.mjs';
+import { launchedHarness } from '../../src/launch-env.mjs';
 
 /** The hook's JSON input on stdin (Claude and Codex both deliver {cwd, hook_event_name, …}). */
 export async function readHookInput() {
@@ -61,6 +62,10 @@ export function emitSessionStart({ context, message }) {
  * error that blocks it.
  */
 export async function failSoft(fn, { quietNote = null } = {}) {
+  // The opt-in gate: the plugin reaches every session on the machine, but only a session the
+  // oathe launcher started carries the marker. Everything else is a silent noop — no output,
+  // no substrate contact — because that session never asked to be on the board.
+  if (!launchedHarness()) process.exit(0);
   let substrate = null;
   try {
     const input = await readHookInput();
