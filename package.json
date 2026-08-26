@@ -11,11 +11,12 @@
     "oathe": "./bin/oathe.mjs"
   },
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "link-firia": "node scripts/link-firia.mjs"
   },
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
+  "files": ["bin/", "src/", "plugin/", "vendor/", "LICENSE", "README.md"],
   "dependencies": {
-    "pg": "^8.23.0",
-    "firia-runtime": "file:/Users/firiya/firia-monorepo/packages/firia-runtime"
+    "pg": "^8.23.0"
   }
 }

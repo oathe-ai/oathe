@@ -70,3 +70,10 @@ this codebase from it.
 
     npm test        # the suite: unit (fences, manifest, harnesses, workspace, host) +
                     # real-Postgres substrate/tools/successor + the scripted W1 exit loop
+
+### Estate machines
+
+After `npm install` (or `npm ci`), run `npm run link-firia` — npm treats
+`node_modules/firia-runtime` as extraneous and prunes it once `firia-runtime` is not a
+declared dependency, so this repairs the symlink at the correct relative depth for wherever
+the checkout lives. Standalone machines (no monorepo checkout) skip this step entirely.
