@@ -6,3 +6,7 @@
 # machines, but it must never ride a commit again.
 node_modules/oathe-runtime
 node_modules/.bin/oathe-runtime-*
+
+# local tooling state — never committed
+.serena/
+.oathe.json
