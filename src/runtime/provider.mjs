@@ -85,7 +85,9 @@ export class StandaloneRuntimeProvider {
     };
   }
 
-  /** Pickup degrades TYPED and LOUD: same {pickup, close} shape, the refusal inside pickup(). */
+  /** Pickup degrades TYPED and LOUD: same {pickup, close} shape, the refusal inside pickup().
+   *  Takes no args — the typed refusal never touches substrate/identity/paths, so there is
+   *  nothing here to accept. */
   async successor() {
     return {
       pickup: async () => {
