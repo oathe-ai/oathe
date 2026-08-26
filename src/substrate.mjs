@@ -248,7 +248,7 @@ export class Substrate {
   async status() {
     const reachable = await this.detect();
     if (!reachable.reachable) {
-      return { reachable: false, database_exists: false, ddl_applied: 0, yield_cause_registered: false };
+      return { reachable: false, database_exists: false, ddl_applied: 0, ddl_expected: DDL_FILES.length, yield_cause_registered: false };
     }
     const admin = await this.#adminClient();
     let databaseExists;
@@ -259,7 +259,7 @@ export class Substrate {
       await admin.end();
     }
     if (!databaseExists) {
-      return { reachable: true, database_exists: false, ddl_applied: 0, yield_cause_registered: false };
+      return { reachable: true, database_exists: false, ddl_applied: 0, ddl_expected: DDL_FILES.length, yield_cause_registered: false };
     }
     const ddl = await this.query(
       "SELECT count(*)::int AS n FROM pg_tables t WHERE schemaname = 'oathe' AND tablename = 'ddl_applied'");
@@ -275,6 +275,7 @@ export class Substrate {
       reachable: true,
       database_exists: true,
       ddl_applied: ddlApplied,
+      ddl_expected: DDL_FILES.length,
       yield_cause_registered: causeRegistered,
     };
   }

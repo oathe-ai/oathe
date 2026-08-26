@@ -79,5 +79,11 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0' }
     OATHE_DB: scratchDb,
     OATHE_PRINCIPAL: 'firia',
   };
+  // The sandbox models a default machine. An outer environment that FORCES a runtime provider
+  // (this workstream's own verification protocol runs the suite under OATHE_RUNTIME_PROVIDER)
+  // must not leak into the modeled one — spawned CLIs would see the forced value instead of
+  // auto-resolving, and fixture-hardcoded expectations like "requested auto" would silently
+  // break depending on who happens to be running the tests.
+  delete env.OATHE_RUNTIME_PROVIDER;
   return { home, bin, env, exec };
 }

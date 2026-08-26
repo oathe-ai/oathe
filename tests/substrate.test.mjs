@@ -90,7 +90,7 @@ test('status on a database that exists but has no DDL yet reports zero without e
     await bare.ensureDatabase();
     const seen = await bare.status();
     assert.deepEqual(seen, {
-      reachable: true, database_exists: true, ddl_applied: 0, yield_cause_registered: false,
+      reachable: true, database_exists: true, ddl_applied: 0, ddl_expected: DDL_FILES.length, yield_cause_registered: false,
     });
   } finally {
     await bare.close();

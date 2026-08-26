@@ -159,7 +159,7 @@ test('doctor prints per-row verdicts and the substrate summary', () => {
   const out = oathe(['doctor']);
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /substrate.*reachable/i);
-  assert.match(out.stdout, new RegExp(`ddl.*${DDL_FILES.length}`, 'i'));
+  assert.match(out.stdout, new RegExp(`ddl.*${DDL_FILES.length}/${DDL_FILES.length}`, 'i'));
   assert.match(out.stdout, /ok/);
   assert.match(out.stdout, /^runtime: (firia|standalone) \(requested auto\)/m,
     'the doctor names which runtime provider is active');

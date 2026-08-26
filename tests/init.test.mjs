@@ -32,6 +32,7 @@ test('init end-to-end: substrate up, both harnesses onboarded, manifest written,
   assert.deepEqual(result.census.map((c) => [c.name, c.installed]), [['claude', true], ['codex', true]]);
   assert.equal(result.substrate.database_exists, true);
   assert.equal(result.substrate.ddl_applied, DDL_FILES.length);
+  assert.equal(result.substrate.ddl_expected, DDL_FILES.length);
   assert.equal(result.substrate.yield_cause_registered, true);
   assert.equal(result.principal.principal_id, 'firia');
   assert.equal(result.verifier.principal_id, 'oathe-verifier');
