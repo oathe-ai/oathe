@@ -101,6 +101,11 @@ technical reference: [docs/PACKAGE.md](docs/PACKAGE.md).
 
 A small runtime plus a Postgres schema that carries the invariants. The database is deliberately "load-bearing": the rules that keep work safe (one current attempt per task, receipts before effects, verification before settlement) are enforced where no caller can route around them. Harness adapters are thin; our substrate is strict.
 
+## Community
+
+Questions, feedback, and show-and-tell: [Discord](https://discord.gg/sjrdWEj4W8) ·
+[GitHub Discussions](https://github.com/oathe-ai/oathe/discussions)
+
 ## Contributing
 
 Start with [CONTRIBUTING.md](CONTRIBUTING.md). Substantial changes begin with a design issue. The most valuable first contribution is a reproducible failure-and-recovery scenario — if we claim a failure mode is handled, the repository should prove it.
