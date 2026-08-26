@@ -1,0 +1,23 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking-change
+    - title: Security
+      labels:
+        - security
+    - title: Features
+      labels:
+        - type:feature
+        - type:proposal
+    - title: Fixes
+      labels:
+        - type:bug
+    - title: Documentation and maintenance
+      labels:
+        - documentation
+        - dependencies
+        - "*"

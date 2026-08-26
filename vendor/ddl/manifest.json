@@ -1,0 +1,183 @@
+{
+  "generated_at": "2026-08-26T22:45:35.173Z",
+  "source": {
+    "repo": "oathe-runtime-monorepo (private)",
+    "commit": null,
+    "commit_note": "pre-D0 drop predates commit stamping; per-file source_sha256 pins the exact exported bytes — the commit lands with the next estate regeneration"
+  },
+  "transform": {
+    "version": "export-clean-1",
+    "script": "scripts/vendor-ddl.mjs"
+  },
+  "license": "Apache-2.0",
+  "files": [
+    {
+      "position": 1,
+      "name": "001_core.sql",
+      "source_sha256": "9537a30072f1aa0dede348f2393602e4631b1b9132a6d6294df286e05a512180",
+      "public_sha256": "9537a30072f1aa0dede348f2393602e4631b1b9132a6d6294df286e05a512180"
+    },
+    {
+      "position": 2,
+      "name": "002_claim.sql",
+      "source_sha256": "975ad95cbb6a3aea36a3631ff57ff333287be1d2fef841cceef4df96a042f512",
+      "public_sha256": "975ad95cbb6a3aea36a3631ff57ff333287be1d2fef841cceef4df96a042f512"
+    },
+    {
+      "position": 3,
+      "name": "003_verification.sql",
+      "source_sha256": "be3d3113adecc4e692134f20f7bbfe42adf503cfccdbc13200e9f511c5102934",
+      "public_sha256": "be3d3113adecc4e692134f20f7bbfe42adf503cfccdbc13200e9f511c5102934"
+    },
+    {
+      "position": 4,
+      "name": "004_delegation.sql",
+      "source_sha256": "e96dc76ab5fd05d222d7987273181c769f735b0b167da39428305fa3537f16a4",
+      "public_sha256": "e96dc76ab5fd05d222d7987273181c769f735b0b167da39428305fa3537f16a4"
+    },
+    {
+      "position": 5,
+      "name": "005_escalation.sql",
+      "source_sha256": "0e479a287d7524276e6ad49e8f25ad944afb9be68a5b8821e7cc99a837e217cd",
+      "public_sha256": "0e479a287d7524276e6ad49e8f25ad944afb9be68a5b8821e7cc99a837e217cd"
+    },
+    {
+      "position": 6,
+      "name": "006_dependency.sql",
+      "source_sha256": "6060070147323f8bdc126454acb890221c3d52c56acd1b267222634d7ccab77e",
+      "public_sha256": "6060070147323f8bdc126454acb890221c3d52c56acd1b267222634d7ccab77e"
+    },
+    {
+      "position": 7,
+      "name": "007_assignment.sql",
+      "source_sha256": "21018bc761a32fd99bed8cacb91f4466e917a52f99810272ea48d5a8c306b4e5",
+      "public_sha256": "21018bc761a32fd99bed8cacb91f4466e917a52f99810272ea48d5a8c306b4e5"
+    },
+    {
+      "position": 8,
+      "name": "008_effect_receipt.sql",
+      "source_sha256": "c4c96d55fcb241005d926c6e06637172a4925007a535abfe2ea3a70ba0abe78d",
+      "public_sha256": "c4c96d55fcb241005d926c6e06637172a4925007a535abfe2ea3a70ba0abe78d"
+    },
+    {
+      "position": 9,
+      "name": "009_verified_edge.sql",
+      "source_sha256": "9c1bcff2d2028b16151fa422237437c820de93e19f6cd76ce21287571ad4e514",
+      "public_sha256": "9c1bcff2d2028b16151fa422237437c820de93e19f6cd76ce21287571ad4e514"
+    },
+    {
+      "position": 10,
+      "name": "010_parent_child_verification.sql",
+      "source_sha256": "78508f5b9c816b166f7bc4d1c5fd4bd83789251a342381f49f771a5f377a2a7b",
+      "public_sha256": "78508f5b9c816b166f7bc4d1c5fd4bd83789251a342381f49f771a5f377a2a7b"
+    },
+    {
+      "position": 11,
+      "name": "011_confirm.sql",
+      "source_sha256": "59a608f8828491bffe9d5e3851c2a17a06f6ac8a97e58271e6b76a743668ab8a",
+      "public_sha256": "59a608f8828491bffe9d5e3851c2a17a06f6ac8a97e58271e6b76a743668ab8a"
+    },
+    {
+      "position": 12,
+      "name": "012_evaluator_lane.sql",
+      "source_sha256": "161cfbcb1b87471bee20a0ba537d190df5c000a3d453362f85ce2fb85dfe2b4f",
+      "public_sha256": "161cfbcb1b87471bee20a0ba537d190df5c000a3d453362f85ce2fb85dfe2b4f"
+    },
+    {
+      "position": 13,
+      "name": "013_claim_terminal.sql",
+      "source_sha256": "8652abc8a6e3479e749081d21afd0ab2f208b97a2c3dba25eca6bc13415c21e6",
+      "public_sha256": "8652abc8a6e3479e749081d21afd0ab2f208b97a2c3dba25eca6bc13415c21e6"
+    },
+    {
+      "position": 14,
+      "name": "014_claim_settlement.sql",
+      "source_sha256": "9bcd7c0b7dbea339e8db39d8b67b8c28eb1ecc83209fe5623649e17a7a0a500d",
+      "public_sha256": "9bcd7c0b7dbea339e8db39d8b67b8c28eb1ecc83209fe5623649e17a7a0a500d"
+    },
+    {
+      "position": 15,
+      "name": "015_claim_yield.sql",
+      "source_sha256": "6f81f1ac5d43534a87b841d7fbe30c4c4edf560eccb68fa2dc0363ac247f8884",
+      "public_sha256": "6f81f1ac5d43534a87b841d7fbe30c4c4edf560eccb68fa2dc0363ac247f8884"
+    },
+    {
+      "position": 16,
+      "name": "016_reopened_reclaim.sql",
+      "source_sha256": "14c76d54a1f5375d14398882ccc7aeb039040837e430dfcc0d5a3254b3edf15b",
+      "public_sha256": "14c76d54a1f5375d14398882ccc7aeb039040837e430dfcc0d5a3254b3edf15b"
+    },
+    {
+      "position": 17,
+      "name": "017_claim_yield_causes.sql",
+      "source_sha256": "bf4bf5f306cc37a922c78b910219076357e7318686a7c8cf1f1d2b48ccd04cc5",
+      "public_sha256": "bf4bf5f306cc37a922c78b910219076357e7318686a7c8cf1f1d2b48ccd04cc5"
+    },
+    {
+      "position": 18,
+      "name": "018_receiptless_unknown.sql",
+      "source_sha256": "9cb984c2fedf34b0a7fc67d81a0feaa4ed8b24f1c03855ecb11c1b3c4c9e0829",
+      "public_sha256": "9cb984c2fedf34b0a7fc67d81a0feaa4ed8b24f1c03855ecb11c1b3c4c9e0829"
+    },
+    {
+      "position": 19,
+      "name": "019_verification_contract_freeze.sql",
+      "source_sha256": "162751180fb4981952dbc52e29cd23bc2c8ee51f895b56e99a18eaa937d3dada",
+      "public_sha256": "162751180fb4981952dbc52e29cd23bc2c8ee51f895b56e99a18eaa937d3dada"
+    },
+    {
+      "position": 20,
+      "name": "020_context_compilation.sql",
+      "source_sha256": "66ba4015332651f4fe8ba4daeb6ac3481f5d09ab87805a1f3cf10be22aceb40a",
+      "public_sha256": "66ba4015332651f4fe8ba4daeb6ac3481f5d09ab87805a1f3cf10be22aceb40a"
+    },
+    {
+      "position": 21,
+      "name": "021_execution_attempt_closure.sql",
+      "source_sha256": "320604f087960504ef9238c68d3a2eb9b732740cd088c0bde36616b704922caf",
+      "public_sha256": "37fd774093d9ea1dd8649f9b34946a16d39c3feabd56fe8ab0c792d75aaf5fbe"
+    },
+    {
+      "position": 22,
+      "name": "022_verification_clause.sql",
+      "source_sha256": "290a02135b8f6b69aa10c9d2c130447ef53fbd0f6da5b19e1221f302b75b6647",
+      "public_sha256": "290a02135b8f6b69aa10c9d2c130447ef53fbd0f6da5b19e1221f302b75b6647"
+    },
+    {
+      "position": 23,
+      "name": "023_executor_role.sql",
+      "source_sha256": "ab55fe5fa5d81e816728d84a1a664ca55c58db2c642986b7d735835e7f59afc3",
+      "public_sha256": "ab55fe5fa5d81e816728d84a1a664ca55c58db2c642986b7d735835e7f59afc3"
+    },
+    {
+      "position": 24,
+      "name": "024_executor_role_hardening.sql",
+      "source_sha256": "590d2880a4333ef306cf9cf526d26766afb671d63fe0cf13fc7f4c4de9f96035",
+      "public_sha256": "590d2880a4333ef306cf9cf526d26766afb671d63fe0cf13fc7f4c4de9f96035"
+    },
+    {
+      "position": 25,
+      "name": "025_running_attempt_uniqueness.sql",
+      "source_sha256": "12b82dbfa178654d384ee91f7aef3318bb3c395b88394f40ef55c1b58d3fae17",
+      "public_sha256": "4bb9788351ad35bad24784114fd6932c74d1e3bcb8d57071daf2f483964abae5"
+    },
+    {
+      "position": 26,
+      "name": "026_acceptance_authority.sql",
+      "source_sha256": "86dccaabbc2db97e03b87d04a2f695deb35a21cbeae781155a0bbb08f52c8511",
+      "public_sha256": "b69719d5f0d8e1e6632b6465ca07e4422d0074406326018877ad9e3dd126a2f9"
+    },
+    {
+      "position": 27,
+      "name": "027_ownership_return.sql",
+      "source_sha256": "aa15552d03d33c02479b86ca12f61133c890f5744895c0f6b3941d75376b24f9",
+      "public_sha256": "a03776ecd5942a49b4c772a0148c24cbf165805a65218cafab9c76c3b3d69568"
+    },
+    {
+      "position": 28,
+      "name": "028_attempt_bind_ownership.sql",
+      "source_sha256": "b373a33ed0cd9c5f6cfa63a21e4ddcff4830302fa12bb93b4d4ba1d31c27d5b8",
+      "public_sha256": "8327e90f0da435d47ee094c4f4abd6fb97eb557de92b38f04ba7cf2adbb0d88b"
+    }
+  ]
+}

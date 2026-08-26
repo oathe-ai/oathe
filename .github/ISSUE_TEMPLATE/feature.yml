@@ -1,0 +1,44 @@
+name: Feature proposal
+description: Propose a focused improvement to Oathe.
+title: "[Proposal]: "
+labels:
+  - needs-triage
+  - type:proposal
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user or reliability problem without prescribing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What measurable behavior or guarantee should change?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include existing standards, libraries, or workarounds that could solve the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and compatibility
+      description: Note affected harnesses, protocols, APIs, data formats, and backward-compatibility concerns.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and discussions for this proposal.
+          required: true
+        - label: I understand that significant changes require an accepted design before implementation.
+          required: true

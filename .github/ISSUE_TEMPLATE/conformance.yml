@@ -1,0 +1,44 @@
+name: Conformance failure
+description: Report a reproducible reliability or adapter conformance failure.
+title: "[Conformance]: "
+labels:
+  - needs-triage
+  - area:conformance
+body:
+  - type: input
+    id: guarantee
+    attributes:
+      label: Guarantee or test identifier
+      description: Name the contract, invariant, or conformance test that failed.
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Harness and setup
+      description: Include sanitized versions, adapter configuration, platform, and fixture identity.
+    validations:
+      required: true
+  - type: textarea
+    id: failure
+    attributes:
+      label: Observed failure
+      description: Describe the failure and attach dereferenceable, sanitized evidence where possible.
+    validations:
+      required: true
+  - type: textarea
+    id: control
+    attributes:
+      label: Control result
+      description: State whether the corresponding must-fail or negative control failed as expected.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: The failure is reproducible from the information above.
+          required: true
+        - label: Evidence is sanitized and contains no credentials or confidential data.
+          required: true

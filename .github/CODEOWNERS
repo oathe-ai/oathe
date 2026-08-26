@@ -1,0 +1,9 @@
+# Default ownership. Replace individual owners with component teams as the
+# maintainer group grows.
+* @oathe
+
+# Changes to repository trust boundaries always need maintainer review.
+/.github/ @oathe
+/SECURITY.md @oathe
+/GOVERNANCE.md @oathe
+/LICENSE @oathe

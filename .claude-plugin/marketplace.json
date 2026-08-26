@@ -1,0 +1,14 @@
+{
+  "name": "oathe",
+  "owner": {
+    "name": "Oathe"
+  },
+  "description": "The Oathe marketplace: one plugin, the claim loop over the local cell substrate.",
+  "plugins": [
+    {
+      "name": "oathe",
+      "source": "./plugin",
+      "description": "The Oathe claim loop: board at SessionStart, statements as you work, lease heartbeat at Stop, frame note before compaction."
+    }
+  ]
+}

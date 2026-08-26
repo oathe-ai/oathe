@@ -1,0 +1,20 @@
+{
+  "name": "Repository hygiene",
+  "target": "push",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "rules": [
+    {
+      "type": "max_file_size",
+      "parameters": {
+        "max_file_size": 10
+      }
+    },
+    {
+      "type": "max_file_path_length",
+      "parameters": {
+        "max_file_path_length": 180
+      }
+    }
+  ]
+}

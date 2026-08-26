@@ -1,0 +1,43 @@
+{
+  "name": "@oathe/oathe",
+  "version": "0.2.0",
+  "description": "Auto save and verified completion for AI coding agents \u2014 a durable local task board that outlives any one session. D0 preview.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "oathe": "./bin/oathe.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "link-runtime": "node scripts/link-runtime.mjs",
+    "vendor-ddl": "node scripts/vendor-ddl.mjs",
+    "marker-scan": "node scripts/marker-scan.mjs",
+    "pack:dry-run": "npm pack --dry-run --ignore-scripts",
+    "ci:policy": "node scripts/ci/check-workflows.mjs"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oathe-ai/oathe.git"
+  },
+  "homepage": "https://oathe.ai",
+  "files": [
+    "assets/",
+    "bin/",
+    "src/",
+    "plugin/",
+    "vendor/",
+    "docs/PRIVACY.md",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "dependencies": {
+    "pg": "^8.23.0"
+  }
+}

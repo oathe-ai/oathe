@@ -1,0 +1,50 @@
+name: Bug report
+description: Report reproducible incorrect behavior in Oathe.
+title: "[Bug]: "
+labels:
+  - needs-triage
+  - type:bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Oathe. Do not include credentials or undisclosed security vulnerabilities here; use the private security reporting link instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the smallest deterministic example, including commands or a repository link.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Oathe version or commit, harness and version, operating system, runtime, and relevant dependency versions.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Paste sanitized logs, traces, receipts, or failing assertions. Remove secrets and personal data.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and discussions for this problem.
+          required: true
+        - label: I removed credentials, personal data, and confidential company information.
+          required: true
+        - label: This is not an undisclosed security vulnerability.
+          required: true
