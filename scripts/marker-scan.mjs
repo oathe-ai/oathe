@@ -1,0 +1,103 @@
+#!/usr/bin/env node
+// oathe — the estate marker scan (Stage 1 A4-A6 prep). Walks one or more directories looking for
+// the estate's own vocabulary — founder name, machine paths, monorepo name, session ids, this
+// playground's own name — so that BEFORE anything (e.g. a vendored DDL tree) ships out of the
+// estate, a human can see exactly what estate-specific text it carries and decide what to do
+// about it. The DDL itself WILL hit on `firia` (schema/table names) — that is the point: the scan
+// output is the founder's decision surface, not a thing this script silently launders.
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+export const MARKER_PATTERNS = Object.freeze([
+  /firia/i,
+  /\/Users\/firiya/,
+  /firia-monorepo/,
+  /session_01[A-Za-z0-9]+/,
+  /oathe-playground/,
+]);
+
+const SKIP_DIR_NAMES = Object.freeze(['node_modules', '.git']);
+
+function fail(message) {
+  process.stderr.write(`marker-scan: ${message}\n`);
+  process.exit(1);
+}
+
+// Simple binary heuristic: a NUL byte anywhere in a leading chunk means "not text" — good enough
+// to keep this scan off images/binaries without a MIME-sniffing dependency.
+function looksBinary(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(8192);
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, bytesRead).includes(0);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function* walk(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIR_NAMES.includes(entry.name)) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      yield* walk(full);
+    } else if (entry.isFile()) {
+      yield full;
+    }
+  }
+}
+
+function scanFile(filePath) {
+  const hits = [];
+  if (looksBinary(filePath)) return hits;
+  const text = fs.readFileSync(filePath, 'utf8');
+  const lines = text.split('\n');
+  lines.forEach((line, idx) => {
+    for (const pattern of MARKER_PATTERNS) {
+      if (pattern.test(line)) {
+        hits.push({ file: filePath, line: idx + 1, pattern: pattern.source });
+      }
+    }
+  });
+  return hits;
+}
+
+function run(argv) {
+  const dirs = argv;
+  if (dirs.length === 0) {
+    fail('usage: marker-scan.mjs <dir>...');
+  }
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+      fail(`not a directory: ${dir}`);
+    }
+  }
+
+  let filesScanned = 0;
+  const allHits = [];
+  for (const dir of dirs) {
+    for (const filePath of walk(dir)) {
+      filesScanned++;
+      allHits.push(...scanFile(filePath));
+    }
+  }
+
+  for (const hit of allHits) {
+    process.stdout.write(`${hit.file}:${hit.line}: ${hit.pattern}\n`);
+  }
+
+  if (allHits.length > 0) {
+    process.stdout.write(`marker-scan: ${allHits.length} hit(s) across ${filesScanned} file(s) scanned\n`);
+    return 1;
+  }
+  process.stdout.write(`marker-scan: clean — 0 hits across ${filesScanned} file(s) scanned\n`);
+  return 0;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  process.exit(run(process.argv.slice(2)));
+}
+
+export { run };

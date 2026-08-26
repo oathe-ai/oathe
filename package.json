@@ -12,7 +12,9 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "link-firia": "node scripts/link-firia.mjs"
+    "link-firia": "node scripts/link-firia.mjs",
+    "vendor-ddl": "node scripts/vendor-ddl.mjs",
+    "marker-scan": "node scripts/marker-scan.mjs"
   },
   "license": "Apache-2.0",
   "files": ["bin/", "src/", "plugin/", "vendor/", "LICENSE", "README.md"],
