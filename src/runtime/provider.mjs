@@ -104,12 +104,12 @@ export class StandaloneRuntimeProvider {
 /** @returns {FiriaRuntimeProvider | StandaloneRuntimeProvider} */
 export function resolveRuntimeProvider({ config, paths }) {
   const requested = config.get('runtimeProvider');
-  const firiaResolves = fs.existsSync(paths.cagePath);
+  const firiaResolves = paths.cagePath !== null && fs.existsSync(paths.cagePath);
   if (requested === 'firia' && !firiaResolves) {
     throw new RuntimeError('OATHE_RUNTIME_FIRIA_UNAVAILABLE',
       `runtimeProvider 'firia' is requested but the monorepo does not resolve `
       + `(no cage at ${paths.cagePath}) — set runtimeProvider to 'standalone' or 'auto', `
-      + 'or point OATHE_MONOREPO at a checkout', { cagePath: paths.cagePath });
+      + 'or point OATHE_MONOREPO at a checkout', { cagePath: paths.cagePath, monorepo: paths.monorepo });
   }
   const name = requested === 'auto' ? (firiaResolves ? 'firia' : 'standalone') : requested;
   return name === 'firia' ? new FiriaRuntimeProvider({ paths }) : new StandaloneRuntimeProvider();
