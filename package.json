@@ -1,7 +1,7 @@
 {
   "name": "@oathe/oathe",
-  "version": "0.2.0",
-  "description": "Auto save and verified completion for AI coding agents — a durable local task board that outlives any one session. D0 preview.",
+  "version": "0.2.1",
+  "description": "Auto save and verified completion for AI coding agents \u2014 a durable local task board that outlives any one session. D0 preview.",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -27,6 +27,7 @@
   },
   "homepage": "https://oathe.ai",
   "files": [
+    ".claude-plugin/",
     "assets/",
     "bin/",
     "src/",

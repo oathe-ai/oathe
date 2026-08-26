@@ -102,3 +102,12 @@ test('scripts/link-runtime.mjs refuses to delete a real (non-symlink) node_modul
     fs.rmSync(tmpMonorepo, { recursive: true, force: true });
   }
 });
+
+test('the tarball carries BOTH plugin manifests — the marketplace root and the plugin itself', async () => {
+  const { execSync } = await import('node:child_process');
+  const out = execSync('npm pack --dry-run --ignore-scripts --json', { encoding: 'utf8' });
+  const files = JSON.parse(out)[0].files.map((f) => f.path);
+  assert.ok(files.includes('.claude-plugin/marketplace.json'),
+    'claude plugin marketplace add <packageRoot> needs .claude-plugin/marketplace.json IN THE TARBALL');
+  assert.ok(files.includes('plugin/.claude-plugin/plugin.json'), 'the plugin manifest ships');
+});
