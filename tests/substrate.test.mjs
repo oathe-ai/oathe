@@ -9,6 +9,10 @@ import { buildPaths } from '../src/paths.mjs';
 const paths = buildPaths({});
 const SCRATCH_DB = `oathe_test_${process.pid}`;
 
+// The estate cross-checks below need the monorepo checked out beside this repo.
+// On a machine without it, skip LOUDLY — never silently.
+const skip = paths.monorepo === null && 'estate cross-check: monorepo not on this machine';
+
 let substrate;
 
 before(() => {
@@ -20,16 +24,29 @@ after(async () => {
   await substrate.dropDatabase(); // scratch cleanup — the real verb set never drops
 });
 
-test('DDL_FILES mirrors apply.py exactly — same names, same order (house rule: never glob)', () => {
+test('DDL_FILES mirrors apply.py exactly — same names, same order (house rule: never glob)', { skip }, () => {
   const applyPy = fs.readFileSync(
     path.join(paths.monorepo, 'packages/firia-cell-domain/firia_cell_domain/apply.py'), 'utf8');
   const declared = [...applyPy.matchAll(/^\s*"(\d{3}_[a-z0-9_]+\.sql)",/gm)].map((m) => m[1]);
   assert.deepEqual(DDL_FILES, declared);
 });
 
-test('DDL_FILES all exist on disk and nothing undeclared sits in the ddl dir', () => {
+test('DDL_FILES all exist on disk and nothing undeclared sits in the ddl dir', { skip }, () => {
   const onDisk = fs.readdirSync(paths.ddlDir).filter((f) => f.endsWith('.sql')).sort();
   assert.deepEqual([...DDL_FILES].sort(), onDisk);
+});
+
+test('DDL_FILES shape is pinned machine-independently: unique, name-lawful, prefix-ascending', () => {
+  const NAME_RE = /^\d{3}_[a-z0-9_]+\.sql$/;
+  assert.equal(new Set(DDL_FILES).size, DDL_FILES.length, 'names must be unique');
+  for (const name of DDL_FILES) {
+    assert.match(name, NAME_RE, `${name} must match ${NAME_RE}`);
+  }
+  const prefixes = DDL_FILES.map((name) => Number(name.slice(0, 3)));
+  for (let i = 1; i < prefixes.length; i++) {
+    assert.ok(prefixes[i] > prefixes[i - 1],
+      `prefixes must strictly ascend: ${prefixes[i - 1]} then ${prefixes[i]}`);
+  }
 });
 
 test('detect answers reachable on this machine', async () => {
