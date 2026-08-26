@@ -14,6 +14,17 @@ const SCRATCH_DB = `oathe_test_${process.pid}`;
 // On a machine without it, skip LOUDLY — never silently.
 const skip = paths.monorepo === null && 'estate cross-check: monorepo not on this machine';
 
+// Once vendor/ddl ships in this tree, the OATHE_DDL_DIR > vendor/ddl > monorepo > null fallback
+// chain always resolves a source — "no DDL source at all" is unreachable via env alone (nulling
+// OATHE_MONOREPO just falls through to vendor/ddl). Skip loudly rather than silently rewrite this
+// into a duplicate of the "named source missing" test below.
+const skipNoDdlSource = paths.ddlSource === 'vendor'
+  && 'no-DDL-source scenario is unreachable once vendor/ddl ships in-tree (fallback chain always resolves it)';
+
+const VENDOR_MANIFEST_PATH = path.join(paths.packageRoot, 'vendor/ddl/manifest.json');
+const skipNoVendorManifest = !fs.existsSync(VENDOR_MANIFEST_PATH)
+  && 'vendored-manifest cross-check: no vendor/ddl/manifest.json in this tree';
+
 let substrate;
 
 before(() => {
@@ -35,6 +46,18 @@ test('DDL_FILES mirrors apply.py exactly — same names, same order (house rule:
 test('DDL_FILES all exist on disk and nothing undeclared sits in the ddl dir', { skip }, () => {
   const onDisk = fs.readdirSync(paths.ddlDir).filter((f) => f.endsWith('.sql')).sort();
   assert.deepEqual([...DDL_FILES].sort(), onDisk);
+});
+
+test('vendored manifest cross-checks against DDL_FILES and shaOf (machine-independent)', { skip: skipNoVendorManifest }, () => {
+  const manifest = JSON.parse(fs.readFileSync(VENDOR_MANIFEST_PATH, 'utf8'));
+  assert.deepEqual(manifest.files.map((f) => f.name), DDL_FILES,
+    'manifest.files must name-and-order-match DDL_FILES exactly');
+  const vendorSubstrate = new Substrate({ database: 'vendor-manifest-crosscheck-unused', paths, env: process.env });
+  for (const entry of manifest.files) {
+    assert.equal(entry.sha256, vendorSubstrate.shaOf(entry.name),
+      `${entry.name} manifest sha256 must equal shaOf (reusing the ONE hashing implementation)`);
+  }
+  assert.equal(manifest.license, 'Apache-2.0');
 });
 
 test('DDL_FILES shape is pinned machine-independently: unique, name-lawful, prefix-ascending', () => {
@@ -151,7 +174,7 @@ test('registerAcceptanceAuthority registers the seat roster through the governed
   });
 });
 
-test('a substrate with NO ddl source refuses typed at first use — never a raw ENOENT', async () => {
+test('a substrate with NO ddl source refuses typed at first use — never a raw ENOENT', { skip: skipNoDdlSource }, async () => {
   const p = buildPaths({ OATHE_MONOREPO: '' });   // ddlDir null (no vendor/ddl in tree)
   const s = new Substrate({ database: `oathe_noddl_${process.pid}`, paths: p, env: process.env });
   try {

@@ -34,9 +34,15 @@ test('the DDL source resolution order: OATHE_DDL_DIR > vendor/ddl > monorepo > n
   assert.equal(forced.ddlDir, '/tmp/my-ddl');
   assert.equal(forced.ddlSource, 'OATHE_DDL_DIR');
   const viaMono = buildPaths({ OATHE_MONOREPO: '/tmp/mono' });
-  // no vendor/ddl in tree today → monorepo-derived
-  assert.equal(viaMono.ddlDir, '/tmp/mono/packages/firia-cell-domain/firia_cell_domain/ddl');
-  assert.equal(viaMono.ddlSource, 'monorepo');
+  const vendorPresentForMono = fs.existsSync(path.join(viaMono.packageRoot, 'vendor/ddl'));
+  if (vendorPresentForMono) {
+    // vendor/ddl now ships in-tree and outranks monorepo in the resolution order
+    assert.equal(viaMono.ddlDir, path.join(viaMono.packageRoot, 'vendor/ddl'));
+    assert.equal(viaMono.ddlSource, 'vendor');
+  } else {
+    assert.equal(viaMono.ddlDir, '/tmp/mono/packages/firia-cell-domain/firia_cell_domain/ddl');
+    assert.equal(viaMono.ddlSource, 'monorepo');
+  }
   const noSource = buildPaths({ OATHE_MONOREPO: '' });
   const vendorPresent = fs.existsSync(path.join(noSource.packageRoot, 'vendor/ddl'));
   if (!vendorPresent) {

@@ -14,6 +14,13 @@ import { buildPaths } from '../src/paths.mjs';
 const SCRATCH_DB = `oathe_init_test_${process.pid}`;
 const paths = buildPaths({});
 
+// Once vendor/ddl ships in this tree, the OATHE_DDL_DIR > vendor/ddl > monorepo > null fallback
+// chain always resolves a source — "no DDL source at all" is no longer reachable via env alone
+// (nulling OATHE_MONOREPO just falls through to vendor/ddl). Skip loudly rather than silently
+// rewrite the test's meaning into a duplicate of the "named source missing" case below.
+const skipNoDdlSource = paths.ddlSource === 'vendor'
+  && 'no-DDL-source scenario is unreachable once vendor/ddl ships in-tree (fallback chain always resolves it)';
+
 function sandbox() {
   const sb = sharedSandbox({ scratchDb: SCRATCH_DB });
   return { home: sb.home, env: sb.env, exec: sb.exec };
@@ -69,17 +76,23 @@ test('init with the substrate unreachable instructs and refuses instead of onboa
   });
 });
 
-test('init refuses BEFORE creating the database when no DDL source resolves', async () => {
+test('init refuses BEFORE creating the database when no DDL source resolves', { skip: skipNoDdlSource }, async () => {
   const { env, exec } = sandbox();
-  const noSource = { ...env, OATHE_MONOREPO: '', OATHE_DB: `oathe_noddl_init_${process.pid}` };
-  await assert.rejects(() => runInit({ env: noSource, exec }),
-    (e) => e.code === 'DDL_SOURCE_UNAVAILABLE');
+  const dbName = `oathe_noddl_init_${process.pid}`;
+  const noSource = { ...env, OATHE_MONOREPO: '', OATHE_DB: dbName };
   const admin = new Substrate({ database: 'postgres', paths, env: process.env });
+  const scratch = new Substrate({ database: dbName, paths, env: process.env });
   try {
-    const { rows } = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1',
-      [`oathe_noddl_init_${process.pid}`]);
+    await assert.rejects(() => runInit({ env: noSource, exec }),
+      (e) => e.code === 'DDL_SOURCE_UNAVAILABLE');
+    const { rows } = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
     assert.equal(rows.length, 0, 'no half-created database left behind');
-  } finally { await admin.close(); }
+  } finally {
+    // Belt-and-suspenders: if init ever unexpectedly provisioned the database before refusing,
+    // never leak a scratch database behind a passing (or failing) assertion.
+    await scratch.dropDatabase().catch(() => {});
+    await admin.close();
+  }
 });
 
 test('init refuses BEFORE creating the database when OATHE_DDL_DIR names a directory that does not exist', async () => {

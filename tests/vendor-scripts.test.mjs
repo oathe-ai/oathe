@@ -22,6 +22,13 @@ const SCAN_SCRIPT = path.join(paths.packageRoot, 'scripts/marker-scan.mjs');
 // when it is not on this machine, the established { skip } idiom used elsewhere in this suite.
 const skip = paths.monorepo === null && 'DDL vendoring source: monorepo not on this machine';
 
+// Once vendor/ddl ships in this tree, the OATHE_DDL_DIR > vendor/ddl > monorepo > null fallback
+// chain always resolves a source — "no DDL source at all" is unreachable via env alone (nulling
+// both OATHE_MONOREPO and OATHE_DDL_DIR just falls through to vendor/ddl). Skip loudly rather
+// than silently rewrite this into a duplicate of the "named source missing" scenario.
+const skipNoDdlSource = paths.ddlSource === 'vendor'
+  && 'no-DDL-source scenario is unreachable once vendor/ddl ships in-tree (fallback chain always resolves it)';
+
 function runVendor(args, env = {}) {
   return spawnSync(process.execPath, [VENDOR_SCRIPT, ...args], {
     cwd: paths.packageRoot,
@@ -64,6 +71,25 @@ test('vendor-ddl copies every DDL file byte-identical (by sha256) and writes a m
   }
 });
 
+test('vendor-ddl --license Apache-2.0 sets manifest.license; omitting it keeps the PENDING default', { skip }, () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vendor-ddl-license-'));
+  const outDirDefault = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vendor-ddl-license-default-'));
+  try {
+    const licensed = runVendor(['--out', outDir, '--license', 'Apache-2.0']);
+    assert.equal(licensed.status, 0, licensed.stderr + licensed.stdout);
+    const licensedManifest = JSON.parse(fs.readFileSync(path.join(outDir, 'manifest.json'), 'utf8'));
+    assert.equal(licensedManifest.license, 'Apache-2.0');
+
+    const unlicensed = runVendor(['--out', outDirDefault]);
+    assert.equal(unlicensed.status, 0, unlicensed.stderr + unlicensed.stdout);
+    const defaultManifest = JSON.parse(fs.readFileSync(path.join(outDirDefault, 'manifest.json'), 'utf8'));
+    assert.equal(defaultManifest.license, 'PENDING-FOUNDER-DECISION');
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+    fs.rmSync(outDirDefault, { recursive: true, force: true });
+  }
+});
+
 test('vendor-ddl refuses to overwrite a non-empty out dir without --force, and succeeds with it', { skip }, () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vendor-ddl-force-'));
   try {
@@ -82,7 +108,7 @@ test('vendor-ddl refuses to overwrite a non-empty out dir without --force, and s
   }
 });
 
-test('vendor-ddl refuses typed-loud when no DDL source resolves', () => {
+test('vendor-ddl refuses typed-loud when no DDL source resolves', { skip: skipNoDdlSource }, () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vendor-ddl-nosrc-'));
   try {
     const result = runVendor(['--out', outDir], { OATHE_MONOREPO: '', OATHE_DDL_DIR: '' });

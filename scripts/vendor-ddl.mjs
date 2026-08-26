@@ -31,6 +31,7 @@ function fail(message) {
 function parseArgs(argv) {
   let out = null;
   let force = false;
+  let license = null;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--out') {
@@ -38,16 +39,20 @@ function parseArgs(argv) {
       if (out === undefined) fail('--out requires a directory argument');
     } else if (arg === '--force') {
       force = true;
+    } else if (arg === '--license') {
+      license = argv[++i];
+      if (license === undefined) fail('--license requires an SPDX identifier argument');
     } else {
       fail(`unrecognized argument: ${arg}`);
     }
   }
-  return { out, force };
+  return { out, force, license };
 }
 
 function run(argv, env) {
   const paths = buildPaths(env);
-  const { out, force } = parseArgs(argv);
+  const { out, force, license } = parseArgs(argv);
+  const manifestLicense = license || MANIFEST_LICENSE_PENDING;
   const outDir = out ? path.resolve(out) : path.join(paths.packageRoot, 'vendor/ddl');
 
   if (!paths.ddlDir) {
@@ -79,14 +84,14 @@ function run(argv, env) {
   const manifest = {
     generated_at: new Date().toISOString(),
     source: MANIFEST_SOURCE,
-    license: MANIFEST_LICENSE_PENDING,
+    license: manifestLicense,
     files,
   };
   fs.writeFileSync(path.join(outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
   process.stdout.write(
     `vendor-ddl: vendored ${files.length} DDL files from ${paths.ddlDir} to ${outDir} `
-    + `(license: ${MANIFEST_LICENSE_PENDING})\n`);
+    + `(license: ${manifestLicense})\n`);
   return { outDir, manifest };
 }
 

@@ -1,0 +1,8 @@
+oathe
+Copyright 2026 the oathe authors
+
+This product bundles vendored schema under vendor/ddl/: the cell-domain DDL,
+copied byte-identical from the firia-monorepo
+(packages/firia-cell-domain/firia_cell_domain/ddl), licensed under
+Apache-2.0. See vendor/ddl/manifest.json for the per-file provenance and
+sha256 of each vendored file.

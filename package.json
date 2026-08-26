@@ -17,7 +17,7 @@
     "marker-scan": "node scripts/marker-scan.mjs"
   },
   "license": "Apache-2.0",
-  "files": ["bin/", "src/", "plugin/", "vendor/", "LICENSE", "README.md"],
+  "files": ["bin/", "src/", "plugin/", "vendor/", "LICENSE", "NOTICE", "README.md"],
   "dependencies": {
     "pg": "^8.23.0"
   }
