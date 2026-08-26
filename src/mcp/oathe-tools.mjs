@@ -368,8 +368,9 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       }
       if (!successor) {
         throw new OatheToolError('OATHE_PICKUP_UNAVAILABLE',
-          'the successor sequence is not wired into this server (no runtime config in this '
-          + 'session) — pickup cannot pretend; launch via `oathe claude` to get it', { task_id });
+          'pickup is not wired into this tools server — the successor sequence is unavailable in '
+          + 'this session (a preview limitation of sessions without the runtime seam); pickup '
+          + 'cannot pretend', { task_id });
       }
       return successor({ task_id, work_claim_id: latest.work_claim_id });
     },
@@ -481,8 +482,9 @@ export async function main(env = process.env) {
     },
     successor: async (o) => {
       if (!successorPromise) {
-        successorPromise = import('../successor.mjs')
-          .then(({ buildSuccessor }) => buildSuccessor({ substrate, identity, paths, env }));
+        successorPromise = import('../runtime/provider.mjs')
+          .then(({ resolveRuntimeProvider }) => resolveRuntimeProvider({ config, paths })
+            .successor({ substrate, identity, paths }));
         successorPromise.catch(() => { successorPromise = null; }); // a failed build must not poison retries
       }
       return (await successorPromise).pickup(o);

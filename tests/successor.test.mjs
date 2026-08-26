@@ -1,7 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
-import { buildSuccessor } from '../src/successor.mjs';
+import { FiriaRuntimeProvider } from '../src/runtime/provider.mjs';
 import { createOatheTools } from '../src/mcp/oathe-tools.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
@@ -11,27 +12,34 @@ const SCRATCH_DB = `oathe_succ_test_${process.pid}`;
 const WS = 'ws-successor0000';
 const identity = { orgId: 'oathe', principalId: 'firia', department: 'founder' };
 
+// Successor is firia-only: the standalone provider refuses it TYPED (proven in
+// runtime-provider.test.mjs). On a machine with no monorepo, skip LOUDLY — never silently.
+const FIRIA_PRESENT = fs.existsSync(paths.cagePath ?? '');
+const skip = !FIRIA_PRESENT && 'firia runtime not on this machine — successor is firia-only';
+
 let substrate;
 let tools;
 let successor;
 
 before(async () => {
+  if (!FIRIA_PRESENT) return;
   substrate = new Substrate({ database: SCRATCH_DB, paths, env: process.env });
   await substrate.ensureDatabase();
   await substrate.applyDdl();
   await substrate.seed({ orgId: 'oathe', principalId: 'firia', department: 'founder' });
   await substrate.registerYieldCause();
   tools = createOatheTools({ client: substrate, identity, workspace: WS });
-  successor = await buildSuccessor({ substrate, identity, paths, env: process.env });
+  successor = await new FiriaRuntimeProvider({ paths }).successor({ substrate, identity, paths });
 });
 
 after(async () => {
+  if (!FIRIA_PRESENT) return;
   await successor?.close?.();
   await substrate.close();
   await substrate.dropDatabase();
 });
 
-test('the successor sequence over a claim with NO prior attempt: RECOMPILE, a real attempt row, a rendered frame', async () => {
+test('the successor sequence over a claim with NO prior attempt: RECOMPILE, a real attempt row, a rendered frame', { skip }, async () => {
   const { work_claim_id } = await tools.oathe_claim({
     task_id: 'succ-task', objective: 'carry this obligation across sessions',
   });
@@ -45,7 +53,7 @@ test('the successor sequence over a claim with NO prior attempt: RECOMPILE, a re
   assert.equal(rows[0].n, 1, 'the attempt is durable in the cell');
 });
 
-test('a second pickup on the same claim reads the PRIOR attempt through the successor path', async () => {
+test('a second pickup on the same claim reads the PRIOR attempt through the successor path', { skip }, async () => {
   const { rows } = await substrate.query(
     "SELECT work_claim_id FROM cell.work_claim WHERE task_id = 'succ-task' AND state = 'active'");
   const workClaimId = rows[0].work_claim_id;

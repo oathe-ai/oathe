@@ -63,3 +63,26 @@ test('both providers serve the same acceptanceRuntime surface: SETTLE.CLAIM and 
     await substrate.close();
   }
 });
+
+test('both providers serve the successor surface: firia builds it, standalone refuses TYPED', async () => {
+  const { Substrate } = await import('../src/substrate.mjs');
+  const substrate = new Substrate({ database: 'postgres', paths: HERE, env: process.env });
+  try {
+    const firia = await new FiriaRuntimeProvider({ paths: HERE })
+      .successor({ substrate, identity: { orgId: 'oathe', principalId: 'firia', department: 'founder' }, paths: HERE });
+    assert.equal(typeof firia.pickup, 'function');
+    assert.equal(typeof firia.close, 'function');
+    await firia.close();
+
+    const standalone = await new StandaloneRuntimeProvider()
+      .successor({ substrate, identity: { orgId: 'oathe', principalId: 'firia', department: 'founder' }, paths: HERE });
+    assert.equal(typeof standalone.close, 'function');
+    await assert.rejects(
+      () => standalone.pickup({ task_id: 't', work_claim_id: '00000000-0000-0000-0000-000000000000' }),
+      (e) => e.name === 'RuntimeError' && e.code === 'OATHE_PICKUP_UNAVAILABLE'
+        && /preview limitation/.test(e.message));
+    await standalone.close(); // a no-op that must not throw
+  } finally {
+    await substrate.close();
+  }
+});

@@ -53,6 +53,12 @@ export class FiriaRuntimeProvider {
       laneFor: (seatPrincipal) => composition.buildProductionAcceptanceLane({ pool, seatPrincipal, registry }),
     };
   }
+
+  /** The thin-path pickup, served only where the firia runtime resolves. */
+  async successor({ substrate, identity, paths }) {
+    const { buildSuccessor } = await import('../successor.mjs');
+    return buildSuccessor({ substrate, identity, paths });
+  }
 }
 
 export class StandaloneRuntimeProvider {
@@ -76,6 +82,19 @@ export class StandaloneRuntimeProvider {
     return {
       SETTLE,
       laneFor: (seatPrincipal) => new SqlAcceptanceLane({ pool, orgId, seatPrincipal, specs }),
+    };
+  }
+
+  /** Pickup degrades TYPED and LOUD: same {pickup, close} shape, the refusal inside pickup(). */
+  async successor() {
+    return {
+      pickup: async () => {
+        throw new RuntimeError('OATHE_PICKUP_UNAVAILABLE',
+          'the successor sequence needs the firia runtime, which does not resolve on this '
+          + 'machine (runtime provider: standalone) — pickup cannot pretend; this is a preview '
+          + 'limitation', { provider: 'standalone' });
+      },
+      close: async () => {},
     };
   }
 }
