@@ -16,6 +16,7 @@ test('buildPaths probes the DEFAULT monorepo: present on this machine keeps it; 
   }
   const forced = buildPaths({ OATHE_MONOREPO: '/tmp/mono' });
   assert.equal(forced.monorepo, '/tmp/mono', 'explicit env is taken at its word even if absent');
+  assert.equal(forced.cagePath, '/tmp/mono/packages/firia-runtime/falsifiers/acp-probe/acp-cage.mjs');
 });
 
 test('a null monorepo nulls its derived paths and nothing throws', () => {
@@ -23,15 +24,25 @@ test('a null monorepo nulls its derived paths and nothing throws', () => {
   assert.equal(p.monorepo, null);
   assert.equal(p.cagePath, null);
   // ddlDir falls through the resolution order; with no vendor/ddl in-tree it is null too
-  assert.equal(p.ddlDir, fs.existsSync(path.join(p.packageRoot, 'vendor/ddl')) ? path.join(p.packageRoot, 'vendor/ddl') : null);
+  const vendorPresent = fs.existsSync(path.join(p.packageRoot, 'vendor/ddl'));
+  assert.equal(p.ddlDir, vendorPresent ? path.join(p.packageRoot, 'vendor/ddl') : null);
+  assert.equal(p.ddlSource, vendorPresent ? 'vendor' : null);
 });
 
 test('the DDL source resolution order: OATHE_DDL_DIR > vendor/ddl > monorepo > null', () => {
   const forced = buildPaths({ OATHE_DDL_DIR: '/tmp/my-ddl', OATHE_MONOREPO: '/tmp/mono' });
   assert.equal(forced.ddlDir, '/tmp/my-ddl');
+  assert.equal(forced.ddlSource, 'OATHE_DDL_DIR');
   const viaMono = buildPaths({ OATHE_MONOREPO: '/tmp/mono' });
   // no vendor/ddl in tree today → monorepo-derived
   assert.equal(viaMono.ddlDir, '/tmp/mono/packages/firia-cell-domain/firia_cell_domain/ddl');
+  assert.equal(viaMono.ddlSource, 'monorepo');
+  const noSource = buildPaths({ OATHE_MONOREPO: '' });
+  const vendorPresent = fs.existsSync(path.join(noSource.packageRoot, 'vendor/ddl'));
+  if (!vendorPresent) {
+    assert.equal(noSource.ddlDir, null);
+    assert.equal(noSource.ddlSource, null, 'no OATHE_DDL_DIR, no vendor/ddl, no monorepo — ddlSource is null too');
+  }
 });
 
 test('buildPaths honours OATHE_HOME override and derives dependents from it', () => {

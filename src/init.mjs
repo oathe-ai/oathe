@@ -32,6 +32,9 @@ export async function runInit({ env = process.env, exec } = {}) {
         + `then re-run \`oathe init\`. Detail: ${detect.detail}`,
         { detail: detect.detail });
     }
+    // Same preflight block as detect(): a missing DDL source is caught here too, before any
+    // database is created — never a half-onboarded world.
+    substrate.assertDdlSource();
     await substrate.ensureDatabase();
     await substrate.applyDdl();
     await substrate.seed({

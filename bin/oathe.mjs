@@ -63,8 +63,8 @@ const handlers = {
       process.stdout.write(`  ${c.name.padEnd(8)} ${c.installed ? 'onboarded' : 'not installed — skipped'}\n`);
     }
     const s = result.substrate;
-    process.stdout.write(`substrate: db up, ddl ${s.ddl_applied}/${s.ddl_expected} applied, `
-      + `yield cause ${s.yield_cause_registered ? 'registered' : 'MISSING'}\n`);
+    process.stdout.write(`substrate: db up, ddl ${s.ddl_applied}/${s.ddl_expected} applied `
+      + `(source: ${s.ddl_source}), yield cause ${s.yield_cause_registered ? 'registered' : 'MISSING'}\n`);
     process.stdout.write(`principal: ${result.principal.principal_id} (${result.principal.role})\n`);
     for (const a of result.actions) {
       process.stdout.write(`  ${a.harness.padEnd(8)} ${a.action}\n`);
@@ -281,7 +281,7 @@ const handlers = {
     const s = result.substrate;
     process.stdout.write(`substrate: ${s.reachable ? 'reachable' : 'UNREACHABLE'}, `
       + `db ${s.database_exists ? 'present' : 'ABSENT'}, ddl ${s.ddl_applied}/${s.ddl_expected}, `
-      + `yield cause ${s.yield_cause_registered ? 'ok' : 'MISSING'}\n`);
+      + `ddl source: ${s.ddl_source}, yield cause ${s.yield_cause_registered ? 'ok' : 'MISSING'}\n`);
     process.stdout.write(`plugin: ${result.plugin.resolves ? 'resolves' : `BROKEN (${result.plugin.detail})`}\n`);
     const rt = result.runtime;
     process.stdout.write(rt.provider
@@ -296,6 +296,7 @@ const handlers = {
       process.stdout.write(`  ${row.status.padEnd(12)} ${row.harness.padEnd(8)} ${row.kind.padEnd(12)} ${row.file}\n`);
     }
     const healthy = s.reachable && s.database_exists && s.ddl_applied === s.ddl_expected
+      && s.ddl_source !== 'ABSENT'
       && result.plugin.resolves && result.runtime.provider !== null
       && result.rows.every((r) => r.status === 'ok')
       && Object.values(result.traces).every((t) => t.status !== 'DRIFT');
@@ -310,7 +311,8 @@ const handlers = {
       const s = await ctx.substrate.status();
       process.stdout.write(`database: ${ctx.substrate.database} — `
         + `${s.reachable ? 'reachable' : 'UNREACHABLE'}, ${s.database_exists ? 'present' : 'absent'}, `
-        + `ddl ${s.ddl_applied}/${s.ddl_expected}, yield cause ${s.yield_cause_registered ? 'ok' : 'missing'}\n`);
+        + `ddl ${s.ddl_applied}/${s.ddl_expected}, ddl source: ${s.ddl_source}, `
+        + `yield cause ${s.yield_cause_registered ? 'ok' : 'missing'}\n`);
       summary('status', 'ok');
     } finally {
       await ctx.substrate.close();

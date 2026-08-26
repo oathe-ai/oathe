@@ -90,7 +90,8 @@ test('status on a database that exists but has no DDL yet reports zero without e
     await bare.ensureDatabase();
     const seen = await bare.status();
     assert.deepEqual(seen, {
-      reachable: true, database_exists: true, ddl_applied: 0, ddl_expected: DDL_FILES.length, yield_cause_registered: false,
+      reachable: true, database_exists: true, ddl_applied: 0, ddl_expected: DDL_FILES.length,
+      ddl_source: paths.ddlSource ?? 'ABSENT', yield_cause_registered: false,
     });
   } finally {
     await bare.close();
@@ -132,10 +133,26 @@ test('registerAcceptanceAuthority registers the seat roster through the governed
   });
 });
 
+test('a substrate with NO ddl source refuses typed at first use — never a raw ENOENT', async () => {
+  const p = buildPaths({ OATHE_MONOREPO: '' });   // ddlDir null (no vendor/ddl in tree)
+  const s = new Substrate({ database: `oathe_noddl_${process.pid}`, paths: p, env: process.env });
+  try {
+    await assert.rejects(() => s.applyDdl(),
+      (e) => e.name === 'SubstrateError' && e.code === 'DDL_SOURCE_UNAVAILABLE'
+        && /OATHE_DDL_DIR|vendor\/ddl|monorepo/.test(e.message));
+    assert.throws(() => s.shaOf('001_core.sql'),
+      (e) => e.code === 'DDL_SOURCE_UNAVAILABLE');
+  } finally {
+    await s.close();
+    await s.dropDatabase().catch(() => {});
+  }
+});
+
 test('status reports the substrate a doctor can print', async () => {
   const seen = await substrate.status();
   assert.equal(seen.reachable, true);
   assert.equal(seen.database_exists, true);
   assert.equal(seen.ddl_applied, DDL_FILES.length);
+  assert.equal(seen.ddl_source, paths.ddlSource);
   assert.equal(seen.yield_cause_registered, true);
 });

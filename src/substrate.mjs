@@ -140,9 +140,30 @@ export class Substrate {
     }
   }
 
+  /**
+   * The ONE place that resolves the DDL root — both `shaOf` and `applyDdl` read through it, so a
+   * missing source is a single typed refusal, never a raw ENOENT surfacing from either caller.
+   */
+  #ddlRoot() {
+    if (!this.paths.ddlDir) {
+      throw new SubstrateError('DDL_SOURCE_UNAVAILABLE',
+        'no DDL source resolves on this machine — set OATHE_DDL_DIR, ship vendor/ddl, or point '
+        + 'OATHE_MONOREPO at a checkout; the substrate cannot apply a schema it cannot read', {});
+    }
+    return this.paths.ddlDir;
+  }
+
   shaOf(filename) {
-    const bytes = fs.readFileSync(path.join(this.paths.ddlDir, filename));
+    const bytes = fs.readFileSync(path.join(this.#ddlRoot(), filename));
     return require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+  }
+
+  /**
+   * Preflight entry point for callers (init) that want the same typed refusal BEFORE doing any
+   * database work — the same resolver `shaOf`/`applyDdl` read through, just called earlier.
+   */
+  assertDdlSource() {
+    this.#ddlRoot();
   }
 
   /**
@@ -151,6 +172,9 @@ export class Substrate {
    * @returns {Promise<{applied: string[], skipped: string[]}>}
    */
   async applyDdl() {
+    // Refuse before touching the database at all — a missing DDL source is caught here, not
+    // mid-way through a half-created schema.
+    const ddlDir = this.#ddlRoot();
     const client = await this.#cellClient();
     await client.query(`
       CREATE SCHEMA IF NOT EXISTS oathe;
@@ -173,7 +197,7 @@ export class Substrate {
           + `${sha.slice(0, 12)}… — a pinned DDL file does not drift quietly; refusing to re-apply`,
           { filename });
       }
-      const sql = fs.readFileSync(path.join(this.paths.ddlDir, filename), 'utf8');
+      const sql = fs.readFileSync(path.join(ddlDir, filename), 'utf8');
       try {
         await client.query('BEGIN');
         await client.query(sql);
@@ -246,9 +270,12 @@ export class Substrate {
   }
 
   async status() {
+    // Named once, told everywhere: every branch of this method carries the same ddl_source key
+    // so init's summary, doctor, and `oathe status` never disagree about which source is serving.
+    const ddlSource = this.paths.ddlSource ?? 'ABSENT';
     const reachable = await this.detect();
     if (!reachable.reachable) {
-      return { reachable: false, database_exists: false, ddl_applied: 0, ddl_expected: DDL_FILES.length, yield_cause_registered: false };
+      return { reachable: false, database_exists: false, ddl_applied: 0, ddl_expected: DDL_FILES.length, ddl_source: ddlSource, yield_cause_registered: false };
     }
     const admin = await this.#adminClient();
     let databaseExists;
@@ -259,7 +286,7 @@ export class Substrate {
       await admin.end();
     }
     if (!databaseExists) {
-      return { reachable: true, database_exists: false, ddl_applied: 0, ddl_expected: DDL_FILES.length, yield_cause_registered: false };
+      return { reachable: true, database_exists: false, ddl_applied: 0, ddl_expected: DDL_FILES.length, ddl_source: ddlSource, yield_cause_registered: false };
     }
     const ddl = await this.query(
       "SELECT count(*)::int AS n FROM pg_tables t WHERE schemaname = 'oathe' AND tablename = 'ddl_applied'");
@@ -276,6 +303,7 @@ export class Substrate {
       database_exists: true,
       ddl_applied: ddlApplied,
       ddl_expected: DDL_FILES.length,
+      ddl_source: ddlSource,
       yield_cause_registered: causeRegistered,
     };
   }

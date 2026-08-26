@@ -69,6 +69,19 @@ test('init with the substrate unreachable instructs and refuses instead of onboa
   });
 });
 
+test('init refuses BEFORE creating the database when no DDL source resolves', async () => {
+  const { env, exec } = sandbox();
+  const noSource = { ...env, OATHE_MONOREPO: '', OATHE_DB: `oathe_noddl_init_${process.pid}` };
+  await assert.rejects(() => runInit({ env: noSource, exec }),
+    (e) => e.code === 'DDL_SOURCE_UNAVAILABLE');
+  const admin = new Substrate({ database: 'postgres', paths, env: process.env });
+  try {
+    const { rows } = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1',
+      [`oathe_noddl_init_${process.pid}`]);
+    assert.equal(rows.length, 0, 'no half-created database left behind');
+  } finally { await admin.close(); }
+});
+
 test('doctor over a healthy install reports every row ok; after a user edit inside our keys it REPORTS, never overwrites', async () => {
   const { home, env, exec } = sandbox();
   await runInit({ env, exec });
