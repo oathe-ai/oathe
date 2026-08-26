@@ -90,6 +90,21 @@ test('vendor-ddl --license Apache-2.0 sets manifest.license; omitting it keeps t
   }
 });
 
+test('vendor-ddl rejects an empty or whitespace-containing --license value, typed-loud', () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vendor-ddl-license-bad-'));
+  try {
+    const empty = runVendor(['--out', outDir, '--license', '']);
+    assert.equal(empty.status, 1, empty.stdout);
+    assert.match(empty.stderr + empty.stdout, /--license must be a non-empty SPDX identifier/);
+
+    const whitespace = runVendor(['--out', outDir, '--license', 'Apache 2.0']);
+    assert.equal(whitespace.status, 1, whitespace.stdout);
+    assert.match(whitespace.stderr + whitespace.stdout, /--license must be a non-empty SPDX identifier/);
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
 test('vendor-ddl refuses to overwrite a non-empty out dir without --force, and succeeds with it', { skip }, () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vendor-ddl-force-'));
   try {

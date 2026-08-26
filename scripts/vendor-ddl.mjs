@@ -42,6 +42,9 @@ function parseArgs(argv) {
     } else if (arg === '--license') {
       license = argv[++i];
       if (license === undefined) fail('--license requires an SPDX identifier argument');
+      if (license === '' || /\s/.test(license)) {
+        fail(`--license must be a non-empty SPDX identifier with no whitespace, got: ${JSON.stringify(license)}`);
+      }
     } else {
       fail(`unrecognized argument: ${arg}`);
     }

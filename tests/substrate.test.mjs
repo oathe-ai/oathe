@@ -14,13 +14,6 @@ const SCRATCH_DB = `oathe_test_${process.pid}`;
 // On a machine without it, skip LOUDLY — never silently.
 const skip = paths.monorepo === null && 'estate cross-check: monorepo not on this machine';
 
-// Once vendor/ddl ships in this tree, the OATHE_DDL_DIR > vendor/ddl > monorepo > null fallback
-// chain always resolves a source — "no DDL source at all" is unreachable via env alone (nulling
-// OATHE_MONOREPO just falls through to vendor/ddl). Skip loudly rather than silently rewrite this
-// into a duplicate of the "named source missing" test below.
-const skipNoDdlSource = paths.ddlSource === 'vendor'
-  && 'no-DDL-source scenario is unreachable once vendor/ddl ships in-tree (fallback chain always resolves it)';
-
 const VENDOR_MANIFEST_PATH = path.join(paths.packageRoot, 'vendor/ddl/manifest.json');
 const skipNoVendorManifest = !fs.existsSync(VENDOR_MANIFEST_PATH)
   && 'vendored-manifest cross-check: no vendor/ddl/manifest.json in this tree';
@@ -174,8 +167,11 @@ test('registerAcceptanceAuthority registers the seat roster through the governed
   });
 });
 
-test('a substrate with NO ddl source refuses typed at first use — never a raw ENOENT', { skip: skipNoDdlSource }, async () => {
-  const p = buildPaths({ OATHE_MONOREPO: '' });   // ddlDir null (no vendor/ddl in tree)
+test('a substrate with NO ddl source refuses typed at first use — never a raw ENOENT', async () => {
+  // Substrate takes a plain paths object — no need to fight buildPaths's real fallback chain
+  // (which, once vendor/ddl ships in-tree, always resolves a source) to exercise the null branch.
+  // Machine-independent on every checkout, vendor/ddl or not.
+  const p = { ...buildPaths({}), ddlDir: null, ddlSource: null };
   const s = new Substrate({ database: `oathe_noddl_${process.pid}`, paths: p, env: process.env });
   try {
     await assert.rejects(() => s.applyDdl(),
