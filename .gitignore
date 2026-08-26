@@ -1,0 +1,8 @@
+# AI working docs — plans, scratch analyses; never shipped, never committed
+.ai-docs/
+
+# estate-only re-link artifacts (Stage 1 A6, ruling R-E): npm prunes these once firia-runtime
+# is no longer a declared dependency; `npm run link-firia` recreates the symlink on estate
+# machines, but it must never ride a commit again.
+node_modules/firia-runtime
+node_modules/.bin/firia-*

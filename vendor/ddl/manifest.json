@@ -1,0 +1,122 @@
+{
+  "generated_at": "2026-08-26T02:29:40.366Z",
+  "source": {
+    "repo": "firia-monorepo",
+    "path": "packages/firia-cell-domain/firia_cell_domain/ddl"
+  },
+  "license": "Apache-2.0",
+  "files": [
+    {
+      "name": "001_core.sql",
+      "sha256": "9537a30072f1aa0dede348f2393602e4631b1b9132a6d6294df286e05a512180"
+    },
+    {
+      "name": "002_claim.sql",
+      "sha256": "975ad95cbb6a3aea36a3631ff57ff333287be1d2fef841cceef4df96a042f512"
+    },
+    {
+      "name": "003_verification.sql",
+      "sha256": "be3d3113adecc4e692134f20f7bbfe42adf503cfccdbc13200e9f511c5102934"
+    },
+    {
+      "name": "004_delegation.sql",
+      "sha256": "e96dc76ab5fd05d222d7987273181c769f735b0b167da39428305fa3537f16a4"
+    },
+    {
+      "name": "005_escalation.sql",
+      "sha256": "0e479a287d7524276e6ad49e8f25ad944afb9be68a5b8821e7cc99a837e217cd"
+    },
+    {
+      "name": "006_dependency.sql",
+      "sha256": "6060070147323f8bdc126454acb890221c3d52c56acd1b267222634d7ccab77e"
+    },
+    {
+      "name": "007_assignment.sql",
+      "sha256": "21018bc761a32fd99bed8cacb91f4466e917a52f99810272ea48d5a8c306b4e5"
+    },
+    {
+      "name": "008_effect_receipt.sql",
+      "sha256": "c4c96d55fcb241005d926c6e06637172a4925007a535abfe2ea3a70ba0abe78d"
+    },
+    {
+      "name": "009_verified_edge.sql",
+      "sha256": "9c1bcff2d2028b16151fa422237437c820de93e19f6cd76ce21287571ad4e514"
+    },
+    {
+      "name": "010_parent_child_verification.sql",
+      "sha256": "78508f5b9c816b166f7bc4d1c5fd4bd83789251a342381f49f771a5f377a2a7b"
+    },
+    {
+      "name": "011_confirm.sql",
+      "sha256": "59a608f8828491bffe9d5e3851c2a17a06f6ac8a97e58271e6b76a743668ab8a"
+    },
+    {
+      "name": "012_evaluator_lane.sql",
+      "sha256": "161cfbcb1b87471bee20a0ba537d190df5c000a3d453362f85ce2fb85dfe2b4f"
+    },
+    {
+      "name": "013_claim_terminal.sql",
+      "sha256": "8652abc8a6e3479e749081d21afd0ab2f208b97a2c3dba25eca6bc13415c21e6"
+    },
+    {
+      "name": "014_claim_settlement.sql",
+      "sha256": "cec44d3928984a110562ba56eae6b6c0e2eb6a520848ad13da7a7a2d35046cdd"
+    },
+    {
+      "name": "015_claim_yield.sql",
+      "sha256": "6f81f1ac5d43534a87b841d7fbe30c4c4edf560eccb68fa2dc0363ac247f8884"
+    },
+    {
+      "name": "016_reopened_reclaim.sql",
+      "sha256": "14c76d54a1f5375d14398882ccc7aeb039040837e430dfcc0d5a3254b3edf15b"
+    },
+    {
+      "name": "017_claim_yield_causes.sql",
+      "sha256": "bf4bf5f306cc37a922c78b910219076357e7318686a7c8cf1f1d2b48ccd04cc5"
+    },
+    {
+      "name": "018_receiptless_unknown.sql",
+      "sha256": "9cb984c2fedf34b0a7fc67d81a0feaa4ed8b24f1c03855ecb11c1b3c4c9e0829"
+    },
+    {
+      "name": "019_verification_contract_freeze.sql",
+      "sha256": "162751180fb4981952dbc52e29cd23bc2c8ee51f895b56e99a18eaa937d3dada"
+    },
+    {
+      "name": "020_context_compilation.sql",
+      "sha256": "66ba4015332651f4fe8ba4daeb6ac3481f5d09ab87805a1f3cf10be22aceb40a"
+    },
+    {
+      "name": "021_execution_attempt_closure.sql",
+      "sha256": "320604f087960504ef9238c68d3a2eb9b732740cd088c0bde36616b704922caf"
+    },
+    {
+      "name": "022_verification_clause.sql",
+      "sha256": "290a02135b8f6b69aa10c9d2c130447ef53fbd0f6da5b19e1221f302b75b6647"
+    },
+    {
+      "name": "023_executor_role.sql",
+      "sha256": "ab55fe5fa5d81e816728d84a1a664ca55c58db2c642986b7d735835e7f59afc3"
+    },
+    {
+      "name": "024_executor_role_hardening.sql",
+      "sha256": "590d2880a4333ef306cf9cf526d26766afb671d63fe0cf13fc7f4c4de9f96035"
+    },
+    {
+      "name": "025_running_attempt_uniqueness.sql",
+      "sha256": "12b82dbfa178654d384ee91f7aef3318bb3c395b88394f40ef55c1b58d3fae17"
+    },
+    {
+      "name": "026_acceptance_authority.sql",
+      "sha256": "86dccaabbc2db97e03b87d04a2f695deb35a21cbeae781155a0bbb08f52c8511"
+    },
+    {
+      "name": "027_ownership_return.sql",
+      "sha256": "aa15552d03d33c02479b86ca12f61133c890f5744895c0f6b3941d75376b24f9"
+    },
+    {
+      "name": "028_attempt_bind_ownership.sql",
+      "sha256": "b373a33ed0cd9c5f6cfa63a21e4ddcff4830302fa12bb93b4d4ba1d31c27d5b8"
+    }
+  ]
+}

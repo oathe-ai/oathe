@@ -1,0 +1,24 @@
+{
+  "name": "oathe",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "description": "The Oathe interface: an npm package whose init onboards both installed harnesses (Claude Code, Codex) onto the local cell substrate, and whose launchers bind interactive sessions to claims.",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "oathe": "./bin/oathe.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "link-firia": "node scripts/link-firia.mjs",
+    "vendor-ddl": "node scripts/vendor-ddl.mjs",
+    "marker-scan": "node scripts/marker-scan.mjs"
+  },
+  "license": "Apache-2.0",
+  "files": ["bin/", "src/", "plugin/", "vendor/", "LICENSE", "NOTICE", "README.md"],
+  "dependencies": {
+    "pg": "^8.23.0"
+  }
+}
