@@ -46,11 +46,20 @@ try {
 }
 
 if (existing) {
-  if (existing.isSymbolicLink() && fs.readlinkSync(linkPath) === relativeTarget) {
+  if (!existing.isSymbolicLink()) {
+    const kind = existing.isDirectory() ? 'a real directory' : existing.isFile() ? 'a real file' : 'an unrecognized filesystem entry';
+    fail(
+      `${linkPath} exists and is ${kind}, not a symlink — refusing to delete it. `
+      + 'This script only ever repairs a symlink it recognizes as its own; it never deletes a real '
+      + `directory or file. If this is stale, remove it yourself (e.g. \`rm -rf ${linkPath}\`) and `
+      + 're-run `npm run link-firia`.'
+    );
+  }
+  const priorTarget = fs.readlinkSync(linkPath);
+  if (priorTarget === relativeTarget) {
     process.stdout.write(`link-firia: node_modules/firia-runtime already -> ${relativeTarget} (correct, nothing to do)\n`);
     process.exit(0);
   }
-  const priorTarget = existing.isSymbolicLink() ? fs.readlinkSync(linkPath) : '(not a symlink)';
   fs.rmSync(linkPath, { recursive: true, force: true });
   fs.symlinkSync(relativeTarget, linkPath, 'dir');
   process.stdout.write(
