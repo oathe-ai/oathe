@@ -82,6 +82,21 @@ test('init refuses BEFORE creating the database when no DDL source resolves', as
   } finally { await admin.close(); }
 });
 
+test('init refuses BEFORE creating the database when OATHE_DDL_DIR names a directory that does not exist', async () => {
+  const { env, exec } = sandbox();
+  const wrongDdlDir = `/nonexistent-ddl-dir-${process.pid}`;
+  const dbName = `oathe_ddlgone_init_${process.pid}`;
+  const named = { ...env, OATHE_DDL_DIR: wrongDdlDir, OATHE_DB: dbName };
+  await assert.rejects(() => runInit({ env: named, exec }),
+    (e) => e.code === 'DDL_SOURCE_UNAVAILABLE' && e.message.includes(wrongDdlDir)
+      && /does not exist/.test(e.message));
+  const admin = new Substrate({ database: 'postgres', paths, env: process.env });
+  try {
+    const { rows } = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
+    assert.equal(rows.length, 0, 'no half-created database left behind');
+  } finally { await admin.close(); }
+});
+
 test('doctor over a healthy install reports every row ok; after a user edit inside our keys it REPORTS, never overwrites', async () => {
   const { home, env, exec } = sandbox();
   await runInit({ env, exec });
@@ -94,6 +109,10 @@ test('doctor over a healthy install reports every row ok; after a user edit insi
   assert.ok(healthy.rows.length >= 4);
   assert.ok(healthy.rows.every((r) => r.status === 'ok'), JSON.stringify(healthy.rows));
   assert.equal(healthy.plugin.resolves, true);
+  // The runtime probe (Finding 1: a firia selection that does not actually resolve
+  // firia-runtime must show unhealthy, never a HEALTHY doctor line over a broken checkout).
+  assert.equal(healthy.runtime.provider !== null, true);
+  assert.equal(healthy.runtime.probe.ok, true, JSON.stringify(healthy.runtime));
 
   const settingsPath = path.join(home, '.claude/settings.json');
   const doc = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));

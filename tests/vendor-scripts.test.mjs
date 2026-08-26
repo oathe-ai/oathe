@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 
 import { buildPaths } from '../src/paths.mjs';
 import { Substrate, DDL_FILES } from '../src/substrate.mjs';
+import { MARKER_PATTERNS } from '../scripts/marker-scan.mjs';
 
 const paths = buildPaths({});
 const VENDOR_SCRIPT = path.join(paths.packageRoot, 'scripts/vendor-ddl.mjs');
@@ -99,9 +100,66 @@ test('marker-scan flags a planted founder-path fixture and exits 1', () => {
     const result = runScan([dir]);
     assert.equal(result.status, 1, result.stdout);
     assert.match(result.stdout, /leaky\.txt:1:/);
-    assert.match(result.stdout, /1 hit/);
+    // Not pinned to an exact count: this line legitimately trips more than one pattern (the
+    // full path AND the bare founder username) — the point is that SOMETHING was flagged.
+    assert.match(result.stdout, /marker-scan: \d+ hit\(s\) across 1 file\(s\) scanned/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('marker-scan catches each newly-added estate marker pattern, one planted hit per file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-marker-scan-newpatterns-'));
+  try {
+    const plants = {
+      'founder-username.txt': 'run this as firiya on the box\n',
+      'workspace-id.txt': 'the board renders at workspace ws-63d60b8f9275 today\n',
+      'ai-docs.txt': 'see .ai-docs/plans/foo.md for the plan\n',
+      'superpowers.txt': 'loaded from .superpowers/skills on session start\n',
+      'claude-session.txt': 'Claude-Session: https://claude.ai/code/session_ABC123\n',
+      'founder-email.txt': 'approvals go through shez.malik00@gmail.com\n',
+    };
+    for (const [name, contents] of Object.entries(plants)) {
+      fs.writeFileSync(path.join(dir, name), contents);
+    }
+    const result = runScan([dir]);
+    assert.equal(result.status, 1, result.stdout);
+    for (const name of Object.keys(plants)) {
+      assert.match(result.stdout, new RegExp(`${name}:1:`), `expected marker-scan to flag ${name}`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('MARKER_PATTERNS covers the estate vocabulary added for Finding 4', () => {
+  const probes = [
+    'firiya', 'ws-63d60b8f9275', '.ai-docs/plans/x.md', '.superpowers/skills/y',
+    'Claude-Session: https://claude.ai/code/session_x', 'shez.malik00@gmail.com',
+  ];
+  for (const probe of probes) {
+    assert.ok(MARKER_PATTERNS.some((p) => p.test(probe)), `no pattern matches: ${probe}`);
+  }
+});
+
+test('marker-scan actually runs its main guard from a path containing a space (import.meta.url is percent-encoded)', () => {
+  // A script self-invoked from a path with a space is the exact case where
+  // `file://${process.argv[1]}` (raw) diverges from `import.meta.url` (percent-encoded) — the
+  // stale comparison silently fails the guard, the script loads as a no-op module, and node
+  // exits 0 having scanned NOTHING. That is the worst failure mode for a leakage gate.
+  const spaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe has space-'));
+  try {
+    const copiedScript = path.join(spaceRoot, 'marker-scan.mjs');
+    fs.copyFileSync(SCAN_SCRIPT, copiedScript);
+    const targetDir = fs.mkdtempSync(path.join(spaceRoot, 'target-'));
+    fs.writeFileSync(path.join(targetDir, 'leaky.txt'), 'the path is /Users/firiya/x on this machine\n');
+
+    const result = spawnSync(process.execPath, [copiedScript, targetDir], { encoding: 'utf8' });
+    assert.equal(result.status, 1, `expected exit 1 (a real scan found a hit); got ${result.status} — `
+      + `stdout=${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`);
+    assert.match(result.stdout, /leaky\.txt:1:/, 'the guard must have actually run the scan');
+  } finally {
+    fs.rmSync(spaceRoot, { recursive: true, force: true });
   }
 });
 

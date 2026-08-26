@@ -13,8 +13,12 @@ const WS = 'ws-successor0000';
 const identity = { orgId: 'oathe', principalId: 'firia', department: 'founder' };
 
 // Successor is firia-only: the standalone provider refuses it TYPED (proven in
-// runtime-provider.test.mjs). On a machine with no monorepo, skip LOUDLY — never silently.
-const FIRIA_PRESENT = fs.existsSync(paths.cagePath ?? '');
+// runtime-provider.test.mjs). On a machine with no monorepo checkout, OR a checkout whose
+// firia-runtime symlink is missing (Finding 1 — `npm run link-firia` was never run), skip
+// LOUDLY — never silently. Reuses the provider's own probe() rather than duplicating the
+// resolve logic here (DRY).
+const cagePresent = fs.existsSync(paths.cagePath ?? '');
+const FIRIA_PRESENT = cagePresent && new FiriaRuntimeProvider({ paths }).probe().ok;
 const skip = !FIRIA_PRESENT && 'firia runtime not on this machine — successor is firia-only';
 
 let substrate;

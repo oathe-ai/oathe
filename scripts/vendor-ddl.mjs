@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { buildPaths } from '../src/paths.mjs';
 import { Substrate, DDL_FILES } from '../src/substrate.mjs';
@@ -90,7 +91,11 @@ function run(argv, env) {
 }
 
 // Only execute when run as a script (tests import parseArgs/run without side effects otherwise).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// import.meta.url is percent-encoded AND resolved through realpath (a symlinked tmpdir, e.g.
+// macOS's /tmp -> /private/tmp, otherwise still breaks the match) — compare against
+// pathToFileURL(realpath(argv[1])), never a raw `file://${argv[1]}` template, or a path with a
+// space/non-ASCII char (or a symlinked ancestor dir) silently fails the guard.
+if (import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   run(process.argv.slice(2), process.env);
 }
 

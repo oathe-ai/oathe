@@ -7,6 +7,7 @@
 
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 
 import { standardPlan } from '../plans.mjs';
 import { applyRecordedVerdict, RECORDED_VERDICT_CHECKER } from './discharge.mjs';
@@ -20,18 +21,57 @@ export class RuntimeError extends Error {
   }
 }
 
+/** The default resolvability probe: does `firia-runtime` actually resolve from THIS module's
+ *  location, independent of whether the monorepo checkout (and thus the cage path) is present?
+ *  A monorepo file being present says nothing about whether `npm run link-firia` was ever run. */
+function defaultResolve(specifier) {
+  return createRequire(import.meta.url).resolve(specifier);
+}
+
 export class FiriaRuntimeProvider {
   name = 'firia';
 
-  constructor({ paths }) {
+  #resolve;
+  #probeResult;
+
+  constructor({ paths, resolve = defaultResolve }) {
     this.paths = paths;
+    this.#resolve = resolve;
   }
 
   capabilities() {
     return { cage: 'acp-cage', settlement: 'firia-acceptance-lane', pickup: 'thin-path' };
   }
 
-  /** The one sanctioned path import — the cage lives outside firia-runtime's exports map. */
+  /** Computed ONCE per instance and cached — a raw ERR_MODULE_NOT_FOUND from firia-runtime
+   *  failing to resolve (e.g. a forgotten `npm run link-firia` on an estate machine) is turned
+   *  into a typed, loud fact here instead of leaking out of acceptanceRuntime()/successor().
+   *  @returns {{ok: boolean, error?: string}} */
+  probe() {
+    if (this.#probeResult === undefined) {
+      try {
+        this.#resolve('firia-runtime/composition-root');
+        this.#probeResult = { ok: true };
+      } catch (e) {
+        this.#probeResult = { ok: false, error: String(e?.message || e) };
+      }
+    }
+    return this.#probeResult;
+  }
+
+  #assertResolves() {
+    const result = this.probe();
+    if (!result.ok) {
+      throw new RuntimeError('OATHE_RUNTIME_FIRIA_UNLINKED',
+        'the firia runtime does not resolve from this checkout — run `npm run link-firia` '
+        + `(the monorepo is at ${this.paths.monorepo}, but node_modules/firia-runtime is missing)`,
+        { monorepo: this.paths.monorepo });
+    }
+  }
+
+  /** The one sanctioned path import — the cage lives outside firia-runtime's exports map.
+   *  Stays path-based (no probe): the cage address is resolved off paths.cagePath directly,
+   *  never through firia-runtime's package resolution. */
   async cage() {
     const { spawnCaged } = await import(pathToFileURL(this.paths.cagePath).href);
     return { spawnCaged };
@@ -39,6 +79,7 @@ export class FiriaRuntimeProvider {
 
   /** The estate's acceptance lane, composed here behind the seam — verbatim from the verifier. */
   async acceptanceRuntime({ pool }) {
+    this.#assertResolves();
     const [composition, checkers, lane] = await Promise.all([
       import('firia-runtime/composition-root'),
       import('firia-runtime/checkers'),
@@ -56,6 +97,7 @@ export class FiriaRuntimeProvider {
 
   /** The thin-path pickup, served only where the firia runtime resolves. */
   async successor({ substrate, identity, paths }) {
+    this.#assertResolves();
     const { buildSuccessor } = await import('../successor.mjs');
     return buildSuccessor({ substrate, identity, paths });
   }
@@ -66,6 +108,11 @@ export class StandaloneRuntimeProvider {
 
   capabilities() {
     return { cage: 'simple-cage', settlement: 'sql-acceptance-lane', pickup: 'unavailable' };
+  }
+
+  /** The standalone package never depends on firia-runtime — always resolvable by definition. */
+  probe() {
+    return { ok: true };
   }
 
   async cage() {

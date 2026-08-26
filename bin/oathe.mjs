@@ -284,10 +284,12 @@ const handlers = {
       + `ddl source: ${s.ddl_source}, yield cause ${s.yield_cause_registered ? 'ok' : 'MISSING'}\n`);
     process.stdout.write(`plugin: ${result.plugin.resolves ? 'resolves' : `BROKEN (${result.plugin.detail})`}\n`);
     const rt = result.runtime;
-    process.stdout.write(rt.provider
-      ? `runtime: ${rt.provider} (requested ${rt.requested}) — cage ${rt.capabilities.cage}, `
-        + `settlement ${rt.capabilities.settlement}, pickup ${rt.capabilities.pickup}\n`
-      : `runtime: UNRESOLVED (requested ${rt.requested}) — ${rt.error}\n`);
+    process.stdout.write(!rt.provider
+      ? `runtime: UNRESOLVED (requested ${rt.requested}) — ${rt.error}\n`
+      : rt.probe && !rt.probe.ok
+        ? `runtime: ${rt.provider} (requested ${rt.requested}) — UNLINKED: run npm run link-firia\n`
+        : `runtime: ${rt.provider} (requested ${rt.requested}) — cage ${rt.capabilities.cage}, `
+          + `settlement ${rt.capabilities.settlement}, pickup ${rt.capabilities.pickup}\n`);
     for (const [harness, trace] of Object.entries(result.traces)) {
       process.stdout.write(`traces: ${harness.padEnd(8)} ${trace.status}`
         + `${trace.status === 'DRIFT' ? ` — ${trace.detail} (${trace.newest})` : ''}\n`);
@@ -298,6 +300,7 @@ const handlers = {
     const healthy = s.reachable && s.database_exists && s.ddl_applied === s.ddl_expected
       && s.ddl_source !== 'ABSENT'
       && result.plugin.resolves && result.runtime.provider !== null
+      && result.runtime.probe?.ok !== false
       && result.rows.every((r) => r.status === 'ok')
       && Object.values(result.traces).every((t) => t.status !== 'DRIFT');
     summary('doctor', healthy ? 'ok' : 'attention');

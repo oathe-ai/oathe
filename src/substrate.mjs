@@ -148,7 +148,18 @@ export class Substrate {
     if (!this.paths.ddlDir) {
       throw new SubstrateError('DDL_SOURCE_UNAVAILABLE',
         'no DDL source resolves on this machine — set OATHE_DDL_DIR, ship vendor/ddl, or point '
-        + 'OATHE_MONOREPO at a checkout; the substrate cannot apply a schema it cannot read', {});
+        + 'OATHE_MONOREPO at a checkout; the substrate cannot apply a schema it cannot read',
+        { ddlDir: this.paths.ddlDir, ddlSource: this.paths.ddlSource });
+    }
+    // A NAMED source (e.g. OATHE_DDL_DIR pointed at a typo'd path, or an explicit OATHE_MONOREPO
+    // that does not resolve — both lawful under R-D, which takes env verbatim) still has to
+    // exist on disk: existence is THIS method's contract, so a wrong dir is caught here as the
+    // same typed refusal, never a raw ENOENT surfacing later from shaOf/applyDdl.
+    if (!fs.existsSync(this.paths.ddlDir)) {
+      throw new SubstrateError('DDL_SOURCE_UNAVAILABLE',
+        `${this.paths.ddlSource} names ${this.paths.ddlDir} as the DDL source, but that `
+        + 'directory does not exist — the substrate cannot apply a schema it cannot read',
+        { ddlDir: this.paths.ddlDir, ddlSource: this.paths.ddlSource });
     }
     return this.paths.ddlDir;
   }

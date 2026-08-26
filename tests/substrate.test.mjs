@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { Substrate, DDL_FILES } from '../src/substrate.mjs';
@@ -159,6 +160,26 @@ test('a substrate with NO ddl source refuses typed at first use — never a raw 
         && /OATHE_DDL_DIR|vendor\/ddl|monorepo/.test(e.message));
     assert.throws(() => s.shaOf('001_core.sql'),
       (e) => e.code === 'DDL_SOURCE_UNAVAILABLE');
+  } finally {
+    await s.close();
+    await s.dropDatabase().catch(() => {});
+  }
+});
+
+test('a substrate whose DDL source is NAMED but the directory does not exist refuses typed — never a raw ENOENT', async () => {
+  const wrongDdlDir = path.join(os.tmpdir(), `nonexistent-ddl-${process.pid}`);
+  const p = buildPaths({ OATHE_DDL_DIR: wrongDdlDir });
+  assert.equal(p.ddlDir, wrongDdlDir);
+  assert.equal(fs.existsSync(wrongDdlDir), false, 'precondition: the dir must not exist');
+  const s = new Substrate({ database: `oathe_ddlgone_${process.pid}`, paths: p, env: process.env });
+  try {
+    await assert.rejects(() => s.applyDdl(),
+      (e) => e.name === 'SubstrateError' && e.code === 'DDL_SOURCE_UNAVAILABLE'
+        && e.message.includes(wrongDdlDir) && /does not exist/.test(e.message)
+        && !/no DDL source resolves/.test(e.message),
+        'the message must distinguish "named but absent" from "no source resolves"');
+    assert.throws(() => s.shaOf('001_core.sql'),
+      (e) => e.code === 'DDL_SOURCE_UNAVAILABLE' && e.message.includes(wrongDdlDir));
   } finally {
     await s.close();
     await s.dropDatabase().catch(() => {});

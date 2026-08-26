@@ -8,13 +8,20 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export const MARKER_PATTERNS = Object.freeze([
   /firia/i,
+  /firiya/i,
   /\/Users\/firiya/,
   /firia-monorepo/,
   /session_01[A-Za-z0-9]+/,
   /oathe-playground/,
+  /ws-[0-9a-f]{12}/,
+  /\.ai-docs/,
+  /\.superpowers/,
+  /Claude-Session:/,
+  /shez\.malik/i,
 ]);
 
 const SKIP_DIR_NAMES = Object.freeze(['node_modules', '.git']);
@@ -96,7 +103,12 @@ function run(argv) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// import.meta.url is percent-encoded (e.g. spaces become %20) AND resolved through realpath
+// (a symlinked tmpdir, e.g. macOS's /tmp -> /private/tmp, otherwise still breaks the match); a
+// raw `file://${argv[1]}` comparison silently fails on either, and the guard's body never runs —
+// the worst failure mode for a leakage gate: a scan that reports 0 hits because it scanned
+// NOTHING, and exits 0.
+if (import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   process.exit(run(process.argv.slice(2)));
 }
 

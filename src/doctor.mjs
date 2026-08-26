@@ -91,11 +91,14 @@ export async function runDoctor({ env = process.env } = {}) {
     try {
       const { resolveRuntimeProvider } = await import('./runtime/provider.mjs');
       const provider = resolveRuntimeProvider({ config: ctx.config, paths });
+      // The resolvability probe (Finding 1): a firia selection whose cage path exists on disk
+      // says nothing about whether `npm run link-firia` was ever run — doctor must surface the
+      // SAME probe acceptanceRuntime()/successor() gate on, never report HEALTHY over it.
       runtime = { provider: provider.name, requested: ctx.config.get('runtimeProvider'),
-        capabilities: provider.capabilities(), error: null };
+        capabilities: provider.capabilities(), error: null, probe: provider.probe() };
     } catch (e) {
       runtime = { provider: null, requested: ctx.config.get('runtimeProvider'),
-        capabilities: null, error: String(e?.message || e) };
+        capabilities: null, error: String(e?.message || e), probe: null };
     }
 
     return { rows, substrate: await substrate.status(), plugin, traces, runtime };

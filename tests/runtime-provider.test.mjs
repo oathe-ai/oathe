@@ -77,6 +77,39 @@ test('both providers serve the same acceptanceRuntime surface: SETTLE.CLAIM and 
   }
 });
 
+test('probe(): the real firia provider on this machine resolves ok, and standalone always does', () => {
+  assert.deepEqual(new FiriaRuntimeProvider({ paths: HERE }).probe(), { ok: true });
+  assert.deepEqual(new StandaloneRuntimeProvider().probe(), { ok: true });
+});
+
+test('a firia provider whose injected resolver throws refuses TYPED with OATHE_RUNTIME_FIRIA_UNLINKED, never a raw module error', async () => {
+  const unlinkedError = new Error("Cannot find package 'firia-runtime'");
+  const throwingResolve = () => { throw unlinkedError; };
+  const provider = new FiriaRuntimeProvider({ paths: HERE, resolve: throwingResolve });
+
+  assert.deepEqual(provider.probe(), { ok: false, error: unlinkedError.message });
+
+  await assert.rejects(
+    () => provider.acceptanceRuntime({ pool }),
+    (e) => e.name === 'RuntimeError' && e.code === 'OATHE_RUNTIME_FIRIA_UNLINKED'
+      && /link-firia/.test(e.message) && /firia-monorepo|monorepo/.test(e.message));
+
+  await assert.rejects(
+    () => provider.successor({
+      substrate, identity: { orgId: 'oathe', principalId: 'firia', department: 'founder' }, paths: HERE,
+    }),
+    (e) => e.name === 'RuntimeError' && e.code === 'OATHE_RUNTIME_FIRIA_UNLINKED');
+});
+
+test('probe() is computed once and cached: a resolver that flips from ok to throwing is not re-consulted', () => {
+  let calls = 0;
+  const flakyResolve = () => { calls++; if (calls > 1) throw new Error('should not be called again'); };
+  const provider = new FiriaRuntimeProvider({ paths: HERE, resolve: flakyResolve });
+  assert.deepEqual(provider.probe(), { ok: true });
+  assert.deepEqual(provider.probe(), { ok: true });
+  assert.equal(calls, 1, 'the resolver runs exactly once per provider instance');
+});
+
 test('both providers serve the successor surface: firia builds it, standalone refuses TYPED', async () => {
   const firia = await new FiriaRuntimeProvider({ paths: HERE })
     .successor({ substrate, identity: { orgId: 'oathe', principalId: 'firia', department: 'founder' }, paths: HERE });
