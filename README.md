@@ -10,7 +10,7 @@ That's oathe.
 
 Below is exactly how much of it works today, because a reliability project that overstates its own status would be a joke.
 
-[![CI](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
+[![CI](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE) [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/sjrdWEj4W8)
 
 ## What gets saved
 
@@ -100,11 +100,6 @@ technical reference: [docs/PACKAGE.md](docs/PACKAGE.md).
 ## Under the hood
 
 A small runtime plus a Postgres schema that carries the invariants. The database is deliberately "load-bearing": the rules that keep work safe (one current attempt per task, receipts before effects, verification before settlement) are enforced where no caller can route around them. Harness adapters are thin; our substrate is strict.
-
-## Community
-
-Questions, feedback, and show-and-tell: [Discord](https://discord.gg/sjrdWEj4W8) ·
-[GitHub Discussions](https://github.com/oathe-ai/oathe/discussions)
 
 ## Contributing
 
