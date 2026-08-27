@@ -1,0 +1,39 @@
+name: Release
+
+# Publishing is the founder's act of publishing a GitHub release; this workflow only
+# carries it to npm. Trusted publishing (OIDC) — no stored credential, provenance attested.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm with provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the released commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+      - name: The tag and package.json must agree on the version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          test "$TAG" = "v$(node -p "require('./package.json').version")" \
+            || { echo "tag $TAG != package.json version"; exit 1; }
+      - name: Install from the lockfile without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Publish
+        run: npm publish --ignore-scripts --provenance
