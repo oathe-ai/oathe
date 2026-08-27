@@ -12,6 +12,23 @@ That's oathe.
 
 Below is exactly how much of it works today, because a reliability project that overstates its own status would be a joke.
 
+## Quickstart
+
+You need Node ≥ 22 and a running Postgres. Every command below is real and exercised by the
+test suite and a clean-container proof.
+
+```bash
+npm install -g @oathe/oathe@latest
+
+cd your-project
+oathe init          # local substrate up (createdb + schema), both installed harnesses onboarded
+oathe claude        # a normal interactive session — the board shows, nothing auto-resumes
+```
+
+Ctrl-C anytime. Open `oathe codex` in the same folder — same board, same claims, other harness.
+
+What Oathe reads, stores, and sends: [docs/PRIVACY.md](docs/PRIVACY.md). The full
+technical reference: [docs/PACKAGE.md](docs/PACKAGE.md).
 
 ## What gets saved
 
@@ -70,18 +87,11 @@ Honest labels, kept current in [ROADMAP.md](ROADMAP.md):
 
 Known limitations are disclosed in the roadmap, including the ones that are semi-embarrassing.
 
-## Quickstart
+## Under the hood
 
-You need Node ≥ 22 and a running Postgres. Every command below is real and exercised by the
-test suite and a clean-container proof.
+A small runtime plus a Postgres schema that carries the invariants. The database is deliberately "load-bearing": the rules that keep work safe (one current attempt per task, receipts before effects, verification before settlement) are enforced where no caller can route around them. Harness adapters are thin; our substrate is strict.
 
-```bash
-npm install -g @oathe/oathe
-
-cd your-project
-oathe init          # local substrate up (createdb + schema), both installed harnesses onboarded
-oathe claude        # a normal interactive session — the board shows, nothing auto-resumes
-```
+## CLI and MCP
 
 Claim work in-session through the `oathe_*` tools (or from the terminal):
 
@@ -92,15 +102,6 @@ oathe done  fix-login "guard rewritten, test added" src/auth.test.js
 oathe verify fix-login   # a NON-author engine judges it from your recorded session traces
 oathe ls                 # the board; `oathe uninstall` removes exactly what init recorded
 ```
-
-Ctrl-C anytime. Open `oathe codex` in the same folder — same board, same claims, other harness.
-
-What Oathe reads, stores, and sends: [docs/PRIVACY.md](docs/PRIVACY.md). The full
-technical reference: [docs/PACKAGE.md](docs/PACKAGE.md).
-
-## Under the hood
-
-A small runtime plus a Postgres schema that carries the invariants. The database is deliberately "load-bearing": the rules that keep work safe (one current attempt per task, receipts before effects, verification before settlement) are enforced where no caller can route around them. Harness adapters are thin; our substrate is strict.
 
 ## Contributing
 
