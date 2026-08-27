@@ -109,3 +109,16 @@ test('teardown escalates SIGTERM → SIGKILL and the result is RE-OBSERVED empti
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('alive() agrees with enumerate() on both sides of a teardown — and spawns nothing', async () => {
+  const { spawnCaged } = await import('../src/runtime/simple-cage.mjs');
+  const cage = spawnCaged({
+    unit: 'alive-probe', env: { PATH: process.env.PATH }, cmd: 'sleep', args: ['30'],
+    cwd: process.cwd(), stdio: 'ignore',
+  });
+  assert.equal(cage.alive(), true, 'a running group is alive');
+  assert.ok(cage.enumerate().length > 0, 'and enumerable');
+  const out = await cage.teardownProvenEmpty();
+  assert.equal(out.empty, true);
+  assert.equal(cage.alive(), false, 'an empty group is dead to the probe too');
+});

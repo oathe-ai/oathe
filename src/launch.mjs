@@ -174,7 +174,7 @@ export async function runHarness({
     client: substrate,
     identity,
     workspace,
-    liveness: () => cage.enumerate().length > 0,
+    liveness: () => (cage.alive ? cage.alive() : cage.enumerate().length > 0),
     observeIntervalMs,
   });
   host.start();
