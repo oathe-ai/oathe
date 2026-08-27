@@ -2,7 +2,7 @@
 
 **Auto save across your harnesses.**
 
-![Claude Code hits its usage limit mid-fix; Codex opens in the same repo and Oathe resumes the task — progress, effect receipt, and verification target intact.](assets/oathe-hero.svg)
+![A real oathe codex launch: the board greets the session with the task still claimed — completion not asserted, last recorded progress riding the row.](assets/resume-splash.png)
 
 You're mid-refactor in Claude Code when it hits a usage limit. What if you could open Codex and it picks up the same task checkpointed, what's done, what's left, and a test that decides whether it's finished. No copy and paste, no re-explaining, and the new agent doesn't have to take the old agent's word for anything because models are getting too good at being wrong AND confident.
 
