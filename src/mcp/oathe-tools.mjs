@@ -15,7 +15,7 @@ import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
 
 import { standardPlan, verificationTaskId, verificationObjective, isVerificationTask } from '../plans.mjs';
-import { launchedHarness } from '../launch-env.mjs';
+import { launchedHarness, liveSessionMarker } from '../launch-env.mjs';
 
 export const PROTOCOL_VERSION = '2025-06-18';
 export const SERVER_NAME = 'oathe-tools';
@@ -416,8 +416,8 @@ export async function handleToolCall(params, tools) {
  * OATHE_NOT_LAUNCHED refusal — loud to the model (a called tool must answer), inert to the
  * substrate (an unlaunched session never touches the board).
  */
-export function withLaunchGate(tools, env = process.env) {
-  if (launchedHarness(env)) return tools;
+export function withLaunchGate(tools, env = process.env, { launched = false } = {}) {
+  if (launchedHarness(env) || launched) return tools;
   const refuse = async () => {
     throw new OatheToolError('OATHE_NOT_LAUNCHED',
       'this session was not launched through oathe, so the board is not bound to it — start the '
@@ -461,7 +461,20 @@ export async function main(env = process.env) {
   const { Substrate } = await import('../substrate.mjs');
   const { buildPaths } = await import('../paths.mjs');
   const { workspaceRef } = await import('../workspace.mjs');
-  const paths = buildPaths(env);
+  let paths = buildPaths(env);
+  // Codex builds MCP child environments from its own config, so the launcher's env block
+  // never crosses that boundary. A live session marker for this cwd's workspace is the
+  // harness-agnostic transport: adopt its recorded wiring (identity included) and re-derive.
+  let markerLaunched = false;
+  if (!env.OATHE_LAUNCHED_HARNESS) {
+    const marker = liveSessionMarker({
+      oatheHome: paths.oatheHome, workspace: workspaceRef(process.cwd()) });
+    if (marker) {
+      env = { ...env, ...marker.wiring, OATHE_LAUNCHED_HARNESS: marker.harness };
+      paths = buildPaths(env);
+      markerLaunched = true;
+    }
+  }
   const { OatheConfig } = await import('../config.mjs');
   const config = new OatheConfig({ env, cwd: env.OATHE_WORKSPACE_DIR || process.cwd() });
   const substrate = new Substrate({ database: config.get('db'), paths, env, config });
@@ -500,7 +513,7 @@ export async function main(env = process.env) {
       return (await successorPromise).pickup(o);
     },
   });
-  const served = withLaunchGate(tools, env);
+  const served = withLaunchGate(tools, env, { launched: markerLaunched });
   const rl = readline.createInterface({ input: process.stdin });
   rl.on('line', async (line) => {
     const s = line.trim();

@@ -16,7 +16,7 @@ import { FencedBlock, FENCE_STYLES } from './blocks.mjs';
 import { sha256Hex } from './manifest.mjs';
 import { workspaceRef } from './workspace.mjs';
 import { SessionHost } from './session-host.mjs';
-import { launchSessionEnv } from './launch-env.mjs';
+import { launchSessionEnv, writeSessionMarker, clearSessionMarker } from './launch-env.mjs';
 
 export class LaunchError extends Error {
   constructor(code, message, details = {}) {
@@ -157,6 +157,10 @@ export async function runHarness({
 
   const unit = `oathe-${Date.now().toString(36)}-${process.pid}`;
   const extra = launchSessionEnv({ config, identity, cwd, harness });
+  // The env block above dies at Codex's MCP spawn boundary; the marker file is the
+  // harness-agnostic copy of the same wiring, retired in the finally below.
+  const marker = writeSessionMarker({
+    oatheHome: paths.oatheHome, workspace, harness, cwd, wiring: extra });
   const cage = spawnCaged({
     unit,
     env: curatedEnv(env, { hermetic, extra }),
@@ -182,6 +186,7 @@ export async function runHarness({
     if (exitCode === 0) await host.stop({ exitCode });
     else await host.stopSilently(); // a non-zero exit was not a clean goodbye — leave the absence
   } finally {
+    clearSessionMarker(marker);
     await substrate.close();
   }
   const teardown = await cage.teardownProvenEmpty();
