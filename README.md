@@ -4,9 +4,7 @@
 
 [![CI](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE) [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/sjrdWEj4W8)
 
-![oathe claude: the session opens on the board, the agent claims the task and works — until the model's usage limit cuts it off.](assets/claude-splash.png)
-
-![oathe codex: the next session greets the same board — the task still claimed, completion not asserted, last progress on the row — and Codex picks up in the same workspace.](assets/resume-splash.png)
+![Side by side: oathe claude claims the task and works until the model's usage limit cuts it off; oathe codex greets the same board — the task still claimed, completion not asserted — and picks up in the same workspace.](assets/handoff-splash.png)
 
 You're mid-refactor in Claude Code when it hits a usage limit. What if you could open Codex and it picks up the same task checkpointed, what's done, what's left, and a test that decides whether it's finished. No copy and paste, no re-explaining, and the new agent doesn't have to take the old agent's word for anything because models are getting too good at being wrong AND confident.
 
