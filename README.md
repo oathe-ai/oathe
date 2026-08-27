@@ -30,6 +30,10 @@ Ctrl-C anytime. Open `oathe codex` in the same folder — same board, same claim
 What Oathe reads, stores, and sends: [docs/PRIVACY.md](docs/PRIVACY.md). The full
 technical reference: [docs/PACKAGE.md](docs/PACKAGE.md).
 
+```bash
+oathe claim <task> "what done means"        # you can also be more specific
+oathe codex
+```
 ## What gets saved
 
 most harnesses save transcripts today. 
