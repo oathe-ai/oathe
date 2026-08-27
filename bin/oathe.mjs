@@ -58,17 +58,30 @@ const handlers = {
   async init() {
     const { runInit } = await import('../src/init.mjs');
     const result = await runInit({});
-    process.stdout.write('harness census:\n');
-    for (const c of result.census) {
-      process.stdout.write(`  ${c.name.padEnd(8)} ${c.installed ? 'onboarded' : 'not installed — skipped'}\n`);
-    }
+    const tty = process.stdout.isTTY === true;
+    const B = tty ? '\x1b[1m' : '';
+    const D = tty ? '\x1b[2m' : '';
+    const G = tty ? '\x1b[32m' : '';
+    const R = tty ? '\x1b[0m' : '';
+    const ok = `${G}✓${R}`;
     const s = result.substrate;
-    process.stdout.write(`substrate: db up, ddl ${s.ddl_applied}/${s.ddl_expected} applied `
-      + `(source: ${s.ddl_source}), yield cause ${s.yield_cause_registered ? 'registered' : 'MISSING'}\n`);
-    process.stdout.write(`principal: ${result.principal.principal_id} (${result.principal.role})\n`);
-    for (const a of result.actions) {
-      process.stdout.write(`  ${a.harness.padEnd(8)} ${a.action}\n`);
+    const lines = ['', `  ${B}⚡ Oathe is up${R}`, ''];
+    lines.push(`  ${ok} ${B}substrate${R}   ${D}db up · ${s.ddl_applied}/${s.ddl_expected} schema applied · verification lane ready${R}`);
+    if (!s.yield_cause_registered) {
+      lines.push(`  ${B}! yield cause MISSING${R} — run \`oathe doctor\` before claiming work`);
     }
+    for (const c of result.census) {
+      const wired = result.actions.filter((a) => a.harness === c.name).length;
+      lines.push(c.installed
+        ? `  ${ok} ${B}${c.name.padEnd(9)}${R} ${D}onboarded (${wired} surface${wired === 1 ? '' : 's'} wired, reversible)${R}`
+        : `  ${D}– ${c.name.padEnd(9)} not installed — skipped${R}`);
+    }
+    lines.push(`  ${ok} ${B}you${R}         ${D}${result.principal.principal_id}${R}`);
+    lines.push('');
+    lines.push(`  Next: ${B}oathe claude${R} ${D}(or codex)${R} in any project — the board rides every session.`);
+    lines.push(`        Claim before you build: ${B}oathe claim <task> "what done means"${R}`);
+    lines.push('');
+    process.stdout.write(`${lines.join('\n')}\n`);
     summary('init', 'ok');
   },
 
