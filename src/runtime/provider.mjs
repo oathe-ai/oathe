@@ -132,7 +132,8 @@ export class StandaloneRuntimeProvider {
         throw new RuntimeError('OATHE_PICKUP_UNAVAILABLE',
           'the successor sequence needs the oathe runtime, which does not resolve on this '
           + 'machine (runtime provider: standalone) — pickup cannot pretend; this is a preview '
-          + 'limitation', { provider: 'standalone' });
+          + 'limitation.'
+          + ' Continue the task directly instead: its objective and recorded progress are on the board (oathe_board), so inspect the workspace, keep working, record progress with oathe_statement, and assert completion with oathe_done — the claim is already yours.', { provider: 'standalone' });
       },
       close: async () => {},
     };

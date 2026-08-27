@@ -379,7 +379,8 @@ export function createOatheTools({ client, identity, workspace, executionActor, 
       if (!successor) {
         throw new OatheToolError('OATHE_PICKUP_UNAVAILABLE',
           'pickup is not wired into this tools server — the successor sequence is unavailable in '
-          + 'this session (a preview limitation of sessions without the runtime seam); pickup '
+          + 'this session (a preview limitation of sessions without the runtime seam).'
+          + ' Continue the task directly instead: its objective and recorded progress are on the board (oathe_board), so inspect the workspace, keep working, record progress with oathe_statement, and assert completion with oathe_done — the claim is already yours. Pickup '
           + 'cannot pretend', { task_id });
       }
       return successor({ task_id, work_claim_id: latest.work_claim_id });

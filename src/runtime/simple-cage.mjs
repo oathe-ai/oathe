@@ -24,7 +24,17 @@ export function spawnCaged({ unit, env, cmd, args, cwd, stdio, graceMs = DEFAULT
   });
   const pgid = child.pid;
 
-  /** Kernel read of the group — live pids (stopped counts as live), [] once the scope is empty. */
+  /** Liveness of the group as a kernel signal probe — kill(-pgid, 0) costs nanoseconds and
+   *  spawns nothing. True while ANY member (stopped and zombie included) exists. This is the
+   *  hot-path check: a full `ps -A` here made every poll a whole-system process-table scan,
+   *  and concurrent cages contending on that scan wedged macOS's proc subsystem (measured:
+   *  `ps` latency >45s while the test suite ran — the suite was DDoSing itself). */
+  const alive = () => {
+    try { process.kill(-pgid, 0); return true; } catch { return false; }
+  };
+
+  /** Kernel read of the group — live pids, [] once the scope is empty. Full-table scan:
+   *  COLD PATH ONLY (the final proof and its failure detail), never inside a poll loop. */
   const enumerate = () => {
     const ps = spawnSync('ps', ['-A', '-o', 'pid=,pgid='], { encoding: 'utf8' });
     if (ps.status !== 0) {
@@ -41,15 +51,16 @@ export function spawnCaged({ unit, env, cmd, args, cwd, stdio, graceMs = DEFAULT
   };
 
   const drainUntil = async (deadline) => {
-    while (Date.now() < deadline && enumerate().length > 0) await sleep(POLL_MS);
+    while (Date.now() < deadline && alive()) await sleep(POLL_MS);
   };
 
-  /** SIGTERM → grace → SIGKILL, then RE-ENUMERATE: the emptiness is proof, not assumption. */
+  /** SIGTERM → grace → SIGKILL, then RE-ENUMERATE: the emptiness is proof, not assumption.
+   *  Polling rides the signal probe; the one authoritative ps scan is the closing proof. */
   const teardownProvenEmpty = async () => {
-    if (enumerate().length > 0) {
+    if (alive()) {
       signalGroup('SIGTERM');
       await drainUntil(Date.now() + graceMs);
-      if (enumerate().length > 0) {
+      if (alive()) {
         signalGroup('SIGKILL');
         await drainUntil(Date.now() + graceMs);
       }
@@ -63,5 +74,5 @@ export function spawnCaged({ unit, env, cmd, args, cwd, stdio, graceMs = DEFAULT
     };
   };
 
-  return { child, enumerate, teardownProvenEmpty };
+  return { child, alive, enumerate, teardownProvenEmpty };
 }
