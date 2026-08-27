@@ -6,7 +6,7 @@
 
 ![Side by side: oathe claude claims the task and works until the model's usage limit cuts it off; oathe codex greets the same board — the task still claimed, completion not asserted — and picks up in the same workspace.](assets/handoff-splash.png)
 
-You're mid-refactor in Claude Code when it hits a usage limit. What if you could open Codex and it picks up the same task checkpointed, what's done, what's left, and a test that decides whether it's finished. No copy and paste, no re-explaining, and the new agent doesn't have to take the old agent's word for anything because **models are getting too good at being wrong AND confident.**
+You're building the sweetest thing in Claude Code when it hits a usage limit. What if you could open Codex and it picks up the same task checkpointed, what's done, what's left, and a test that decides whether it's finished. No copy and paste, no re-explaining, and the new agent doesn't have to take the old agent's word for anything because **models are getting too good at being wrong AND confident.**
 
 That's oathe. 
 
