@@ -1,9 +1,8 @@
 # What Oathe reads, stores, and sends
 
-Measured against the code at this commit — if behavior and this document disagree, that is a
-bug; open an issue.
+if behavior and this document disagree, that is a bug; open an issue.
 
-## Reads (declared integration surfaces)
+## Reads
 
 Oathe does not crawl arbitrary files. It reads exactly these declared surfaces:
 
@@ -27,7 +26,7 @@ Transcript contents are not copied into the database.
 ## Sends
 
 Exactly one path sends anything anywhere: **`oathe verify`**. It projects the linked
-transcripts into structured trajectories, slices them to the claim's recorded focus
+transcripts into structured agent trajectories, slices them to the claim's recorded focus
 intervals where intervals exist (whole-session evidence otherwise), renders a
 character-budgeted evidence view (SAID/CLAIM/DID/GOT lines — not raw transcript bytes),
 and passes that rendering to the verification engine you configured (`claude` or `codex`)
