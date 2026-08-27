@@ -6,7 +6,7 @@
 
 ![Side by side: oathe claude claims the task and works until the model's usage limit cuts it off; oathe codex greets the same board — the task still claimed, completion not asserted — and picks up in the same workspace.](assets/handoff-splash.png)
 
-You're mid-refactor in Claude Code when it hits a usage limit. What if you could open Codex and it picks up the same task checkpointed, what's done, what's left, and a test that decides whether it's finished. No copy and paste, no re-explaining, and the new agent doesn't have to take the old agent's word for anything because models are getting too good at being wrong AND confident.
+You're mid-refactor in Claude Code when it hits a usage limit. What if you could open Codex and it picks up the same task checkpointed, what's done, what's left, and a test that decides whether it's finished. No copy and paste, no re-explaining, and the new agent doesn't have to take the old agent's word for anything because **models are getting too good at being wrong AND confident.**
 
 That's oathe. 
 
@@ -40,7 +40,7 @@ oathe goes up a layer of abstraction:
 | Saved | Why it matters |
 | --- | --- |
 | The task and who owns it | The next agent continues *assigned work*, not the last sentence someone typed |
-| Progress and evidence | no grep, proper evidence and agent trajectory analysis |
+| Progress and evidence | no grep, proper evidence and agent trajectory analysis to **make sure agents are DOING what they SAY they're doing**|
 | Side-effect receipts | critical actions get deduplicated etc. (A deploy, payment etc.) that already happened doesn't happen again on retry |
 | Definition of done | established before agent work starts, so it can't quietly drift |
 | workspace checkpoint | Branch, commit, and work-in-progress bytes survive your session |
