@@ -1,11 +1,11 @@
 # oathe
 
-The Oathe interface, D0: an npm package whose `oathe init` onboards **both** installed
-harnesses (Claude Code and Codex) onto the local cell substrate, and whose `oathe claude` /
+The Oathe interface: an npm package whose `oathe init` onboards **both** installed
+harnesses (Claude Code and Codex) onto the local machine's substrate, and whose `oathe claude` /
 `oathe codex` launch normal interactive sessions inside the cage with this folder's board
-attached. The session changed; the unfinished obligation did not disappear.
+attached. session can change; unfinished obligations do not disappear. Cognition is bounded.
 
-Claims are speech acts. The substrate refuses dishonesty by construction — a claim never
+Claims are speech acts. The substrate **refuses dishonesty** by construction — a claim never
 mints its work as done, a task without a plan says `plan_status: "unknown"`, a second
 claimant is refused, a yield needs a declared cause, and a killed session leaves an absence,
 not a fabricated goodbye.
@@ -34,10 +34,10 @@ not a fabricated goodbye.
     oathe status                  # the substrate half of doctor
     oathe uninstall [--purge-db]  # remove exactly what init recorded; the database stays
 
-There is **no resume verb** (founder ruling 2026-08-24): launching presents the board and
+There is **no resume verb**: launching presents a board and
 binds NOTHING — a session becomes attributable to a claim only when you or the agent act on
 it explicitly (claim it, continue it, record progress). Ownership horizons are set at claim
-time and are never extended by session liveness (D0 correction, 2026-08-26). Full automatic
+time and are never extended by session liveness. Full automatic
 pickup — recompiled frame, successor allocation — ships with the runtime package; until
 then `oathe_pickup` refuses typed rather than pretending. In D0, "continue task-x" means:
 the durable claim, its objective, and its recorded progress are on the board in either
