@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// oathe — the estate re-link step (Stage 1 A6, ruling R-E). `oathe-runtime` is no longer a
+// oathe — the monorepo re-link step (ruling R-E). `oathe-runtime` is no longer a
 // `file:` dependency, so npm treats `node_modules/oathe-runtime` as extraneous and PRUNES it
-// on every `npm install`/`npm ci` (proven in .ai-docs/plans/a6-npm-experiment.md). On any
-// estate machine, run this — `npm run link-runtime` — after every npm install/ci to put the
+// on every `npm install`/`npm ci` (proven by experiment). On any
+// monorepo machine, run this — `npm run link-runtime` — after every npm install/ci to put the
 // symlink back, computed at the CORRECT relative depth for wherever this checkout actually
 // lives (fixes the depth fragility a committed, fixed-depth relative target has across
 // clones/worktrees). Standalone machines (no monorepo checkout) never need this.
@@ -25,7 +25,7 @@ const paths = buildPaths(process.env);
 if (paths.monorepo === null) {
   fail(
     'no monorepo resolves — set OATHE_MONOREPO to a runtime monorepo checkout '
-    + '(this is an estate-only step; standalone machines do not need it)'
+    + '(this is a monorepo-checkout step; standalone machines do not need it)'
   );
 }
 

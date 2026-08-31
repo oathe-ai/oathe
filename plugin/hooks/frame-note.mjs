@@ -4,11 +4,13 @@
 import crypto from 'node:crypto';
 import { failSoft } from './lib.mjs';
 
-await failSoft(async ({ substrate, workspace, identity }) => {
+// Custody is the PRINCIPAL's, not the folder's (R-HOME-BOARD): every claim this principal
+// actively holds gets the note, wherever the task is homed.
+await failSoft(async ({ substrate, identity }) => {
   const { rows } = await substrate.query(
     `SELECT work_claim_id, task_id FROM cell.work_claim
-      WHERE org_id = $1 AND principal_id = $2 AND state = 'active' AND contract_ref LIKE $3`,
-    [identity.orgId, identity.principalId, `workspace:${workspace};%`]);
+      WHERE org_id = $1 AND principal_id = $2 AND state = 'active'`,
+    [identity.orgId, identity.principalId]);
   for (const claim of rows) {
     await substrate.query(
       `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,

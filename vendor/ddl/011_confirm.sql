@@ -47,7 +47,7 @@
 --    is the shape `cell.unverified_past_verify_by` already uses.
 --
 -- 4. A NULL VERDICT PROJECTS `indeterminate`. MEASURED: 217 NULL-verdict rows in
---    the estate. `verdict` is nullable for exactly that case — the contract's
+--    the source system. `verdict` is nullable for exactly that case — the contract's
 --    §1.4 clause 3 names it — and the projection is a VIEW so that no reader gets
 --    to decide for itself what a missing verdict meant. Deciding it locally is
 --    how a non-decision becomes an approval (L13).
@@ -236,7 +236,7 @@ $consume$;
 --
 -- `indeterminate` is the answer for a consumed token with no verdict, and it is
 -- computed here so that no reader can reach its own conclusion about what a
--- missing verdict meant. 217 rows in the estate are exactly this shape.
+-- missing verdict meant. 217 rows in the source system are exactly this shape.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW cell.v_confirm_verdict AS
 SELECT

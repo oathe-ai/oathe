@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ClaudeHarness, CodexHarness, census } from '../src/harness.mjs';
+import { ClaudeHarness, CodexHarness, census } from '../src/harnesses/catalog.mjs';
 import { InstallManifest } from '../src/manifest.mjs';
 import { buildPaths } from '../src/paths.mjs';
 
@@ -298,4 +298,51 @@ test('CodexHarness.offboard runs the inverse CLIs and drops its rows', () => {
   assert.ok(flat.some((c) => c.startsWith('codex plugin remove oathe@oathe')));
   assert.ok(flat.some((c) => c.startsWith('codex plugin marketplace remove oathe')));
   assert.equal(manifest.rows.filter((r) => r.harness === 'codex').length, 0);
+});
+
+test('CodexHarness.offboard clears the hooks.state entries codex keyed by our plugin id — and only ours', () => {
+  const { home, manifest } = scratchHome();
+  fs.mkdirSync(path.join(home, '.codex'));
+  const configPath = path.join(home, '.codex/config.toml');
+  const exec = {
+    run() {
+      fs.writeFileSync(configPath, [
+        '[marketplaces.oathe]', '[plugins."oathe@oathe"]', '[mcp_servers.oathe]',
+      ].join('\n'));
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  };
+  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec });
+  h.onboard({ manifest, version: '0.1.0' });
+  // Codex writes its own hook-trust bookkeeping keyed by our plugin id once the hooks run
+  // (shape recorded from a real ~/.codex/config.toml, 2026-08-29). The undo CLIs never touch
+  // it, so the fake leaves the file alone on offboard.
+  fs.writeFileSync(configPath, [
+    '# the user\'s own comment',
+    'model = "gpt-5"',
+    '',
+    '[hooks.state]',
+    '',
+    '[hooks.state."oathe@oathe:hooks/hooks.json:pre_compact:0:0"]',
+    'trusted_hash = "sha256:aaaa"',
+    '',
+    '[hooks.state."oathe@oathe:hooks/hooks.json:session_start:0:0"]',
+    'trusted_hash = "sha256:bbbb"',
+    '',
+    '[hooks.state."other@plugin:hooks/hooks.json:stop:0:0"]',
+    'trusted_hash = "sha256:cccc"',
+    '',
+    '[projects."/Users/someone/work"]',
+    'trust_level = "trusted"',
+    '',
+  ].join('\n'));
+  exec.run = () => ({ status: 0, stdout: '', stderr: '' });
+  h.offboard({ manifest });
+  const after = fs.readFileSync(configPath, 'utf8');
+  assert.ok(!after.includes('oathe@oathe'), `plugin-keyed hooks.state survived offboard:\n${after}`);
+  assert.ok(after.includes('[hooks.state."other@plugin:hooks/hooks.json:stop:0:0"]'), 'foreign hooks.state entry must survive');
+  assert.ok(after.includes('trusted_hash = "sha256:cccc"'));
+  assert.ok(after.includes('# the user\'s own comment'));
+  assert.ok(after.includes('model = "gpt-5"'));
+  assert.ok(after.includes('[projects."/Users/someone/work"]'));
 });

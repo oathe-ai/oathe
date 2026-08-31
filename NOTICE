@@ -1,7 +1,6 @@
 Oathe
 Copyright 2026 the Oathe authors
 
-This product bundles vendored schema under vendor/ddl/: the cell-domain DDL,
-exported born-clean from the private Oathe runtime monorepo under the
-Apache-2.0 license. See vendor/ddl/manifest.json for two-sided per-file
-provenance (source and public sha256, transform version, application order).
+This product includes software developed as part of the Oathe project
+(https://github.com/oathe-ai/oathe), licensed under the Apache License,
+Version 2.0.

@@ -2,7 +2,7 @@
 // belongs to (git-root realpath + origin-remote url when present; plain dir realpath otherwise),
 // carried in the claim's contract_ref convention because adding DDL is out of scope for this
 // package (the vendored cell DDL owns schema numbering — the additive workspace_ref column is the
-// flagged post-episode upstream ask).
+// flagged as an upstream ask).
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -36,12 +36,23 @@ function originUrl(root) {
   return null;
 }
 
-/** @returns {string} `ws-<12hex>` — stable for every path inside one workspace */
-export function workspaceRef(cwd) {
+/** @returns {string} the workspace root realpath: the git root when there is one, else the dir. */
+export function workspaceRoot(cwd) {
   const real = fs.realpathSync(cwd);
   const root = gitRoot(real);
-  const identity = root === null
+  return root === null ? real : fs.realpathSync(root);
+}
+
+/** @returns {string} the identity string the ref hashes — one derivation, both facts. */
+export function workspaceIdentity(cwd) {
+  const real = fs.realpathSync(cwd);
+  const root = gitRoot(real);
+  return root === null
     ? `dir:${real}`
     : `git:${fs.realpathSync(root)}|origin:${originUrl(root) ?? ''}`;
-  return `ws-${crypto.createHash('sha256').update(identity).digest('hex').slice(0, 12)}`;
+}
+
+/** @returns {string} `ws-<12hex>` — stable for every path inside one workspace */
+export function workspaceRef(cwd) {
+  return `ws-${crypto.createHash('sha256').update(workspaceIdentity(cwd)).digest('hex').slice(0, 12)}`;
 }

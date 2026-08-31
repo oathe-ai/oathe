@@ -10,11 +10,17 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 
+/** The user's home as the session sees it — env first (sandboxes and hooks rebind it), then the OS. */
+export function homeOf(env = process.env) {
+  return env.HOME || os.homedir();
+}
+
 /**
  * @param {NodeJS.ProcessEnv} env
  * @returns {{monorepo: string|null, ddlDir: string|null, ddlSource: ('OATHE_DDL_DIR'|'vendor'|'monorepo'|null),
  *            cagePath: string|null, oatheHome: string,
- *            manifestPath: string, backupsDir: string, artifactDir: string, workRoot: string,
+ *            manifestPath: string, registryPath: string, sessionsPath: string, welcomePath: string,
+ *            backupsDir: string, artifactDir: string, workRoot: string,
  *            packageRoot: string, pluginDir: string, mcpServerPath: string}}
  */
 export function buildPaths(env = process.env) {
@@ -39,7 +45,13 @@ export function buildPaths(env = process.env) {
     cagePath: monorepo ? path.join(monorepo, 'packages/oathe-runtime/falsifiers/acp-probe/acp-cage.mjs') : null,
     oatheHome,
     manifestPath: path.join(oatheHome, 'install-manifest.json'),
+    registryPath: path.join(oatheHome, 'workspaces.json'),
+    sessionsPath: path.join(oatheHome, 'sessions.json'),
+    // The one-shot welcome marker sits at the home root: ~/.oathe/notch/ is pruned to the
+    // current materialized key by wireNotch, which would eat a marker planted there.
+    welcomePath: path.join(oatheHome, 'welcome-pending.json'),
     backupsDir: path.join(oatheHome, 'backups'),
+    logsDir: path.join(oatheHome, 'logs'),
     artifactDir: path.join(oatheHome, 'artifacts'),
     workRoot: path.join(oatheHome, 'work'),
     packageRoot,

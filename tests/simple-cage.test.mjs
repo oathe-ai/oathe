@@ -104,13 +104,15 @@ test('teardown escalates SIGTERM → SIGKILL and the result is RE-OBSERVED empti
     assert.ok(cage.enumerate().length > 0);
     const out = await cage.teardownProvenEmpty();
     assert.equal(out.empty, true, `TERM-immune child must fall to SIGKILL: ${out.detail}`);
-    assert.equal(cage.enumerate().length, 0);
+    // runnableOnly, matching the proof's own bar: the KILLed leader may linger as an
+    // unreaped zombie for a beat, but nothing in the group can execute again.
+    assert.equal(cage.enumerate({ runnableOnly: true }).length, 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('alive() agrees with enumerate() on both sides of a teardown — and spawns nothing', async () => {
+test('alive() agrees with enumerate() on both sides of a teardown — and spawns nothing (live fix #15)', async () => {
   const { spawnCaged } = await import('../src/runtime/simple-cage.mjs');
   const cage = spawnCaged({
     unit: 'alive-probe', env: { PATH: process.env.PATH }, cmd: 'sleep', args: ['30'],

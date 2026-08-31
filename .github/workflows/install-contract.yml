@@ -1,0 +1,97 @@
+name: Install contract
+
+# Per harness, against the REAL CLI on a fresh runner: `oathe init` initializes the directories
+# we depend on in the format we depend on (the doctor verifies every manifest row), a second
+# init is byte-idempotent, uninstall restores every file, the global fence lands where the
+# harness reads it. The CLI is installed at @latest on purpose — this lane is where a new
+# harness version is seen first. Blocks merges.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Harnesses from the adapter catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      harnesses: ${{ steps.list.outputs.harnesses }}
+    steps:
+      - name: Check out the proposed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+      - name: Install from the lockfile without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: List the harnesses that declare this lane
+        id: list
+        run: echo "harnesses=$(node -e "import('./src/harnesses/catalog.mjs').then((m) => console.log(JSON.stringify(m.installable())))")" >> "$GITHUB_OUTPUT"
+
+  install:
+    name: ${{ matrix.harness }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJson(needs.plan.outputs.harnesses) }}
+    steps:
+      - name: Check out the proposed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+      - name: Install from the lockfile without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Install the real CLI the adapter declares (npm package at @latest, or the vendor installer)
+        env:
+          HARNESS: ${{ matrix.harness }}
+        run: |
+          command="$(node -e "import('./src/harnesses/catalog.mjs').then((m) => { const i = m.byName(process.env.HARNESS).install; console.log(i.npm ? 'npm install -g ' + i.npm + '@latest' : i.installer); })")"
+          echo "+ $command"
+          bash -c "$command"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Prove oathe init against it
+        env:
+          HARNESS: ${{ matrix.harness }}
+        run: npm run install-contract -- "$HARNESS" | tee "install-contract-$HARNESS.txt"
+      - name: Keep the report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: install-contract-${{ matrix.harness }}
+          path: install-contract-${{ matrix.harness }}.txt
+          if-no-files-found: ignore

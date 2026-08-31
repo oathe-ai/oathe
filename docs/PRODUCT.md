@@ -8,7 +8,7 @@ Oathe is an npm package that puts an **organizational spine under interactive AI
 sessions**: work is claimed before it is done, progress is recorded as statements, completion
 is asserted (never self-settled), and a **non-author verification lane actually settles or
 reopens work** by reading the agent's own session traces. It onboards BOTH installed
-harnesses — Claude Code and OpenAI Codex — from one `oathe init`.
+harnesses — Claude Code and Codex — from one `oathe init`.
 
 **Design authority:** the D0 interface doc + specs, and the oathe runtime/DDL (developed
 privately; landing here as `oathe-runtime`). The substrate DDL is vendored under
@@ -27,7 +27,7 @@ TDD red-first for all behavior.
 ## 1. System overview
 
 ```
- ~/oathe-playground (this package)
+ this package
  ├─ oathe CLI ──────────────┐
  ├─ MCP server (oathe mcp) ─┤        ┌────────────────────────────────┐
  ├─ plugin (both harnesses) ┼───────▶│  cell substrate (oathe_local)  │
@@ -64,9 +64,53 @@ yield needs a declared cause, settlement without a verdict is refused (FC110–F
   function — `record_claim_yield` resolves its caller off the call stack) with basis prefix
   `operator_decision`.
 
-## 3. Install / onboarding (`src/init.mjs`, `src/harness.mjs`, `src/manifest.mjs`, `src/blocks.mjs`)
+## 3. Install / onboarding (`src/init.mjs`, `src/harnesses/`, `src/manifest.mjs`, `src/blocks.mjs`)
 
-One `Harness` base class; each subclass owns its harness's ONE sanctioned install path:
+**The harness adapter catalog** (`src/harnesses/catalog.mjs`) is the one registry over every
+adapter, and **a supported harness is one whose adapter declares every touchpoint** (ruling
+R-HARNESS-TOUCHPOINTS): identity facts (`bin`, `clientNames`, `contextFiles`,
+`projectDirEnvVar`, `globalContextFiles`, `docs`, `install`, synthetic-workspace rule) and
+named, frozen, nullable **capabilities** — `wiring` (with the instance's own `describe()` of
+what init writes, from the same data `onboard()` writes), `hooks {dialect}`, `launch
+{splash}`, `headless {auth, command(prompt, model), extract}`, `traces {store, newest,
+projector, ownsPath}` — each fully supported or `null`, never half-done, never hardcoded
+elsewhere. `detect()` is structured — `{app, cli, configHome}` plus the adapter's own
+`installedFrom(presence)` verdict — so a headless run asks for the CLI and wiring asks for the
+config home, never one bit. Consumers ask the catalog by capability (`verifierCapable`,
+`verifiers(census)`, `traceStores`, `launchable`, `wireable`, `ownerOfTracePath`,
+`projectorFor`, `harnessForClient`); no `'claude'`/`'codex'`/`'cursor'` literal survives
+outside `src/harnesses/`. Trace stores and projectors are named by the adapter that builds
+them; a trace path no store owns is `TRACE_OWNER_UNKNOWN`, never "probably Claude". The
+detect-only surfaces (Cowork, ChatGPT web) are adapters with `wiring: null` and a `note`.
+`tests/harness-contract.test.mjs` is the contributor's spec: a roll-call per capability with
+shape checks and a **golden capability table** (adding a harness or a capability is a visible
+row change), with hook payload shapes pinned as fixtures (`tests/fixtures/hooks/`) sourced
+from the `.harness-docs/` snapshot (re-pull with `scripts/pull-harness-docs.mjs`); a new
+harness version means a new fixture beside the old, and the dialect must serve both.
+
+`oathe init` is a **setup plan rendered by a prompter** (`src/setup.mjs`; the rules are
+`docs/UX.md`, ruling R-UX). The `SetupPlan` derives one step per wiring adapter from the
+census — its presence as facts, what saying yes writes from the adapter's own `describe()`, a
+harness that is not here already answered — plus the verifier candidates (`verifiers(census)`:
+headless-capable AND the CLI is present, so an IDE-only Cursor is not offered) with a default,
+an already-made machine-wide choice as a statement, and the detect-only surfaces as
+explanations. Order: census → plan → the substrate's reachability (nobody answers a setup that
+cannot come up) → **ask everything** → **do everything** → summary. On a TTY the
+`SetupPrompter` is ONE screen (raw-mode keys, plain ANSI, no TUI dependency): every detected
+harness a pre-selected `[x] Name (covers)` row — `covers` the adapter's own statement of the
+surfaces its wiring serves — with the highlighted row's writes dimmed below; ↑↓ to move, space
+to toggle, the verifier as a radio row (← →) preset to the recorded machine-wide choice
+(re-running init IS how the verifier is changed; init rewrites the global value only when it
+changed); not-found harnesses, `--harness`-decided steps and detect-only surfaces are dim fixed
+rows; Esc/q/ctrl-c is `OATHE_INIT_ABORTED`; no numbers anywhere. `--yes` and no-TTY apply the plan's defaults and
+announce them ("init: --yes — applying defaults: wire: …; skip: … (not installed); verifier:
+…"); `--harness a,b` refuses an unknown name (`OATHE_INIT_HARNESS_UNKNOWN`) and one not on
+this machine (`OATHE_INIT_HARNESS_ABSENT`). The bin's summary is the plan's outcomes — each
+harness wired with the files that landed, or skipped with the reason as a sentence — then the
+verifier and where it is recorded, substrate, principal, surfaces, and the `Next:` line. The
+verifier choice is machine-wide (the global config layer alone decides whether it was made; a
+per-folder `.oathe.json` never silences the question). Each adapter owns its harness's ONE
+sanctioned install path:
 
 - **Claude**: two owned keys in `~/.claude/settings.json`
   (`extraKnownMarketplaces.oathe = {source: {source: "directory", path: <pkg>}}` — note:
@@ -80,7 +124,23 @@ One `Harness` base class; each subclass owns its harness's ONE sanctioned instal
   oathe@oathe`, `codex mcp add oathe -- oathe mcp`), each **verified** by the stanza it must
   leave in `~/.codex/config.toml` — an install that can't be proven is refused. Codex reads
   the same `.claude-plugin/marketplace.json` (source-verified fallback) — one marketplace
-  file at the package root serves both harnesses.
+  file at the package root serves both harnesses. The standing rule for folderless sessions
+  (ChatGPT desktop) is a global fence in `~/.codex/AGENTS.override.md` when that file exists,
+  else `~/.codex/AGENTS.md` — the harness's own precedence (`globalContextFiles`).
+- **Cursor**: installer-written owned entries — `mcpServers.oathe` in `~/.cursor/mcp.json`
+  (JSON owned path) and three owned ARRAY elements among the user's own hooks in
+  `~/.cursor/hooks.json` (`JsonArrayEntries`: append-if-absent by ownership predicate, remove
+  exactly ours). Commands are ABSOLUTE (the resolved `oathe` bin, else `<node> <pkg>/bin/
+  oathe.mjs` — Cursor runs user hooks from `~/.cursor` and GUI apps read no shell rc), every
+  write verified after landing (`CURSOR_VERIFICATION_FAILED`), byte-reversible. Detection is
+  structured: the config home `~/.cursor` is the IDE (enough to wire — the IDE leaves no bin
+  on PATH); the `cursor-agent`/`cursor` CLI on PATH is what makes Cursor a verifier
+  candidate (`headless`: `cursor-agent -p --trust --output-format json`).
+- **The workspace registry** (`~/.oathe/workspaces.json`, `src/registry.mjs`): the machine-wide
+  record of which folders carry a board — root realpath, identity, first registrar, last-seen,
+  harnesses seen, fence versions. Hooks, MCP tools, CLI verbs, and launchers all upsert it on
+  use; writes are atomic (temp-then-rename) under a bounded lock (`src/fslock.mjs`) that gives
+  up and proceeds — registration is idempotent, a hook never deadlocks on a foreign lock.
 - Every write to a user surface is managed: text files get versioned fences
   (`# >>> oathe v0.1.2 >>>` / HTML-comment style for CLAUDE.md/AGENTS.md), JSON files get
   manifest-recorded owned key paths (no in-file markers — Claude validates settings.json).
@@ -91,19 +151,31 @@ One `Harness` base class; each subclass owns its harness's ONE sanctioned instal
 - `oathe uninstall` removes exactly the recorded entries via the inverse CLIs/fence
   removals; the database stays (`--purge-db` is the one exception).
 
-## 4. The plugin (`plugin/`) — one tree, both harnesses
+## 4. The plugin (`plugin/`) — one tree, thin manifest adapters per harness
 
-Path-free (the bin on PATH is the only address — cache-proof in both harnesses):
+Path-free (the bin on PATH is the only address — cache-proof in every harness):
 `hooks.json` commands are `oathe hook render-board|heartbeat|frame-note`; `.mcp.json` is
-`{command: "oathe", args: ["mcp"]}` with `OATHE_WORKSPACE_DIR=${CLAUDE_PROJECT_DIR}`.
-The three hook events (`SessionStart`, `Stop`, `PreCompact`) exist **verbatim in both
-harnesses** (Codex source-verified; TurnStart/TurnEnd do not exist).
+`{command: "oathe", args: ["mcp"]}` — **no env block**: the server's resolution ladder owns
+workspace discovery (§6), and a `${...}` a harness never expands must have nothing to poison.
+`.claude-plugin/plugin.json` serves Claude and Codex; `.cursor-plugin/plugin.json` is the
+Cursor adapter in the SAME tree (inline cursor-dialect hooks + mcpServers — one tree, N thin
+root manifests). The three lifecycle moments (`SessionStart`, `Stop`, `PreCompact`; Cursor:
+`sessionStart`, `stop`, `preCompact`) exist verbatim in every wired harness.
 
-- **SessionStart** (`render-board`): emits hook JSON — `additionalContext` = the markdown
-  board for the MODEL; `systemMessage` = the visible line for the USER:
-  `🎉 Oathe just saved your session state — N tasks still yours! ⭐ <starUrl>` (recovery —
-  the only place the star ask appears) · `🔒 Oathe: N open tasks · M asserted · K held` ·
-  `🍺 No open tasks in this folder — Oathe is keeping track.`
+Hook payloads arrive in each harness's own **dialect** (`src/harnesses/dialects.mjs`):
+Claude/Codex hand `cwd` and take the camelCase `hookSpecificOutput` reply; Cursor hands
+`workspace_roots[]` and takes snake_case fire-and-forget `additional_context`. The hook spine
+(`plugin/hooks/lib.mjs`) sniffs the shape, normalizes, and answers in kind. Hooks fire in
+EVERY session — the old launch gate is gone (§6) — and SessionStart **activates** the
+workspace: central registry row + the context-file fences through the one writer
+(`src/activation.mjs`), disclosed in the render; `autoActivate: false` registers only.
+
+- **SessionStart** (`render-board`): activation, then hook JSON — `additionalContext` = the
+  markdown board for the MODEL; `systemMessage` = breaches-or-silence (R-QUIET, 2026-08-29:
+  breaches push, status pulls, and the restored-state banner rides the actual `oathe_pickup`,
+  never ambient session start — the old 🎉/🔒/🍺 states and the ⭐ star ask are gone). An
+  activation write's disclosure still speaks once. A session with no resolvable workspace
+  exits silently — there is no board to speak about.
 - **Stop** (`heartbeat`): renews leases for this principal's active claims in this workspace
   AND **links the session trace** — one statement per (claim × session), `subject_ref:
   trace:<session_id>`, transcript path as evidence. Covers claims in `active` **and**
@@ -120,14 +192,14 @@ harnesses** (Codex source-verified; TurnStart/TurnEnd do not exist).
 
 `oathe claude` / `oathe codex` = one `runHarness`:
 
-1. **Pre-flight**: refuses if the harness was never onboarded; ensures the cwd's CLAUDE.md
-   (+ AGENTS.md when Codex installed) carries the managed fence (project-scope manifest row;
-   creates a minimal file when absent).
-2. **Verifier choice**: first TTY launch in a folder where the engine was never explicitly
-   chosen prompts `[1] claude [2] codex` once, records to `.oathe.json` (config provenance:
-   `source(key)` distinguishes chosen from defaulted); off-TTY announces the default on
-   stderr — never silently assumed.
-3. **Codex-only ANSI splash** (Codex buries hook output in its ctrl+T overlay, unrendered):
+1. **Pre-flight**: refuses if the harness was never onboarded; activates the cwd's workspace
+   through the ONE writer (`src/activation.mjs`) — the fences land in the union of the
+   detected adapters' declared context files (CLAUDE.md for Claude; AGENTS.md for Codex and
+   Cursor), project-scope manifest rows, registry recorded.
+2. **Verifier**: chosen at `oathe init`, never here — `ensureVerifierChoice` only ANNOUNCES a
+   still-default value on stderr (config provenance: `source(key)` distinguishes chosen from
+   defaulted). Per-folder override: `oathe config verifier <engine>`.
+3. **Adapter-declared ANSI splash** (the adapter's `launch.splash` — Codex buries hook output in its ctrl+T overlay, unrendered):
    the board in bold/dim aligned columns + a TTY-gated 3s pause (`Enter to go now`). Claude
    launches clean — its own banner is the good experience.
 4. **The cage**: `spawnCaged` (imported by path from the monorepo — the one sanctioned path
@@ -140,20 +212,43 @@ harnesses** (Codex source-verified; TurnStart/TurnEnd do not exist).
    on every held claim. Everything after the verb passes to the harness VERBATIM (only the
    first `--hermetic` and one `--` are oathe's).
 
-Custody model: oathe-launched sessions have **liveness custody**; bare `claude`/`codex`
-sessions (plugin still active) have **turn custody** (Stop-hook renewal only).
+Custody model: oathe-launched sessions have **liveness custody**; bare sessions on any wired
+harness (plugin/hooks active) have **turn custody** (Stop-hook trace linkage only).
+`OATHE_LAUNCHED_HARNESS` is the custody marker and nothing more — tool access is gated by
+workspace RESOLUTION (§6), not by who spawned the session.
 
-## 6. The board & the speech-act verbs (`src/mcp/oathe-tools.mjs`)
+## 6. The board & the speech-act verbs (`src/mcp/oathe-tools.mjs`, `src/mcp/connection.mjs`)
 
 MCP tools (ndjson JSON-RPC stdio server, governed-effect shape: legacy `initialize`
 advertising `2025-06-18`, `-32601` on unknown methods so modern clients fall back; pure
 `dispatch()` testable with a fake tools map; every tool failure is `isError:true` with a
-typed code — fail-loud, never a bland success):
+typed code — fail-loud, never a bland success).
+
+**Startup is crash-proof by construction**: `McpConnection` builds NOTHING beyond the
+transport until the first `tools/call` — `initialize`/`tools/list` answer under any
+environment, and the tool context comes lazily from the ONE resolution ladder
+(`src/workspace-resolver.mjs`):
+
+1. `OATHE_WORKSPACE_DIR` (an unexpanded `${...}` template or dangling path SKIPS with a
+   diagnostic — the desktop-surface ENOENT bug this ladder killed);
+2. each adapter's declared project-dir env var (`CLAUDE_PROJECT_DIR`, `CURSOR_PROJECT_DIR` —
+   the catalog sweep);
+3. MCP `roots/list` — an id-correlated server-initiated request, only to clients that declared
+   the capability at `initialize`, bounded by `rootsTimeoutMs`;
+4. the process cwd — refusing `/` and the home directory (a home-dir board is silently wrong);
+5. per-call typed `OATHE_WORKSPACE_UNRESOLVED` naming every input received verbatim.
+
+`notifications/roots/list_changed` closes the stale context and re-resolves. **Resolution IS
+the gate** (the launch gate is gone): every successful call registers the workspace in
+`~/.oathe/workspaces.json`; `oathe_claim` — the write-intent act — ACTIVATES it (fences via
+`src/activation.mjs`) and discloses in its result. `OATHE_WORKSPACE_DIR` stays session env
+by design, NOT an `OatheConfig` key: it names a per-process workspace binding, not a
+preference — a config file must never pin every session to one folder.
 
 | tool / verb | semantics |
 |---|---|
 | `oathe_claim` | mints the task if new (`plan_status: "unknown"` — NEVER fabricated) + `cell.claim_work` (lease `leaseHours`); **assigns the verifier engine on the record** (statement `verifier:<engine>`); a task with `origin='reopened'` routes through `cell.reclaim_reopened_task` (R8's second half — the PRIOR principal is re-seated; plain claim_work is FC130-refused) |
-| `oathe_board` | ONE classification serving every surface: `mine` (active, yours) / `held` (active, others) / `asserted` (completion_asserted, unsettled) / `open` (everything else, incl. `reopened`); **settled rows are off the board** |
+| `oathe_board` | ONE classification serving every surface: `mine` (active, yours) / `held` (active, others) / `asserted` (completion_asserted, unsettled) / `open` (everything else, incl. `reopened`); **settled rows are off the board**. Scoped by the HOME rule below — this folder's tasks + homeless ones; the full board for `all:true` or a synthetic surface (`workspace: null`) |
 | `oathe_statement` | progress statement against your active claim — "a statement, not truth" |
 | `oathe_done` | three acts: (1) if the plan is unknown, **bind the policy-standard plan** via `cell.amend_verification_contract` (G2-b policy binder; FC161 allows amendment only under an ACTIVE claim, i.e. exactly now); (2) completion statement + `cell.assert_claim_completion` (the statement must be `statement_type='completion'`); (3) **mint `verify:<task>`** on the board carrying the assigned engine (verification tasks mint no verifier for themselves — the regress ends at the deterministic bar). The result coaches FC010: you cannot verify your own work, including via your own sub-agents |
 | `oathe_yield` | `cell.oathe_yield_operator` — the obligation returns to the board with a declared cause |
@@ -163,7 +258,90 @@ typed code — fail-loud, never a bland success):
 Workspace identity (`src/workspace.mjs`): `ws-<12hex>` from git-root realpath + origin URL
 (plain dir realpath otherwise), carried in each claim's `contract_ref`
 (`workspace:<ws>;contract:<org>/<task>@v1`) — the additive `workspace_ref` column is a
-flagged post-episode upstream ask.
+flagged as an upstream ask.
+
+**Home boards (R-HOME-BOARD — `src/home.mjs`).** A task's board is its HOME: fixed at mint,
+DERIVED and never stored — the workspace named by the EARLIEST claim whose `contract_ref`
+names a real workspace (a `verify:<task>` review inherits its parent's home). Later claims
+INHERIT it and never restamp it with the claiming session's folder; `oathe_claim` returns the
+claim row's actual `contract_ref` plus `home` on every branch. A task minted from a synthetic
+surface is HOMELESS — sentinel `workspace:none;contract:<org>/<task>@v1` — until the first
+real folder claims it (adoption); a reclaim transcribes the prior ref (016), so a reopened
+homeless task stays homeless. The folder board is a STRICT lens: tasks homed here plus every
+homeless task (unclaimed, legacy claim-less, synthetic mints — visible everywhere so a real
+folder can adopt them); a foreign-homed claim you hold does NOT appear here — the pager is
+the recourse. `ContractRef` and `HomeBoard` are the ONE owner of the ref grammar, in JS and in
+the SQL fragment the board and the pager share; custody queries (heartbeat linkage, the
+compaction note, the session-host exit) scope by principal + state, never by folder.
+
+**Board scope is a per-surface fact (R-BOARD-SCOPE).** Each adapter declares
+`isSyntheticWorkspaceDir({dir, home})` (base false; Codex names
+`~/.codex/.chatgpt-projects/<id>`, the ChatGPT desktop staging dir). `WorkspaceResolver.describe()`
+derives a directory's facts ONCE — `{root, ref, synthetic}` — and every surface threads them:
+a synthetic session's `oathe_board` serves the FULL board whatever it asked (rendered as
+`all workspaces`), and `activateWorkspace` refuses to activate it — no fences, no registry
+row, disclosed. The tools' activation seam is one class, `ActivationSeam`
+(`src/activation.mjs`), shared by the MCP factory and the CLI: every speech act registers,
+`oathe_claim` activates through the one writer. The standing rule still reaches a folderless
+session two ways: each adapter may declare its `globalContextFiles` in the harness's own
+precedence (Codex: `AGENTS.override.md` if present, else `AGENTS.md`, under `~/.codex` — read
+before any work in every session) and `oathe init` puts the managed block where it is read —
+through the same fence writer (`src/fence.mjs`), recorded as a fence row `uninstall` strips —
+and the board render states the rule on every render, not only the empty state.
+
+**The breach pager (R-PAGER — `src/pager.mjs`).** Session start renders, below the board, a
+machine-wide digest of BREACHED promises only: a completion asserted and unverified past its
+`verify_by` (`cell.unverified_past_verify_by`, the R2 clock leg); a rejection nobody
+reclaimed (origin `reopened`, the latest claim predating the latest rejected verification);
+an active claim silent past `pagerQuietHours` (its last word = latest non-trace progress
+statement, else the claim itself). Condition-based — it repeats every session while true, with
+no read-state — and stateless; a lapsed lease is lifecycle, not a breach; one line per task
+under its sharpest breach; homes shown as folders via the registry (`homeless` for a synthetic
+mint). The hook computes it in its own fail-soft try (a broken pager reaches stderr; the board
+still renders); the launcher splash carries it; `oathe ls` is untouched. The system only
+SHOWS — no auto-yield; only a principal speaks.
+
+### 6b. Session identity & continuation — the SPEAKER primitive (ruling 2026-08-30)
+
+Every speech act is spoken by a SPEAKER, and the writer resolves WHO from its own process
+ancestry — never from the model's word, never from an MCP client's self-declared name when
+the process tree says more (ChatGPT-embedded codex is `chatgpt`, not `codex`). One shape,
+resolved once per writer process by `resolveSpeaker` (`src/speaker.mjs`):
+
+```
+{ surface:  which glass is speaking, named by the adapters (or null)
+  app:      {bundle, pid} — the focusable app above the speaker; the switch target (or null)
+  session:  {sessionId, transcriptPath|null, harness} — the registered harness session this
+            process speaks FOR, found by the parent chain in the device registry (or null) }
+```
+
+The primitive spans TWO homes, chosen so the substrate's cloud move needs zero rework:
+
+| fact | examples | home | lifetime |
+|---|---|---|---|
+| PORTABLE — which session spoke | session_id, surface, transcript | the substrate (travels) | durable |
+| DEVICE — which process embodies it now | pid, ancestry, app, aliveness | `~/.oathe/sessions.json` | self-sweeping |
+
+**Attribution rides the speech act.** Every successful WRITE through a serving tool surface
+stamps the durable trace-link statement (`linkTrace`, `src/statements.mjs` — subject_ref
+`trace:<session_id>`, transcript as evidence, empty evidence for surfaces with no store like
+Cursor) the moment the act lands — never deferred to turn end. The Stop-hook heartbeat calls
+the same writer as an idempotent sweep for claims the transcript proves were worked without
+a substrate write. The wire (`src/wire.mjs`) carries `{via, app}` as an EPHEMERAL hint only —
+its identity role is limited to session-less surfaces (a desktop app with no hooks).
+
+`speaker` is REQUIRED where consumed: `createOatheTools` with the activation seam (the
+serving surfaces — MCP server, CLI) refuses construction without one
+(`OATHE_SPEAKER_REQUIRED`); read-only compositions (board render, the verifier's seat) build
+no write wrapper and carry none. Each field is observed truth or null — resolution gaps
+resolve to nulls, a malformed registry refuses typed, and nothing is ever guessed.
+
+**The continue ladder** (the notch's resume, `bin/oathe.mjs`): claim → latest trace-link →
+my `sessions.json` → alive? `activate` the app · else launchable agent + home path?
+`spawn-terminal` · else a live heard app? `activate`/`open-app` · else `copy-only`. "Is it
+on this device" is answered by construction: the session resolves in MY registry or it
+doesn't. Known gap: a desktop surface with no hooks (ChatGPT) attributes only while its
+process lives — durable binding is the `chatgpt-desktop-workspace-binding` task.
 
 ## 7. The trace layer (`src/traces.mjs`, `docs/traces.md`)
 
@@ -206,6 +384,17 @@ validator-asserted before return. `renderEvidenceView` renders the aligned recor
 `verifierEvidenceBudget`, tail-prioritized with **announced** elisions.
 `oathe trace <task> [--out dir]` exports (pure JSON stdout; summary on stderr).
 
+**The notch** (R-QUIET's glass): `oathe notch` serves the machine frame — full board +
+breach digest + the push line — as pure JSON from anywhere, with no workspace resolution
+and no registry write (a surface that only SHOWS). `oathe notch --serve` LISTENs on the
+wire (`src/wire.mjs`: one pg_notify per successful WRITE tool, emitted from the activation
+wrapper; reads silent) and streams one ndjson frame per speech act — the restored-state
+receipt rides the frame its pickup caused — plus a `notchHeartbeatSeconds` drift-guard
+frame. The macOS renderer (notch-spike/, Swift, outside this repo) supervises the feed as
+a child. Lifecycle: `oathe config notchApp <binary> --global` opts the machine in; init
+writes the LaunchAgent (manifest-owned, `src/notch.mjs`) and bootstraps it now; uninstall
+boots it out and removes it. D1: bundle a prebuilt binary and default `notchApp`.
+
 ## 9. The verification lane (`src/verifier.mjs`, `src/plans.mjs`)
 
 The ruled shape: **verification is ordinary work; agent evaluators are allocated on demand
@@ -246,6 +435,40 @@ record could pass. The trace linkage exists precisely to keep the judgment audit
 This lane verifies **occurrence** (did the agent do what it said), not quality, and it is
 **terminal, not longitudinal** — see §13 for the drift-layer roadmap.
 
+**The trust boundary is the blocking boundary (founder ruling 2026-08-31).** On the
+user's own machine, a speech act that owes an answer WAITS for it: `oathe_done` and
+`oathe_verify` dispatch the judgment and block until the verdict, returning it in-result
+(a rejection carries the fork: prove it, or descope it with amend). When the substrate is
+REMOTE (the cloud), reporting work to someone else is naturally async — submission
+completes the act, the verdict arrives later; `verifierSeam` (src/verify-dispatch.mjs) is
+the ONE place that flips, never a config knob. The wait is bounded by the verifier
+child's own life (`awaitVerdict` — verdict, recorded failure after the claim's release,
+or child death with one closing read), never an arbitrary budget; MCP transport limits
+(stdio idle 30min; the client backgrounds calls past 2min) comfortably hold a 1–3min
+engine run. The engine still NEVER runs inside the server: `oathe_verify` dispatches
+the `oathe verify` bin verb as a DETACHED process
+(`src/verify-dispatch.mjs` — own process group, unref'd, log at `~/.oathe/logs/verify-<task>.log`
+overwritten per run, env scrubbed of `OATHE_EXECUTION_ATTEMPT_ID`/`OATHE_LAUNCHED_HARNESS` so
+the verifier's statements never carry the judged session's provenance) and returns the durable
+addresses immediately. The detached child deliberately leaves the launcher cage's process
+group — a stated exception to the containment story, not an accident. Concurrency is the
+substrate's own claim: the child claims `verify:<task>` before its engine runs, so a
+concurrent dispatch loses on FC003 pre-engine; a live in-flight review is a typed
+`OATHE_VERIFY_IN_FLIGHT` refusal naming the holder (an expired lease names `oathe yield` —
+no auto-heal). Recovery is idempotent by construction: an already-settled claim reads as
+settled on re-verify (never `OATHE_SETTLEMENT_BLOCKED` — the kill-window wedge), duplicate
+verification rows are lawful, the reopen verb is idempotent. `bin oathe verify` stays
+synchronous — a human or CI wants the answer and the exit code; its engine run uses async
+`spawn` all the same.
+
+**Amendment (R-AMEND).** `oathe_amend {task_id, objective, why}` / `oathe amend` changes what
+done means, on the record: active claim only, acceptance-seat only, never the verifier; one
+transaction locking the claim row first (`oathe_done` takes the same lock, so "the version in
+force at assertion" is exact); the trail is an appended `amend:<task>` observation statement
+carrying old→new and why; the version is derived from the trail — `contract_ref` stays `@v1`.
+The verifier's prompt carries the AMENDMENT TRAIL, so a late move of the bar is visible
+evidence.
+
 ## 10. Configuration (`src/config.mjs`)
 
 Layered `OatheConfig`: defaults → `~/.oathe/config.json` (global) → `<workspace>/.oathe.json`
@@ -259,19 +482,28 @@ Layered `OatheConfig`: defaults → `~/.oathe/config.json` (global) → `<worksp
 | `leaseHours` / `verifyByHours` | `4` / `24` | `OATHE_LEASE_HOURS` / `OATHE_VERIFY_BY_HOURS` |
 | `verifier` / `verifierPrincipal` | `claude` / `oathe-verifier` | `OATHE_VERIFIER` / `OATHE_VERIFIER_PRINCIPAL` |
 | `verifierEvidenceBudget` | `24000` chars | `OATHE_VERIFIER_EVIDENCE_BUDGET` |
-| `starUrl` | `https://github.com/oathe-ai/oathe` (404 until extraction) | `OATHE_STAR_URL` |
+| `autoActivate` | `true` (false = register only, no fence writes) | `OATHE_AUTO_ACTIVATE` |
+| `rootsTimeoutMs` | `2000` | `OATHE_ROOTS_TIMEOUT_MS` |
+| `pagerQuietHours` | `24` (hours an active claim may stay silent before it is paged) | `OATHE_PAGER_QUIET_HOURS` |
 
-Also env-overridable: `OATHE_MONOREPO`, `OATHE_HOME` (paths.mjs).
+Also env-overridable: `OATHE_MONOREPO`, `OATHE_HOME` (paths.mjs). `OatheConfig.global()`
+loads defaults → global file → env with no workspace layer (the server's pre-resolution
+bootstrap); a nonexistent `cwd` refuses at construction (`OATHE_CONFIG_CWD_INVALID`) —
+never a silently-wrong config root. `OATHE_WORKSPACE_DIR` is deliberately NOT a config key
+(§6).
 
 ## 11. CLI reference
 
-`init · claude · codex · claim · ls · note · done · verify · trace · yield · config ·
-doctor · status · uninstall [--purge-db] · hook <name> · mcp` (last two are the plugin's
-bin-addressed entry points). Every run ends with the machine-parseable
+`init [--harness a,b] [--yes]` (a setup plan rendered by a prompter — `docs/UX.md`) `· claude · codex · claim · amend · ls · note · done · verify · trace ·
+yield · config · doctor [--surface] · status · uninstall [--purge-db] · hook <name> · mcp`
+(last two are the plugin's bin-addressed entry points; `doctor --surface` prints the
+resolution report — ladder inputs as received, winning rung, registry status — with no
+substrate contact, the probe the unknown surfaces get pointed at alongside
+`scripts/surface-canary.mjs`). Every run ends with the machine-parseable
 `oathe: <verb> ok|refused|error|attention|exit N` (stderr for `trace`, whose stdout is pure
 JSON). Substrate refusals surface non-zero as `refused`.
 
-## 12. Testing strategy (`tests/`, 162 tests)
+## 12. Testing strategy (`tests/`, two lanes)
 
 - **TDD red-first for every behavior**; each unit committed green.
 - **Real substrate in tests**: scratch Postgres databases per suite — the 26-file DDL apply,
@@ -285,6 +517,27 @@ JSON). Substrate refusals surface non-zero as `refused`.
 - **The full loop over the real stdio server**: initialize → claim → note → pickup (real
   successor) → yield, plus double-yield refusal.
 - `claude plugin validate` clean on plugin + marketplace.
+- **Drift lanes** (founder ruling 2026-08-29: fail loud when a harness changes under us). Each
+  adapter declares its facts — `docs` (snapshot pages), `install` (how a runner gets the real
+  CLI), `headless` (the one-shot run + auth env) — and the contract suite refuses orphan pins.
+  Three lanes hold them to the world, each a package script runnable locally and a workflow in
+  the public repo: `harness-docs-drift` (a tracked `harness-docs.lock.json`; re-pull, compare,
+  exit 3 naming page + dependents; daily, never blocks PRs), `install-contract -- <h>` (real CLI
+  at @latest in a throwaway HOME; `oathe init` proven through the doctor's row verification,
+  byte-idempotent re-run, byte-restoring uninstall, global-fence precedence; blocks PRs),
+  `live-contract -- <h> [--in-place]` (one real headless session; the hook payload captured via
+  `OATHE_HOOK_CAPTURE_DIR`, normalized through the dialect with a field diff against the newest
+  `tests/fixtures/hooks/<harness>/<date>-<event>.json`, the transcript projected, RUNTIME told
+  apart from DRIFT; nightly with the adapters' auth env from secrets). The fix for a red lane is a
+  pin — a new dated fixture beside the old, a re-locked page — never a silence.
+
+**The UX contract is held by tests, not walks.** `tests/setup.test.mjs` renders the prompter
+over fixture machines and holds every question to `docs/UX.md` (no numbered menus, writes
+shown from `describe()`, Enter = default, refuse-and-re-ask, one line per question, EOF
+refuses); `tests/ux-contract.test.mjs` refuses a UX rule without an existing test behind it and
+a §3 that omits a file some adapter's `describe()` says init writes; the install-contract lane
+replays `oathe init` under a real pty (`script`), Enter throughout, and holds the transcript to
+the same rules (`init-tty`) on every PR.
 
 ## 13. Live-proven results (all on this machine, real engines, real settlement)
 
@@ -313,8 +566,18 @@ JSON). Substrate refusals surface non-zero as `refused`.
   `claim_events` — a small convention extension if wanted.
 - The verifier engine run is `spawnSync`, not caged, and inherits the invoking env — below
   the launcher's posture; flagged.
+- **Sandbox surfaces (canary-confirmed 2026-08-28)**: Cowork sessions run in a cloud sandbox
+  with a Linux-VM shell — an attached folder's fence reaches them, the local board does not;
+  ChatGPT desktop hands sessions a synthetic `~/.codex/.chatgpt-projects/<id>` cwd — served
+  the FULL board and never activated (R-BOARD-SCOPE); a task minted there is homeless until a
+  real folder adopts it (R-HOME-BOARD). Cowork's remote shell still cannot reach a local
+  substrate: a hosted/remote substrate surface (tracked on the board, deferred) is the answer,
+  and also unlocks the cross-machine continuation D0 disclaims.
 - Quality verification (judging the diff via `git_sha` metadata — evidence that
-  dereferences) is designed but unbuilt; the `verify_by` overdue pager likewise.
+  dereferences) is designed but unbuilt.
+- The pager's three reads run unindexed over `verify_by` / `origin` / `claimed_at` — fine at
+  local scale (hundreds of tasks); an index is the first fix should a SessionStart ever near
+  its 8s budget.
 - The 6 pre-pipeline asserted smoke tasks in the repo workspace have no verification tasks
   (backfill on request). Extraction gates (publish to npm/GitHub): oathe-runtime dependency,
   cage import-by-path, `private: true`, star URL 404.
@@ -327,26 +590,42 @@ JSON). Substrate refusals surface non-zero as `refused`.
 bin/oathe.mjs            CLI router (parseArgs; verbatim arg passthrough to harnesses)
 src/config.mjs           OatheConfig — every tunable, layered, provenance-aware
 src/paths.mjs            all filesystem locations, env-overridable
-src/blocks.mjs           managed writes: FencedBlock (text) + JsonEntries (owned key paths)
-src/manifest.mjs         install manifest + pre-first-write backups
-src/harness.mjs          Harness base → ClaudeHarness / CodexHarness (verified installs)
+src/blocks.mjs           managed writes: FencedBlock (text) + JsonEntries + JsonArrayEntries
+src/manifest.mjs         install manifest + pre-first-write backups (atomic writes)
+src/fslock.mjs           atomic temp-then-rename JSON + bounded advisory lock
+src/registry.mjs         the central workspace registry (~/.oathe/workspaces.json)
+src/harnesses/           the adapter catalog: base, dialects, claude/codex/cursor, surfaces
+src/workspace-resolver.mjs  the ONE resolution ladder (env → adapters' vars → roots → cwd)
+src/fence.mjs            the managed fence, owned once: folder + global bodies, THE write (backup, apply, manifest row)
+src/activation.mjs       workspace activation (preflight, hooks, and claim all call it) + ActivationSeam
+src/home.mjs             ContractRef + HomeBoard — the ONE owner of the contract_ref grammar and the home rule
+src/statements.mjs       statement vocabulary: the trace-subject grammar + the latest-progress SQL fragment
+src/pager.mjs            the breach pager — a condition-based digest of breached promises (R-PAGER)
+src/board-render.mjs     the ONE board renderer: markdown context + ANSI splash, breach section included
 src/substrate.mjs        PG detect/create, ordered DDL apply, seeds, authority registration
-src/workspace.mjs        ws-<hash> identity (git root + origin)
+src/workspace.mjs        ws-<hash> identity (git root + origin) + root/identity exports
 src/context.mjs          the composition seam every verb starts from
+src/setup.mjs            oathe init as data: SetupPlan (from the census + describe()) and the TTY SetupPrompter — docs/UX.md
 src/init.mjs / doctor.mjs / uninstall.mjs
-src/launch.mjs           preflight, verifier prompt, splash, cage, runHarness
+src/launch.mjs           preflight (via activation), splash, cage, runHarness
 src/session-host.mjs     liveness-custody lease renewal (R10 absences)
 src/mcp/oathe-tools.mjs  the speech-act MCP server + tool implementations
+src/mcp/connection.mjs   the transport: lazy context, roots requests, list_changed
 src/plans.mjs            the G2-b policy-standard plan + verification-task naming
 src/traces.mjs           TraceStore family (ground-truth readers, drift refusals)
 src/atif.mjs             AtifProjector family + AtifValidator + renderEvidenceView
 src/verifier.mjs         the allocated-on-demand verifier + acceptance-lane settlement
 src/successor.mjs        the pickup successor sequence (real runtime wiring)
-plugin/                  hooks (bin-addressed), skill, .mcp.json, .claude-plugin/plugin.json
-.claude-plugin/marketplace.json   one marketplace, both harnesses
+plugin/                  hooks (bin-addressed, dialect-aware), skill, .mcp.json,
+                         .claude-plugin/plugin.json + .cursor-plugin/plugin.json (adapters)
+.claude-plugin/marketplace.json   one marketplace, both CLI harnesses
+scripts/pull-harness-docs.mjs / surface-canary.mjs   dev-only: docs snapshot + surface probe
+scripts/harness-docs-drift.mjs / harness-install-contract.mjs / harness-live-contract.mjs   the drift lanes (lane-report.mjs: their one report)
+harness-docs.lock.json   the tracked pin of every snapshot page (url + sha) the docs lane compares against
+docs/UX.md               the UX contract every prompt and output follows (each rule names its test)
 docs/traces.md           the trace ground-truth contract
 docs/atif-oathe.md       the extra.oathe convention spec
-tests/                   162 tests incl. live-store contracts + Harbor golden fixture
+tests/                   two lanes (test:unit / test:heavy) incl. live-store contracts + Harbor golden fixture
 ```
 
 ## 16. Key refusal codes (a working vocabulary)
@@ -355,12 +634,19 @@ tests/                   162 tests incl. live-store contracts + Harbor golden fi
 `OATHE_PICKUP_UNAVAILABLE` · `OATHE_NOTHING_TO_VERIFY` · `OATHE_NO_COMPLETION` ·
 `OATHE_VERDICT_MALFORMED` · `OATHE_SETTLEMENT_BLOCKED` · `OATHE_REVIEW_UNSETTLED` ·
 `OATHE_ENGINE_UNKNOWN/FAILED` · `TRACE_*` (contract drift) · `ATIF_UNMAPPABLE/INVALID` ·
-`OATHE_CONFIG_KEY_UNKNOWN/VALUE_INVALID` · `DDL_DRIFT/DDL_APPLY_FAILED` ·
-`CLAUDE_/CODEX_VERIFICATION_FAILED` (install unproven) · `OATHE_SUBSTRATE_UNREACHABLE` ·
-`OATHE_NOT_INSTALLED` · `OATHE_HARNESS_NOT_FOUND` · `OATHE_DUPLICATE_FENCE`.
+`OATHE_CONFIG_KEY_UNKNOWN/VALUE_INVALID/CWD_INVALID` · `DDL_DRIFT/DDL_APPLY_FAILED` ·
+`CLAUDE_/CODEX_/CURSOR_VERIFICATION_FAILED` (install unproven) · `OATHE_SUBSTRATE_UNREACHABLE` ·
+`OATHE_NOT_INSTALLED` · `OATHE_HARNESS_NOT_FOUND` · `OATHE_DUPLICATE_FENCE` ·
+`OATHE_WORKSPACE_UNRESOLVED` (the ladder's per-call refusal) · `OATHE_REGISTRY_MALFORMED` ·
+`OATHE_JSON_TARGET_INVALID` · `OATHE_INIT_HARNESS_UNKNOWN/ABSENT` · `OATHE_INIT_INPUT_CLOSED` · `OATHE_INIT_ABORTED` · `OATHE_VERIFY_IN_FLIGHT` ·
+`OATHE_AMEND_AFTER_DONE` · `OATHE_AMEND_UNAUTHORIZED` · `OATHE_AMEND_VERIFY_TASK` ·
+`TRACE_OWNER_UNKNOWN` · `TRACE_STORE_HARNESS_REQUIRED`.
 Substrate-side: FC003 (second claimant), FC010 (self-verification), FC110–FC114
 (settlement gates), FC130–FC134 (reopen/reclaim), FC140/FC141 (yield cause), FC160/FC161
 (contract freeze/amend), FC170 (authority writer).
+The 2026-08-28 rulings (R-HOME-BOARD, R-BOARD-SCOPE, R-PAGER) add ONE code —
+`OATHE_CONTRACT_REF_MALFORMED` (a `contract_ref` outside the grammar, `src/home.mjs`) — and
+no others: homelessness, synthetic scope, and breaches are facts the tools report, not refusals.
 
 ---
 

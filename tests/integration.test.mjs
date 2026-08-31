@@ -1,4 +1,4 @@
-// The W1 exit loop, scripted: fresh sandbox HOME → init → board renders → claim → note →
+// The exit loop, scripted: fresh sandbox HOME → init → board renders → claim → note →
 // pickup (the real successor over stdio) → yield → doctor clean → uninstall byte-restores.
 
 import { test, before, after } from 'node:test';
@@ -46,9 +46,9 @@ after(async () => {
 });
 
 /** Drive the stdio MCP server with newline-delimited JSON-RPC, collecting responses by id. */
-function mcpSession() {
+function mcpSession(envOverrides = {}) {
   const child = spawn('node', [path.join(paths.packageRoot, 'src/mcp/oathe-tools.mjs')], {
-    env: { ...sb.env, OATHE_WORKSPACE_DIR: workDir, OATHE_LAUNCHED_HARNESS: 'claude' },
+    env: { ...sb.env, OATHE_WORKSPACE_DIR: workDir, ...envOverrides },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const pending = new Map();
@@ -127,18 +127,88 @@ test('the SessionStart hook renders the board for the workspace with a live clai
   const out = spawnSync('node', [path.join(paths.pluginDir, 'hooks/render-board.mjs')], {
     input: JSON.stringify({ cwd: workDir, hook_event_name: 'SessionStart' }),
     encoding: 'utf8',
-    env: { ...sb.env, OATHE_LAUNCHED_HARNESS: 'claude' },
+    env: sb.env,
   });
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /board-task/);
   assert.match(out.stdout, /Show me at SessionStart/);
 });
 
-test('doctor is clean over the whole install, then uninstall byte-restores both harness configs', async () => {
+// ------------------------------------------------ the desktop-surface bug, pinned end-to-end
+
+test('THE ORIGINAL REPRO: an unexpanded ${CLAUDE_PROJECT_DIR} no longer kills the server — the ladder resolves', async () => {
+  // The exact env the Claude desktop surface delivered: the literal template, never expanded.
+  // The old server realpath'd it at startup and died with ENOENT before answering anything.
+  const mcp = mcpSession({ OATHE_WORKSPACE_DIR: '${CLAUDE_PROJECT_DIR}' });
+  const stderrChunks = [];
+  mcp.child.stderr.on('data', (chunk) => stderrChunks.push(String(chunk)));
+  try {
+    const init = await mcp.request('initialize', { capabilities: {} });
+    assert.equal(init.result.protocolVersion, '2025-06-18', 'the server answered initialize');
+    const board = await mcp.call('oathe_board', {});
+    assert.equal(board.isError, false, JSON.stringify(board.body));
+    assert.ok(board.body.workspace, 'a board resolved via the ladder (cwd rung)');
+    assert.match(stderrChunks.join(''), /\$\{CLAUDE_PROJECT_DIR\}/,
+      'the skipped template is NOTED on stderr, never silently swallowed');
+  } finally {
+    mcp.close();
+  }
+});
+
+test('an EMPTY env (the codex allowlist posture) still serves: no inherited variable is load-bearing', async () => {
+  const child = spawn('node', [path.join(paths.packageRoot, 'src/mcp/oathe-tools.mjs')], {
+    cwd: workDir,
+    env: {
+      PATH: sb.env.PATH,
+      HOME: sb.home,
+      OATHE_HOME: sb.env.OATHE_HOME,
+      OATHE_DB: SCRATCH_DB,
+      OATHE_PRINCIPAL: 'founder',
+      // Postgres TRANSPORT belongs to the machine, not oathe: the local socket auths by
+      // trust, CI's service by password — every PG* rides through, and the pin stays what
+      // it claims: no OATHE variable is load-bearing.
+      ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('PG'))),
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const lines = [];
+  const rl = readline.createInterface({ input: child.stdout });
+  rl.on('line', (line) => { try { lines.push(JSON.parse(line)); } catch { /* not a frame */ } });
+  const waitFor = (id, ms = 30_000) => new Promise((resolve, reject) => {
+    const started = Date.now();
+    const poll = () => {
+      const hit = lines.find((m) => m.id === id);
+      if (hit) return resolve(hit);
+      if (Date.now() - started > ms) return reject(new Error(`timeout waiting for id ${id}`));
+      return setTimeout(poll, 10);
+    };
+    poll();
+  });
+  try {
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })}\n`);
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'oathe_board', arguments: {} } })}\n`);
+    const init = await waitFor(1);
+    assert.equal(init.result.protocolVersion, '2025-06-18');
+    const board = await waitFor(2);
+    assert.equal(board.result.isError, false, board.result.content?.[0]?.text);
+    const body = JSON.parse(board.result.content[0].text);
+    assert.ok(body.workspace, 'the board resolved from the spawn cwd alone');
+  } finally {
+    child.stdin.end();
+    child.kill();
+  }
+});
+
+test('doctor is clean over the whole install, then uninstall byte-restores every harness config', async () => {
   const doctor = await runDoctor({ env: sb.env });
   assert.ok(doctor.rows.every((r) => r.status === 'ok'), JSON.stringify(doctor.rows));
 
+  const cursorMcpBefore = fs.readFileSync(path.join(sb.home, '.cursor/mcp.json'), 'utf8');
+  assert.ok(cursorMcpBefore.includes('oathe'), 'cursor was wired by init');
   await runUninstall({ env: sb.env, exec: sb.exec });
   assert.equal(fs.readFileSync(path.join(sb.home, '.claude/settings.json'), 'utf8'), settingsBefore);
   assert.equal(fs.readFileSync(path.join(sb.home, '.codex/config.toml'), 'utf8'), tomlBefore);
+  // init CREATED ~/.cursor/mcp.json in this sandbox (absent before); once our entry is gone
+  // nothing of substance remains, so uninstall removes the file itself — not a husk.
+  assert.ok(!fs.existsSync(path.join(sb.home, '.cursor/mcp.json')), 'the file init created is gone with uninstall');
 });

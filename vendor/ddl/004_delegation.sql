@@ -4,7 +4,7 @@
 -- Contract: docs/a1-cell-work-spine-contract.md §2.3 as amended, FOUNDER RULING
 -- R5, PRD §13.4 as amended — "the delegator's authority to create work in the
 -- target scope is checked in the SAME TRANSACTION as the task/dependency
--- creation, against a grants table with a substrate-level check (the estate's
+-- creation, against a grants table with a substrate-level check (the source system's
 -- proven pattern — STF-1, 0047, 0073 triggers). No new authorization service is
 -- introduced." Requires 001_core.sql.
 --

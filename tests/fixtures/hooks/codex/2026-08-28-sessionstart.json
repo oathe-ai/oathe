@@ -1,0 +1,15 @@
+{
+  "_source": "learn.chatgpt.com/docs/hooks — pinned .harness-docs/codex/hooks.md (2026-08-28): cwd is a common input field ('Working directory for the session'); shape proven live by the plugin hook suite",
+  "payload": {
+    "session_id": "codex-thread-0001",
+    "transcript_path": "/Users/dev/.codex/sessions/2026/08/28/rollout-2026-08-28T10-00-00-codex-thread-0001.jsonl",
+    "cwd": "/Users/dev/app",
+    "hook_event_name": "SessionStart",
+    "source": "startup"
+  },
+  "expected": {
+    "cwd": "/Users/dev/app",
+    "sessionId": "codex-thread-0001",
+    "transcriptPath": "/Users/dev/.codex/sessions/2026/08/28/rollout-2026-08-28T10-00-00-codex-thread-0001.jsonl"
+  }
+}

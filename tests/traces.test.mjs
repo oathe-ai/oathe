@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ClaudeTraceStore, CodexTraceStore, TraceContractError, harnessForTracePath } from '../src/traces.mjs';
+import { ClaudeTraceStore, CodexTraceStore, TraceContractError } from '../src/traces.mjs';
 
 // ---------------------------------------------------------------- fixtures (synthetic)
 
@@ -12,7 +12,7 @@ function claudeFixture() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-tr-claude-'));
   const cwd = path.join(home, 'work', 'proj');
   fs.mkdirSync(cwd, { recursive: true });
-  const store = new ClaudeTraceStore({ home });
+  const store = new ClaudeTraceStore({ harness: 'claude', home });
   const projectDir = store.projectDirFor(cwd);
   fs.mkdirSync(projectDir, { recursive: true });
   const sessionId = '11111111-2222-3333-4444-555555555555';
@@ -34,7 +34,7 @@ function claudeFixture() {
 
 function codexFixture() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-tr-codex-'));
-  const store = new CodexTraceStore({ home });
+  const store = new CodexTraceStore({ harness: 'codex', home });
   const threadId = '01a03800-0000-7000-8000-000000000001';
   const dir = path.join(home, '.codex/sessions/2026/08/25');
   fs.mkdirSync(dir, { recursive: true });
@@ -47,10 +47,11 @@ function codexFixture() {
   return { home, store, threadId, file };
 }
 
-test('harnessForTracePath keys on the codex store dir, defaulting to claude', () => {
-  assert.equal(harnessForTracePath('/Users/x/.codex/sessions/2026/08/25/rollout-a.jsonl'), 'codex');
-  assert.equal(harnessForTracePath('/Users/x/.claude/projects/p/s.jsonl'), 'claude');
-  assert.equal(harnessForTracePath('/tmp/random.jsonl'), 'claude');
+test('trace-path ownership is asked of the stores (catalog.ownerOfTracePath): codex, claude, or nobody', async () => {
+  const { ownerOfTracePath } = await import('../src/harnesses/catalog.mjs');
+  assert.equal(ownerOfTracePath('/Users/x/.codex/sessions/2026/08/25/rollout-a.jsonl'), 'codex');
+  assert.equal(ownerOfTracePath('/Users/x/.claude/projects/p/s.jsonl'), 'claude');
+  assert.equal(ownerOfTracePath('/tmp/random.jsonl'), null, 'no fallback owner — a stray file is not evidence');
 });
 
 // ---------------------------------------------------------------- Claude store
@@ -141,7 +142,7 @@ function require_node_sqlite() {
 // ---------------------------------------------------------------- live-store contract (fail loud on drift)
 
 test('LIVE CONTRACT: the newest real Claude transcript on this machine still parses', (t) => {
-  const store = new ClaudeTraceStore({});
+  const store = new ClaudeTraceStore({ harness: 'claude',});
   const newest = store.newestTranscript();
   if (!newest) return t.skip('no ~/.claude/projects store on this machine — contract unverifiable here');
   const seen = store.validate(newest);
@@ -149,7 +150,7 @@ test('LIVE CONTRACT: the newest real Claude transcript on this machine still par
 });
 
 test('LIVE CONTRACT: the newest real Codex rollout on this machine still parses', (t) => {
-  const store = new CodexTraceStore({});
+  const store = new CodexTraceStore({ harness: 'codex',});
   const newest = store.newestRollout();
   if (!newest) return t.skip('no ~/.codex/sessions store on this machine — contract unverifiable here');
   const seen = store.validate(newest);

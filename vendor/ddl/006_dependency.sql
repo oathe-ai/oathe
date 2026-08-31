@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS cell.dep_edge (
     -- The signer, the kind, and the stamp — all three NOT NULL exactly when the
     -- edge is satisfied. "Who released this, on what basis, when" is the
     -- question the Mac's void events could not answer, which is why they had
-    -- zero readers estate-wide.
+    -- zero readers system-wide.
     settled_by                text,
     settle_kind               text,
     settled_at                timestamptz,

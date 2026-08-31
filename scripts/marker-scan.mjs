@@ -1,27 +1,27 @@
 #!/usr/bin/env node
-// oathe — the estate marker scan (Stage 1 A4-A6 prep). Walks one or more directories looking for
-// the estate's own vocabulary — founder name, machine paths, monorepo name, session ids, this
-// playground's own name — so that BEFORE anything (e.g. a vendored DDL tree) ships out of the
-// estate, a human can see exactly what estate-specific text it carries and decide what to do
-// about it. Pre-export DDL WILL hit on the estate vocabulary — that is the point: the scan
-// output is the founder's decision surface, not a thing this script silently launders.
+// oathe — the private-marker scan. Walks one or more directories looking for the private
+// vocabulary — founder name, machine paths, source-monorepo name, session ids — so that
+// BEFORE anything (e.g. a vendored DDL tree) ships out of the private tree, a human can see
+// exactly what private-specific text it carries and decide what to do about it. Pre-export
+// DDL WILL hit on this vocabulary — that is the point: the scan output is the founder's
+// decision surface, not a thing this script silently launders.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-// The estate vocabulary is assembled at runtime so the scanner itself greps clean —
+// The hunted vocabulary is assembled at runtime so the scanner itself greps clean —
 // the public tree carries these words NOWHERE as literals (R-OSS-7 count-zero).
 const F = ['fir', 'ia'].join('');
 const FY = ['fir', 'iya'].join('');
-const SM = ['shez', 'malik'].join('.');
+const SM = ['sh', 'ez'].join('') + '.' + ['ma', 'lik'].join(''); // assembled so no fragment of the name appears as a literal
 export const MARKER_PATTERNS = Object.freeze([
   new RegExp(F, 'i'),
   new RegExp(FY, 'i'),
   new RegExp(`/Users/${FY}`),
   new RegExp(`${F}-monorepo`),
   /session_01[A-Za-z0-9]+/,
-  /oathe-playground/,
+  new RegExp('oathe-' + ['play', 'ground'].join('')),
   /ws-[0-9a-f]{12}/,
   /\.ai-docs/,
   /\.superpowers/,
@@ -113,7 +113,7 @@ function run(argv) {
 // raw `file://${argv[1]}` comparison silently fails on either, and the guard's body never runs —
 // the worst failure mode for a leakage gate: a scan that reports 0 hits because it scanned
 // NOTHING, and exits 0.
-if (import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   process.exit(run(process.argv.slice(2)));
 }
 

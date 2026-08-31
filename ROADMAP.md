@@ -65,9 +65,11 @@ Nobody should have to preserve a session, keep a parent agent alive, paste conte
 
 ## Roadmap
 
-1. **Containerization** add support for bubblewrap, openshell, ghcp sandbox and more
+1. **Turn a session into durable work**  
+   Give an obligation, its owner, its attempts, its progress, and its definition of done a life outside any model context.
 
-2. **Harness Adapters** Integrate with hermes, openclaw, microsoft scout, grok bot and more.
+2. **Let another agent continue it**  
+   Reconstruct a workspace and a fresh briefing so Claude, Codex, or another allowed endpoint can take the next attempt.
 
 3. **Let work leave your machine**  
    End or fence a local attempt, restore its workspace elsewhere, and continue locally, on your own cloud machine, or through a hosted worker.

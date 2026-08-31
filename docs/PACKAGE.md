@@ -1,11 +1,11 @@
 # oathe
 
-The Oathe interface: an npm package whose `oathe init` onboards **both** installed
-harnesses (Claude Code and Codex) onto the local machine's substrate, and whose `oathe claude` /
+The Oathe interface, D0: an npm package whose `oathe init` onboards **both** installed
+harnesses (Claude Code and Codex) onto the local cell substrate, and whose `oathe claude` /
 `oathe codex` launch normal interactive sessions inside the cage with this folder's board
-attached. session can change; unfinished obligations do not disappear. Cognition is bounded.
+attached. The session changed; the unfinished obligation did not disappear.
 
-Claims are speech acts. The substrate **refuses dishonesty** by construction — a claim never
+Claims are speech acts. The substrate refuses dishonesty by construction — a claim never
 mints its work as done, a task without a plan says `plan_status: "unknown"`, a second
 claimant is refused, a yield needs a declared cause, and a killed session leaves an absence,
 not a fabricated goodbye.
@@ -34,14 +34,24 @@ not a fabricated goodbye.
     oathe status                  # the substrate half of doctor
     oathe uninstall [--purge-db]  # remove exactly what init recorded; the database stays
 
-There is **no resume verb**: launching presents a board and
+There is **no resume verb** (founder ruling 2026-08-24): launching presents the board and
 binds NOTHING — a session becomes attributable to a claim only when you or the agent act on
 it explicitly (claim it, continue it, record progress). Ownership horizons are set at claim
-time and are never extended by session liveness. Full automatic
+time and are never extended by session liveness (D0 correction, 2026-08-26). Full automatic
 pickup — recompiled frame, successor allocation — ships with the runtime package; until
 then `oathe_pickup` refuses typed rather than pretending. In D0, "continue task-x" means:
 the durable claim, its objective, and its recorded progress are on the board in either
 harness, and the agent inspects the actual workspace and carries on.
+
+## Upgrading
+
+    npm i -g @oathe/oathe@latest && oathe init
+
+That is the whole upgrade. Hooks and the MCP server run the `oathe` bin on PATH, so the new
+code is live the moment npm replaces it; `oathe init` is idempotent and re-materializes the
+harness plugin caches (version-keyed) and re-registers the marketplaces if the install moved
+(an nvm node switch). `oathe version` says what is on PATH; `oathe doctor` shows it beside
+each harness's cached plugin version.
 
 ## What init touches (all reversible, all recorded)
 
@@ -70,7 +80,9 @@ principal, visibly back on the board.
 
 ## Privacy and preview scope
 
-What Oathe reads, stores, and sends: [docs/PRIVACY.md](docs/PRIVACY.md). 
+What Oathe reads, stores, and sends: [docs/PRIVACY.md](PRIVACY.md). This is a D0
+preview: the README and ROADMAP promise only what tests prove, and the amended launch
+gates stay in force for everything else.
 
 ## Handoff
 
@@ -81,9 +93,9 @@ this codebase from it.
 ## Tests
 
     npm test        # the suite: unit (fences, manifest, harnesses, workspace, host) +
-                    # real-Postgres substrate/tools/successor + the scripted W1 exit loop
+                    # real-Postgres substrate/tools/successor + the scripted exit loop
 
-### Estate machines
+### Machines with the runtime monorepo checkout
 
 After `npm install` (or `npm ci`), run `npm run link-runtime` — npm treats
 `node_modules/oathe-runtime` as extraneous and prunes it once `oathe-runtime` is not a

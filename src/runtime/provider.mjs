@@ -1,5 +1,5 @@
-// oathe — the runtime seam (Stage 1 ruling: ONE seam, never a fork). Two providers serve the
-// same capability surface: OatheRuntimeProvider binds the estate monorepo (the richer
+// oathe — the runtime seam (ruling: ONE seam, never a fork). Two providers serve the
+// same capability surface: OatheRuntimeProvider binds the runtime monorepo (the richer
 // semantics), StandaloneRuntimeProvider is what the public package runs on a clean machine —
 // every capability an honest implementation or a TYPED, LOUD degradation, never silent.
 // Selection is explicit config (`runtimeProvider: auto|oathe|standalone`); auto = oathe
@@ -43,7 +43,7 @@ export class OatheRuntimeProvider {
   }
 
   /** Computed ONCE per instance and cached — a raw ERR_MODULE_NOT_FOUND from oathe-runtime
-   *  failing to resolve (e.g. a forgotten `npm run link-runtime` on an estate machine) is turned
+   *  failing to resolve (e.g. a forgotten `npm run link-runtime` on a monorepo machine) is turned
    *  into a typed, loud fact here instead of leaking out of acceptanceRuntime()/successor().
    *  @returns {{ok: boolean, error?: string}} */
   probe() {
@@ -76,7 +76,7 @@ export class OatheRuntimeProvider {
     return { spawnCaged };
   }
 
-  /** THIN WRAPPER (Stage 1 ruling, 2026-08-26): no composition logic lives here. The runtime
+  /** THIN WRAPPER (ruling, 2026-08-26): no composition logic lives here. The runtime
    *  package owns the whole acceptance build — including the recorded-verdict checker wiring
    *  that previously lived in this method — and lands as `oathe-runtime/seam` exporting
    *  `buildAcceptanceRuntime({ pool }) → { SETTLE, laneFor(seatPrincipal) }`. */
@@ -131,9 +131,12 @@ export class StandaloneRuntimeProvider {
       pickup: async () => {
         throw new RuntimeError('OATHE_PICKUP_UNAVAILABLE',
           'the successor sequence needs the oathe runtime, which does not resolve on this '
-          + 'machine (runtime provider: standalone) — pickup cannot pretend; this is a preview '
-          + 'limitation.'
-          + ' Continue the task directly instead: its objective and recorded progress are on the board (oathe_board), so inspect the workspace, keep working, record progress with oathe_statement, and assert completion with oathe_done — the claim is already yours.', { provider: 'standalone' });
+          + 'machine (runtime provider: standalone) — pickup cannot pretend; this is a preview limitation. Claim the task '
+          + 'instead (oathe_claim): a reclaim of rejected work returns the recovery bundle — '
+          + 'the rejection reason, the prior interval\'s statements, and its trace refs — and '
+          + 'the board (oathe_board) carries the objective and progress. On a machine with the '
+          + 'runtime checkout, set OATHE_MONOREPO and run `npm run link-runtime` to restore '
+          + 'pickup.');
       },
       close: async () => {},
     };

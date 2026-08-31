@@ -35,12 +35,20 @@ export function standardPlan({ verifierEngine = null } = {}) {
   };
 }
 
+/** The one owner of the verification-task naming: `verify:<task>`. */
+export const VERIFICATION_PREFIX = 'verify:';
+
 export function verificationTaskId(taskId) {
-  return `verify:${taskId}`;
+  return `${VERIFICATION_PREFIX}${taskId}`;
 }
 
 export function isVerificationTask(taskId) {
-  return taskId.startsWith('verify:');
+  return taskId.startsWith(VERIFICATION_PREFIX);
+}
+
+/** The task a verification task judges, or null for a non-verification id. */
+export function verifiedTaskId(taskId) {
+  return isVerificationTask(taskId) ? taskId.slice(VERIFICATION_PREFIX.length) : null;
 }
 
 export function verificationObjective(taskId) {

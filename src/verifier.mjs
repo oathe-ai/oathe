@@ -22,13 +22,18 @@
 // PROVENANCE; the judgment quality is the engine's, and the linked traces exist precisely so
 // that judgment stays auditable.
 
-import crypto from 'node:crypto';
-import path from 'node:path';
+import { isTraceSubjectSql } from './statements.mjs';
 import { createRequire } from 'node:module';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { amendSubjectRef, engineFailureRef } from './statements.mjs';
+import { emit as wireEmit } from './wire.mjs';
+import { WorkspaceRegistry } from './registry.mjs';
+import { homeOf } from './paths.mjs';
+import { HomeBoard } from './home.mjs';
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
-import { projectorFor, renderEvidenceView, sliceForTask } from './atif.mjs';
+import { renderEvidenceView, sliceForTask } from './atif.mjs';
+import { projectorFor } from './harnesses/catalog.mjs';
 import { verificationTaskId, isVerificationTask, ACCEPTANCE_CLAUSE_KEY } from './plans.mjs';
 import { RECORDED_VERDICT_CHECKER } from './runtime/discharge.mjs';
 
@@ -51,7 +56,7 @@ export class Verifier {
    *          config: import('./config.mjs').OatheConfig, operatorPrincipal: string,
    *          engineRunner?: ({engine, prompt}) => Promise<{verdict: string, reason: string}>}} o
    */
-  constructor({ substrate, paths, workspace, config, operatorPrincipal, engineRunner, provider = null }) {
+  constructor({ substrate, paths, workspace, config, operatorPrincipal, engineRunner, provider = null, homePathFor = null }) {
     this.substrate = substrate;
     this.paths = paths;
     this.workspace = workspace;
@@ -59,6 +64,11 @@ export class Verifier {
     this.operatorPrincipal = operatorPrincipal;
     this.verifierPrincipal = config.get('verifierPrincipal');
     this.engineRunner = engineRunner ?? defaultEngineRunner;
+    // The ONE home resolver (registry rootOf), injectable for tests. The engine judges
+    // FROM the task's own folder — its tools are the evidence reader (ruling 2026-08-31);
+    // a homeless task judges from the operator's home, never the caller's accidental cwd.
+    this.homePathFor = homePathFor
+      ?? ((homeRef) => new WorkspaceRegistry({ registryPath: paths.registryPath }).rootOf(homeRef));
     this.orgId = config.get('org');
     this.provider = provider;
     this.tools = createOatheTools({
@@ -109,18 +119,18 @@ export class Verifier {
   async #traceEvidence(workClaimId) {
     const { rows } = await this.substrate.query(
       `SELECT subject_ref, evidence_refs FROM cell.agent_statement
-        WHERE org_id = $1 AND work_claim_id = $2 AND subject_ref LIKE 'trace:%'`,
+        WHERE org_id = $1 AND work_claim_id = $2 AND ${isTraceSubjectSql('subject_ref')}`,
       [this.orgId, workClaimId]);
     const traces = [];
     for (const row of rows) {
       for (const file of row.evidence_refs) {
-        traces.push({ path: file, trajectory: projectorFor(file).project(file) });
+        traces.push({ path: file, trajectory: (await projectorFor(file)).project(file) });
       }
     }
     return traces;
   }
 
-  #prompt({ taskRow, completion, traces, taskId }) {
+  #prompt({ taskRow, completion, traces, taskId, amendments = [] }) {
     const budget = this.config.get('verifierEvidenceBudget');
     const perTrace = Math.max(1, Math.floor(budget / Math.max(1, traces.length)));
     return [
@@ -129,12 +139,19 @@ export class Verifier {
       'own claims; CLAIM lines are its on-the-record speech acts; DID lines are the actions it',
       'actually took; GOT lines are what actually came back. Judge claims against actions and',
       'outcomes — be strict: absence of evidence is absence.',
+      'You are running in the task\'s workspace — check asserted artifacts against the files on disk.',
       '',
       `TASK: ${taskId}`,
       `OBJECTIVE: ${taskRow.objective}`,
       `VERIFICATION PLAN: ${JSON.stringify(taskRow.verification_plan)}`,
       `COMPLETION ASSERTION: ${completion.proposition}`,
       `ASSERTED EVIDENCE: ${JSON.stringify(completion.evidence_refs)}`,
+      ...(amendments.length === 0 ? [] : [
+        '',
+        `AMENDMENT TRAIL (${amendments.length} — the definition of done MOVED, with sign-off;`,
+        'judge the CURRENT objective above; a late or convenient move is itself evidence to weigh):',
+        ...amendments.map((a) => `- [${new Date(a.asserted_at).toISOString()}] ${a.proposition}`),
+      ]),
       '',
       `SESSION TRACES (${traces.length}, sliced to this task's claim intervals where recorded):`,
       ...traces.map(({ trajectory }) => renderEvidenceView(sliceForTask(trajectory, taskId), { budget: perTrace })),
@@ -166,22 +183,58 @@ export class Verifier {
     // 1. Claim the review — the verifier principal takes visible responsibility for it.
     const vclaim = await this.tools.oathe_claim({ task_id: verificationTask });
 
-    // 2. The record under judgment.
-    const completion = await this.#completionStatement(originalTask);
-    const { rows: taskRows } = await this.substrate.query(
-      'SELECT objective, verification_plan FROM cell.task WHERE org_id = $1 AND task_id = $2',
-      [this.orgId, originalTask]);
-    const traces = await this.#traceEvidence(completion.work_claim_id);
-
-    // 3. One engine run — fresh context, different eyes. The verdict must be exact.
-    const raw = await this.engineRunner({
-      engine,
-      prompt: this.#prompt({ taskRow: taskRows[0], completion, traces, taskId: originalTask }),
-    });
-    if (!raw || !VERDICTS.includes(raw.verdict) || typeof raw.reason !== 'string' || raw.reason.trim() === '') {
-      throw new VerifierError('OATHE_VERDICT_MALFORMED',
-        `the ${engine} engine returned ${JSON.stringify(raw)} — a verdict is exactly `
-        + `{verdict: ${VERDICTS.join('|')}, reason} and the lane never guesses`, { raw, engine });
+    // 2-3. EVERYTHING between the claim and a durable verdict runs under the release
+    // guard (ruling 2026-08-31: ANY exit before a verdict fails loud and frees the claim
+    // — an unreadable trace once killed a run OUTSIDE the old engine-only guard and left
+    // the twin wedged behind its lease, caught live). Evidence-gathering and the engine
+    // fail the same way: durable statement, yield, verify_failed on the wire.
+    let raw;
+    let completion;
+    let taskRows;
+    let traces;
+    try {
+      completion = await this.#completionStatement(originalTask);
+      ({ rows: taskRows } = await this.substrate.query(
+        `SELECT objective, verification_plan, ${HomeBoard.homeSql('t')} AS home
+           FROM cell.task t WHERE org_id = $1 AND task_id = $2`,
+        [this.orgId, originalTask]));
+      // The engine judges FROM the task's workspace — its own tools read the evidence on
+      // disk. One resolver (registry rootOf); a homeless task judges from the operator's home.
+      const taskHome = this.homePathFor(taskRows[0]?.home) ?? homeOf();
+      traces = await this.#traceEvidence(completion.work_claim_id);
+      // R-AMEND: the amendment trail is part of the record — the engine judges the CURRENT
+      // objective and SEES every move of the bar (a late amendment is visible evidence).
+      const { rows: amendments } = await this.substrate.query(
+        `SELECT proposition, asserted_at FROM cell.agent_statement
+          WHERE org_id = $1 AND task_id = $2 AND subject_ref = $3
+          ORDER BY asserted_at`,
+        [this.orgId, originalTask, amendSubjectRef(originalTask)]);
+      raw = await this.engineRunner({
+        engine,
+        cwd: taskHome,
+        prompt: this.#prompt({ taskRow: taskRows[0], completion, traces, taskId: originalTask, amendments }),
+      });
+      if (!raw || !VERDICTS.includes(raw.verdict) || typeof raw.reason !== 'string' || raw.reason.trim() === '') {
+        throw new VerifierError('OATHE_VERDICT_MALFORMED',
+          `the ${engine} engine returned ${JSON.stringify(raw)} — a verdict is exactly `
+          + `{verdict: ${VERDICTS.join('|')}, reason} and the lane never guesses`, { raw, engine });
+      }
+    } catch (e) {
+      try {
+        await this.tools.oathe_statement({
+          task_id: verificationTask,
+          proposition: `engine ${engine} failed before a verdict: ${String(e?.message ?? e).slice(0, 400)}`,
+          evidence_ref: engineFailureRef(engine),
+        });
+        await this.tools.oathe_yield({
+          task_id: verificationTask,
+          note: `engine ${engine} died — released for retry: oathe verify ${originalTask} --engine <another>`,
+        });
+      } catch { /* best-effort release — the primary failure must surface either way */ }
+      // The glass hears the failure too (fail-soft inside emit): named by the ORIGINAL
+      // task — the row a person is looking at — so retry is one act, not archaeology.
+      await wireEmit(this.substrate, { kind: 'verify_failed', task_id: originalTask, via: engine });
+      throw e;
     }
 
     // 4. The verdict becomes durable: the verification task's completion statement.
@@ -225,16 +278,28 @@ export class Verifier {
         { checker: RECORDED_VERDICT_CHECKER, oathe_recorded_verdict: raw.verdict }),
     }, { settle: SETTLE.CLAIM });
 
-    if (outcome.verification?.verdict === 'blocked' || (!outcome.settled && raw.verdict === 'accepted')) {
-      throw new VerifierError('OATHE_SETTLEMENT_BLOCKED',
-        `the acceptance lane did not settle an ACCEPTED verdict: ${JSON.stringify(outcome.verification)}`,
-        { outcome });
+    let settledNow = outcome.settled === true;
+    if (!settledNow) {
+      // `settle_work_claim` answers false for an ALREADY-settled claim (idempotency) exactly as it
+      // does for a refused one. A prior run killed after its settle must read as recovery — the
+      // claim row knows (a re-run otherwise wedged forever, burning an engine run per retry).
+      const { rows: settledRows } = await this.substrate.query(
+        'SELECT settled_at FROM cell.work_claim WHERE work_claim_id = $1', [completion.work_claim_id]);
+      settledNow = settledRows[0]?.settled_at != null;
+      if (!settledNow && (outcome.verification?.verdict === 'blocked' || raw.verdict === 'accepted')) {
+        throw new VerifierError('OATHE_SETTLEMENT_BLOCKED',
+          `the acceptance lane did not settle an ACCEPTED verdict: ${JSON.stringify(outcome.verification)}`,
+          { outcome });
+      }
     }
 
     // 6. R8: a rejection reopens the work, through the evaluator lane's own verb.
     if (raw.verdict === 'rejected') {
       await this.substrate.query('SELECT cell.reopen_rejected_task($1, $2)', [this.orgId, originalTask]);
     }
+    // The wire hears the verdict the moment it lands (fail-soft inside emit — the settlement
+    // stands whatever the wire does; the notch otherwise catches up on its heartbeat).
+    await wireEmit(this.substrate, { kind: raw.verdict === 'rejected' ? 'rejected' : 'settled', task_id: originalTask });
 
     // 7. The review itself settles under the OPERATOR seat (non-author of the verdict statement).
     const verdictStatement = await this.#completionStatement(verificationTask);
@@ -257,7 +322,7 @@ export class Verifier {
       engine,
       verdict: raw.verdict,
       reason: raw.reason,
-      settled: outcome.settled === true,
+      settled: settledNow,
       reopened: raw.verdict === 'rejected',
       verdict_ref: verdictRef,
       verification_claim: vclaim.work_claim_id,
@@ -279,17 +344,43 @@ export class Verifier {
 }
 
 /** The real engine runner: one headless run, strict JSON out. Refusals are typed and loud. */
-export async function defaultEngineRunner({ engine, prompt, env = process.env, model = null }) {
-  const commands = {
-    claude: ['claude', ['-p', prompt, '--output-format', 'json', ...(model ? ['--model', model] : [])]],
-    codex: ['codex', ['exec', '--skip-git-repo-check', ...(model ? ['-m', model] : []), prompt]],
-  };
-  const command = commands[engine];
-  if (!command) {
+export async function defaultEngineRunner({ engine, prompt, env = process.env, model = null, cwd = undefined }) {
+  // The command line and output shape are each engine adapter's own facts (src/harnesses/).
+  const { byName, verifierCapable } = await import('./harnesses/catalog.mjs');
+  const known = verifierCapable();
+  if (!known.includes(engine)) {
     throw new VerifierError('OATHE_ENGINE_UNKNOWN',
-      `no engine '${engine}' — known engines: ${Object.keys(commands).join(', ')}`, { engine });
+      `no engine '${engine}' — known engines: ${known.join(', ')}`, { engine });
   }
-  const run = spawnSync(command[0], command[1], { encoding: 'utf8', env, maxBuffer: 32 * 1024 * 1024 });
+  const adapter = byName(engine);
+  const command = adapter.headless.command(prompt, model);
+  // async spawn — a minutes-long engine run must never halt the event loop (spawnSync froze the
+  // whole MCP server, ping included, before the dispatcher existed; the sync bin path gains the
+  // same hygiene for free).
+  const run = await new Promise((resolve) => {
+    // stdin 'ignore': the engine gets immediate EOF (codex exec drains stdin before answering;
+    // spawnSync closed it implicitly — an open default pipe hung two live runs, 2026-08-30).
+    const child = spawn(command[0], command[1], { env, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    // Resolve on EXIT (with a short drain grace), not only on 'close': an engine's backgrounded
+    // helper can inherit the stdio pipes, and then 'close' never fires — a detached verify sat
+    // at 0% CPU for 20 minutes after codex finished (live, 2026-08-30). Destroying the streams
+    // releases the inherited-pipe fds so the loop is never pinned either.
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      child.stdout.destroy();
+      child.stderr.destroy();
+      resolve(result);
+    };
+    child.stdout.on('data', (d) => { if (stdout.length < 32 * 1024 * 1024) stdout += d; });
+    child.stderr.on('data', (d) => { if (stderr.length < 1024 * 1024) stderr += d; });
+    child.on('error', (error) => finish({ error, status: null, stdout, stderr }));
+    child.on('close', (status) => finish({ status, stdout, stderr }));
+    child.on('exit', (status) => { setTimeout(() => finish({ status, stdout, stderr }), 500).unref(); });
+  });
   if (run.error) {
     throw new VerifierError('OATHE_ENGINE_MISSING',
       `the '${engine}' CLI is not installed or not on PATH — verification needs a real engine `
@@ -297,16 +388,13 @@ export async function defaultEngineRunner({ engine, prompt, env = process.env, m
   }
   if (run.status !== 0) {
     throw new VerifierError('OATHE_ENGINE_FAILED',
-      `${engine} exited ${run.status}: ${String(run.stderr ?? '').slice(0, 300)}`, { engine, status: run.status });
+      `${engine} exited ${run.status}; stderr tail: ${String(run.stderr ?? '').trim().slice(-300)}`, { engine, status: run.status });
   }
-  let text = run.stdout;
-  if (engine === 'claude') {
-    try {
-      text = JSON.parse(run.stdout).result ?? '';
-    } catch {
-      throw new VerifierError('OATHE_ENGINE_OUTPUT_MALFORMED',
-        'claude --output-format json did not return JSON', { engine });
-    }
+  let text;
+  try {
+    text = adapter.headless.extract(run.stdout);
+  } catch (e) {
+    throw new VerifierError('OATHE_ENGINE_OUTPUT_MALFORMED', e.message, { engine });
   }
   const match = String(text).match(/\{[^{}]*"verdict"[^{}]*\}/g);
   if (!match) {

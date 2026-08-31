@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 
 import { buildContext } from './context.mjs';
-import { FencedBlock, FENCE_STYLES } from './blocks.mjs';
+import { FencedBlock, FENCE_STYLES, sweepCreatedResidue } from './blocks.mjs';
 
 /** @returns {Promise<{actions: object[], database_dropped: boolean}>} */
 export async function runUninstall({ env = process.env, exec, purgeDb = false } = {}) {
@@ -19,7 +19,8 @@ export async function runUninstall({ env = process.env, exec, purgeDb = false } 
         actions.push({ harness: harness.name, ...action });
       }
     }
-    // Project-scope fences (CLAUDE.md/AGENTS.md rows written by launch pre-flights).
+    // Every fence: the folder ones (CLAUDE.md/AGENTS.md written by activation) and the global
+    // one in an adapter's instructions file (written by init) — one row shape, one removal.
     for (const row of manifest.removeWhere((r) => r.kind === 'fence')) {
       if (!fs.existsSync(row.file)) continue;
       const block = new FencedBlock({ style: FENCE_STYLES[row.detail?.style ?? 'hash'] });
@@ -30,6 +31,13 @@ export async function runUninstall({ env = process.env, exec, purgeDb = false } 
       else fs.writeFileSync(row.file, content);
       actions.push({ action: 'fence-removed', file: row.file });
     }
+    // Files init CREATED (absent before) and that hold nothing of substance now are removed —
+    // the fence rule above, applied to every managed-write engine. A file the user or the
+    // harness wrote anything else into stays, minus our entries.
+    actions.push(...sweepCreatedResidue({ backups: manifest.backups }));
+    // The notch LaunchAgent: booted out and removed exactly as recorded (src/notch.mjs).
+    const { unwireNotch } = await import('./notch.mjs');
+    actions.push(...unwireNotch({ manifest, ...(exec ? { exec } : {}) }));
     manifest.save();
 
     let databaseDropped = false;

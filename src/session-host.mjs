@@ -1,6 +1,6 @@
 // oathe — the session host: liveness OBSERVATION for an interactive session's cage.
 //
-// R1 (correction packet 2026-08-26): the host never touches ownership_valid_until — session
+// R1 (ruling, 2026-08-26): the host never touches ownership_valid_until — session
 // and process liveness are not organizational acts, and a claim's horizon is set once by the
 // substrate's claim verb. Each tick asks the injected liveness probe (the cage's enumerate(),
 // kernel-read); a dead cage stops the loop and touches NOTHING — R10: an absence is an
@@ -14,12 +14,11 @@ import crypto from 'node:crypto';
 export class SessionHost {
   /**
    * @param {{client: {query: Function}, identity: {orgId: string, principalId: string},
-   *          workspace: string, liveness: () => boolean, observeIntervalMs?: number}} o
+   *          liveness: () => boolean, observeIntervalMs?: number}} o
    */
-  constructor({ client, identity, workspace, liveness, observeIntervalMs = 60_000 }) {
+  constructor({ client, identity, liveness, observeIntervalMs = 60_000 }) {
     this.client = client;
     this.identity = identity;
-    this.workspace = workspace;
     this.liveness = liveness;
     this.observeIntervalMs = observeIntervalMs;
     this.running = false;
@@ -61,10 +60,13 @@ export class SessionHost {
   async stop({ exitCode }) {
     this.#halt();
     await this.tickInFlight;
+    // Custody is the PRINCIPAL's, not the folder's (R-HOME-BOARD): a claim homed elsewhere is
+    // still this session's to speak for. Known over-breadth: two concurrent sessions of the
+    // same principal both speak on each other's exits — an honest duplicate beats a lost note.
     const { rows } = await this.client.query(
       `SELECT work_claim_id, task_id FROM cell.work_claim
-        WHERE org_id = $1 AND principal_id = $2 AND state = 'active' AND contract_ref LIKE $3`,
-      [this.identity.orgId, this.identity.principalId, `workspace:${this.workspace};%`]);
+        WHERE org_id = $1 AND principal_id = $2 AND state = 'active'`,
+      [this.identity.orgId, this.identity.principalId]);
     for (const claim of rows) {
       await this.client.query(
         `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,

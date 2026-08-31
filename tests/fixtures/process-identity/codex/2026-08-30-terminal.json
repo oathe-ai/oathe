@@ -1,0 +1,14 @@
+{
+  "observed": "codex CLI run from a shell in Terminal.app",
+  "payload": {
+    "ancestry": [
+      { "pid": 900, "exec": "/Users/x/.local/bin/codex" },
+      { "pid": 899, "exec": "/bin/zsh" },
+      { "pid": 898, "exec": "/usr/bin/login" },
+      { "pid": 897, "exec": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal" },
+      { "pid": 1, "exec": "/sbin/launchd" }
+    ],
+    "transcript_path": "/Users/x/.codex/sessions/2026/08/30/rollout-def.jsonl"
+  },
+  "expected": { "app": { "bundle": "/System/Applications/Utilities/Terminal.app", "pid": 897 }, "surface": "codex" }
+}

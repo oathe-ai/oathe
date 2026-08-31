@@ -4,10 +4,7 @@
       "command": "oathe",
       "args": [
         "mcp"
-      ],
-      "env": {
-        "OATHE_WORKSPACE_DIR": "${CLAUDE_PROJECT_DIR}"
-      }
+      ]
     }
   }
 }

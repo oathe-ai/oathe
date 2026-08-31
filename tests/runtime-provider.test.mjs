@@ -22,7 +22,6 @@ const RUNTIME_LINKED = (() => {
   catch { return false; }
 })();
 const NO_CAGE = !CAGE_PRESENT && 'no runtime checkout on this machine (OATHE_MONOREPO unset) — linked-mode lane';
-const NO_RUNTIME = !RUNTIME_LINKED && 'oathe-runtime does not resolve on this machine — linked-mode lane';
 
 function configWith(env) { return new OatheConfig({ env, cwd: os.tmpdir() }); }
 
@@ -140,6 +139,8 @@ test('both providers serve the successor surface: the runtime builds it, standal
   await assert.rejects(
     () => standalone.pickup({ task_id: 't', work_claim_id: '00000000-0000-0000-0000-000000000000' }),
     (e) => e.name === 'RuntimeError' && e.code === 'OATHE_PICKUP_UNAVAILABLE'
+      && /oathe_claim/.test(e.message) && /recovery bundle|reason.*statements.*trace/i.test(e.message)
+      && /OATHE_MONOREPO/.test(e.message) // live fix #15: the refusal guides continuation
       && /preview limitation/.test(e.message));
   await standalone.close(); // a no-op that must not throw
 });

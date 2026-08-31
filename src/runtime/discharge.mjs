@@ -1,4 +1,4 @@
-// oathe — deterministic clause discharge, owned by the package (the Stage 1 plan: "we already
+// oathe — deterministic clause discharge, owned by the package (the design ruling: "we already
 // own STANDARD_CLAUSE_CONDITIONS; the discharge logic is ~50 lines against the DDL's
 // contract"). Shared by BOTH providers: the standalone lane calls dischargeClause directly;
 // the oathe provider composes applyRecordedVerdict over the upstream base checker. Three

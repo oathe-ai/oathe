@@ -10,9 +10,9 @@ import { buildPaths } from '../src/paths.mjs';
 const paths = buildPaths({});
 const SCRATCH_DB = `oathe_test_${process.pid}`;
 
-// The estate cross-checks below need the monorepo checked out beside this repo.
+// The source-monorepo cross-checks below need the monorepo checked out beside this repo.
 // On a machine without it, skip LOUDLY — never silently.
-const skip = paths.monorepo === null && 'estate cross-check: monorepo not on this machine';
+const skip = paths.monorepo === null && 'source-monorepo cross-check: monorepo not on this machine';
 
 const VENDOR_MANIFEST_PATH = path.join(paths.packageRoot, 'vendor/ddl/manifest.json');
 const skipNoVendorManifest = !fs.existsSync(VENDOR_MANIFEST_PATH)
@@ -52,7 +52,7 @@ test('vendored manifest cross-checks against DDL_FILES and shaOf (machine-indepe
       `${entry.name} public_sha256 must equal shaOf of the shipped bytes (the ONE hashing implementation)`);
     assert.match(entry.source_sha256, /^[0-9a-f]{64}$/, `${entry.name}: source side pinned`);
   });
-  assert.equal(manifest.transform.version, 'export-clean-1');
+  assert.equal(manifest.transform.version, 'export-clean-2');
   assert.equal(manifest.license, 'Apache-2.0');
 });
 
@@ -215,4 +215,32 @@ test('status reports the substrate a doctor can print', async () => {
   assert.equal(seen.ddl_applied, DDL_FILES.length);
   assert.equal(seen.ddl_source, paths.ddlSource);
   assert.equal(seen.yield_cause_registered, true);
+});
+
+test('withTransaction holds the gate — a concurrent query NEVER interleaves into an open transaction', async () => {
+  // The review's sharpest finding: parallel MCP tool calls landed queries inside
+  // done/amend's BEGIN..COMMIT on the one shared connection — acknowledged writes
+  // could be swallowed by the transaction's ROLLBACK. One gate, held for the span.
+  const substrate = new Substrate({ database: SCRATCH_DB, paths, env: process.env });
+  try {
+    const order = [];
+    let releaseTxn;
+    const txnOpen = new Promise((r) => { releaseTxn = r; });
+    const txn = substrate.withTransaction(async (tx) => {
+      order.push('txn-begin');
+      await tx.query('SELECT 1');
+      await txnOpen; // hold the transaction open while the outsider knocks
+      order.push('txn-end');
+    });
+    await new Promise((r) => setTimeout(r, 50)); // the txn is provably open
+    const outsider = substrate.query('SELECT 1').then(() => order.push('outsider'));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(order, ['txn-begin'], 'the outsider WAITS at the gate while the transaction is open');
+    releaseTxn();
+    await txn;
+    await outsider;
+    assert.deepEqual(order, ['txn-begin', 'txn-end', 'outsider'], 'the outsider lands only after commit');
+  } finally {
+    await substrate.close();
+  }
 });

@@ -1,5 +1,5 @@
 // oathe — SqlAcceptanceLane: the standalone provider's settlement path. The documented
-// SQL-equivalent of the estate lane: our own deterministic clause discharge, then
+// SQL-equivalent of the runtime's lane: our own deterministic clause discharge, then
 // INSERT cell.verification + cell.settle_work_claim in ONE transaction (now() =
 // transaction_timestamp keeps FC113/FC114 by equality). The substrate's triggers remain the
 // enforcement — this lane is a caller, not an authority: it never writes settled_at itself
