@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
-import { renderSplash } from '../src/board-render.mjs';
+import { renderBoard, renderSplash } from '../src/board-render.mjs';
 import { waitForLaunch } from '../src/launch.mjs';
 
 const SECTIONS = {
@@ -14,6 +14,8 @@ const SECTIONS = {
   asserted: [{ task_id: 'asserted-1', objective: 'Done, awaiting a verdict', state: 'completion_asserted' }],
   held: [{ task_id: 'held-1', objective: 'Someone else is on it', state: 'active', principal_id: 'athena' }],
 };
+
+const EMPTY = { mine: [], open: [], asserted: [], held: [] };
 
 test('renderSplash is ANSI, aligned, and carries NO markdown syntax', () => {
   const splash = renderSplash({
@@ -38,14 +40,30 @@ test('renderSplash is ANSI, aligned, and carries NO markdown syntax', () => {
   assert.ok(plain.split('\n').every((l) => l.length <= 100), 'long objectives truncated');
 });
 
-test('renderSplash on an empty board is the single state line', () => {
+test('renderBoard all:true serves the MACHINE board — lens null, workspace filter dropped, push wording unchanged', async () => {
+  const calls = [];
+  const client = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; } };
+  const out = await renderBoard({
+    client,
+    identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' },
+    workspace: 'ws-000000000000',
+    all: true,
+    breaches: [{ kind: 'quiet', task_id: 'gone-quiet', objective: 'o', home: 'h', detail: 'd' }],
+  });
+  assert.equal(out.lens, null, 'machine scope renders as all workspaces');
+  assert.equal(calls[0].params.length, 1, 'no workspace parameter — the folder filter is dropped');
+  assert.match(out.message, /1 gone quiet/, 'the founder-worded push (by kind, 2026-08-31) is untouched by scope');
+});
+
+test('renderSplash with a SILENT message is just the scope line — never the word null', () => {
   const splash = renderSplash({
-    message: '🍺 No open tasks in this folder — Oathe is keeping track.',
+    message: null,
     sections: { mine: [], open: [], asserted: [], held: [] },
     workspace: 'ws-000000000000',
   });
   const plain = splash.replaceAll(/\x1b\[[0-9]+m/g, '');
-  assert.match(plain, /🍺 No open tasks/);
+  assert.doesNotMatch(plain, /null|undefined/);
+  assert.match(plain, /ws-000000000000/);
   assert.doesNotMatch(plain, /YOURS|OPEN|ASSERTED|HELD/);
 });
 
@@ -99,4 +117,19 @@ test('R2 (§1.2): the board states durable facts — not-asserted phrasing, last
   assert.match(splash, /last: idempotency guard/, 'durable progress rides the board');
   assert.match(splash, /back — incomplete, actionable/, 'reopened work is named honestly');
   assert.doesNotMatch(splash, /running|resuming|interrupted/i, 'no process-liveness implication');
+});
+
+test('R-PAGER: the splash carries a BREACHED PROMISES section when breaches exist, and nothing when none', () => {
+  const breaches = [
+    { kind: 'overdue', task_id: 'late-1', objective: 'asserted, never verified', home: '/srv/app', detail: 'verification overdue since 2026-08-27 10:00' },
+    { kind: 'quiet', task_id: 'quiet-1', objective: 'claimed and abandoned', home: 'homeless', detail: 'founder holds it, quiet for 72h (last word 2026-08-25 10:00)' },
+  ];
+  const withBreaches = renderSplash({ message: '⚠️ Oathe: unclaimed task expiring', sections: EMPTY, workspace: 'ws-0d0a0b0c0d0e', breaches });
+  assert.match(withBreaches, /BREACHED PROMISES \(all workspaces\)/);
+  assert.match(withBreaches, /late-1/);
+  assert.match(withBreaches, /quiet-1/);
+  assert.match(withBreaches, /verification overdue since 2026-08-27 10:00/);
+  assert.match(withBreaches, /homeless/);
+  const without = renderSplash({ message: null, sections: EMPTY, workspace: 'ws-0d0a0b0c0d0e', breaches: [] });
+  assert.doesNotMatch(without, /BREACHED/);
 });

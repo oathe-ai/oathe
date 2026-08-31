@@ -5,9 +5,7 @@
 // trajectory (finalize() validates); anything unmappable is a typed refusal, never a silent
 // drop. The reference models forbid unknown fields outside `extra` — so does our validator.
 
-import path from 'node:path';
-
-import { ClaudeTraceStore, CodexTraceStore, TraceContractError, harnessForTracePath } from './traces.mjs';
+import { TraceContractError } from './traces.mjs';
 import { makeToolDefs } from './mcp/oathe-tools.mjs';
 
 export const ATIF_SCHEMA_VERSION = 'ATIF-v1.7';
@@ -64,6 +62,7 @@ export class AtifProjector {
   constructor({ store }) {
     if (!store) throw new AtifError('ATIF_STORE_REQUIRED', 'a projector needs its trace store');
     this.store = store;
+    this.harness = store.harness; // the store was named by its adapter; the projector labels ATIF with the same name
   }
 
   /** @returns {object} a VALID ATIF trajectory (validator-asserted) */
@@ -171,8 +170,6 @@ const CLAUDE_NOISE_TYPES = new Set([
 ]);
 
 export class ClaudeAtifProjector extends AtifProjector {
-  harness = 'claude';
-
   map(rows, file) {
     let lastMessageId = null;
     this.turnBroken = false;
@@ -266,8 +263,6 @@ export class ClaudeAtifProjector extends AtifProjector {
 // --------------------------------------------------------------------------- Codex
 
 export class CodexAtifProjector extends AtifProjector {
-  harness = 'codex';
-
   map(rows, file) {
     const head = rows[0];
     if (head?.type !== 'session_meta') {
@@ -377,18 +372,14 @@ export class CodexAtifProjector extends AtifProjector {
 
 // --------------------------------------------------------------------------- factory
 
-export function projectorFor(file, { claudeHome, codexHome } = {}) {
-  return harnessForTracePath(file) === 'codex'
-    ? new CodexAtifProjector({ store: new CodexTraceStore({ home: codexHome }) })
-    : new ClaudeAtifProjector({ store: new ClaudeTraceStore({ home: claudeHome }) });
-}
+// projectorFor lives in src/harnesses/catalog.mjs — the store that owns a record projects it.
 
 // --------------------------------------------------------------------------- claim intervals
 
 const FOCUS_CLOSERS = new Set(['oathe_done', 'oathe_yield']);
 
 /**
- * Claim-focused intervals of a trajectory (correction packet §5.4): a session becomes
+ * Claim-focused intervals of a trajectory (ruling R3 §5.4): a session becomes
  * attributable to a task only from the step where it ACTS on that task through an oathe
  * speech act (claim, pickup, statement, done, yield — the projector's claim_events), and
  * stops being attributable when the act names a different task (a switch), when done/yield

@@ -3,10 +3,12 @@
 // not a discipline each call site re-implements.
 //
 // Two styles exist because the surfaces do: fenced TEXT for files with comments (CLAUDE.md,
-// AGENTS.md, config.toml — the estate's zprofile `>>> <<<` precedent), and owned KEY PATHS for
+// AGENTS.md, config.toml — the long-standing zprofile `>>> <<<` precedent), and owned KEY PATHS for
 // JSON files, where ownership is recorded in the install manifest rather than as in-file marker
 // keys (Claude Code validates settings.json and warns on unknown keys, so the file stays clean
 // and the manifest carries the version + sha).
+
+import fs from 'node:fs';
 
 const FENCE_NAME = 'oathe';
 
@@ -117,18 +119,34 @@ export class FencedBlock {
   }
 }
 
+export class JsonTargetError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'JsonTargetError';
+    this.code = 'OATHE_JSON_TARGET_INVALID';
+  }
+}
+
+function parseJsonTarget(text) {
+  if (text.trim() === '') return {};
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new JsonTargetError(`the target file is not valid JSON, so oathe refuses to rewrite it: ${e.message}`);
+  }
+}
+
+function stringifyJsonTarget(doc) {
+  return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
 export class JsonEntries {
   #parse(text) {
-    if (text.trim() === '') return {};
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      throw new Error(`the target file is not valid JSON, so oathe refuses to rewrite it: ${e.message}`);
-    }
+    return parseJsonTarget(text);
   }
 
   #stringify(doc) {
-    return `${JSON.stringify(doc, null, 2)}\n`;
+    return stringifyJsonTarget(doc);
   }
 
   /** @returns {*} the value at `path`, or undefined */
@@ -189,4 +207,91 @@ export class JsonEntries {
     const content = this.#stringify(doc);
     return { content, changed: content !== text };
   }
+}
+
+/**
+ * Owned ELEMENTS inside JSON arrays (Cursor's hooks.json shape: event name → array of hook
+ * definitions the user may also populate). Ownership is a predicate over the element —
+ * recorded in the manifest as the matchable detail — so apply never duplicates and remove
+ * takes exactly ours, leaving user elements byte-preserved.
+ */
+export class JsonArrayEntries {
+  /** @param {string} text @param {Array<{path: string[], element: object, owns: (el: any) => boolean}>} entries */
+  apply(text, entries) {
+    const doc = parseJsonTarget(text);
+    for (const { path, element, owns } of entries) {
+      let node = doc;
+      for (const key of path.slice(0, -1)) {
+        if (node[key] === null || typeof node[key] !== 'object') node[key] = {};
+        node = node[key];
+      }
+      const leaf = path.at(-1);
+      if (!Array.isArray(node[leaf])) node[leaf] = [];
+      if (!node[leaf].some(owns)) node[leaf].push(element);
+    }
+    const content = stringifyJsonTarget(doc);
+    return { content, changed: content !== text };
+  }
+
+  /** Remove OUR elements; an array (or created parent) emptied by that is pruned. */
+  remove(text, entries) {
+    const doc = parseJsonTarget(text);
+    for (const { path, owns } of entries) {
+      const parents = [];
+      let node = doc;
+      let missing = false;
+      for (const key of path.slice(0, -1)) {
+        if (node === null || typeof node !== 'object' || !(key in node)) { missing = true; break; }
+        parents.push({ node, key });
+        node = node[key];
+      }
+      const leaf = path.at(-1);
+      if (missing || !Array.isArray(node?.[leaf])) continue;
+      node[leaf] = node[leaf].filter((el) => !owns(el));
+      if (node[leaf].length === 0) delete node[leaf];
+      for (let i = parents.length - 1; i >= 0; i -= 1) {
+        const { node: parent, key } = parents[i];
+        const child = parent[key];
+        if (child !== null && typeof child === 'object' && Object.keys(child).length === 0) {
+          delete parent[key];
+        } else break;
+      }
+    }
+    const content = stringifyJsonTarget(doc);
+    return { content, changed: content !== text };
+  }
+}
+
+/**
+ * Is this the RESIDUE of managed writes — a file with nothing of substance left once oathe's
+ * own entries are gone? Whitespace; JSON whose every leaf is an empty container ({} / [] /
+ * {"hooks":{}}); TOML/INI text that is only blank lines and comments. Uninstall deletes a file
+ * that init created (absent before) when this is true, and never otherwise — the fence rule
+ * ("created by us and empty after removal → remove"), applied to every managed-write engine.
+ */
+/**
+ * Remove the files WE created (absent before our first write) that now hold nothing of
+ * substance — the rule uninstall applies machine-wide, and an init unwire applies to one
+ * harness's files. One implementation; both callers pass the backups they mean.
+ * @returns {Array<{action: string, file: string}>}
+ */
+export function sweepCreatedResidue({ backups, fs: fsImpl = fs }) {
+  const actions = [];
+  for (const b of backups.filter((x) => x.absent_before && fsImpl.existsSync(x.file))) {
+    if (!isEmptyResidue(fsImpl.readFileSync(b.file, 'utf8'))) continue;
+    fsImpl.rmSync(b.file);
+    actions.push({ action: 'created-file-removed', file: b.file });
+  }
+  return actions;
+}
+
+export function isEmptyResidue(text) {
+  const trimmed = String(text ?? '').trim();
+  if (trimmed === '') return true;
+  try {
+    const hollow = (v) => (Array.isArray(v) ? v.every(hollow)
+      : (v !== null && typeof v === 'object') ? Object.values(v).every(hollow) : false);
+    return hollow(JSON.parse(trimmed));
+  } catch { /* not JSON */ }
+  return trimmed.split('\n').every((line) => /^\s*(#.*)?$/.test(line));
 }

@@ -4,12 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { projectorFor } from '../src/harnesses/catalog.mjs';
 import {
-  projectorFor, ClaudeAtifProjector, CodexAtifProjector, AtifValidator, AtifError,
+  ClaudeAtifProjector, CodexAtifProjector, AtifValidator, AtifError,
   renderEvidenceView, ATIF_SCHEMA_VERSION, OATHE_CONVENTION_VERSION,
   claimIntervals, sliceForTask,
 } from '../src/atif.mjs';
-import { ClaudeTraceStore, CodexTraceStore } from '../src/traces.mjs';
+import { ClaudeTraceStore, CodexTraceStore, TraceContractError } from '../src/traces.mjs';
 
 // ------------------------------------------------------------------ fixtures
 
@@ -119,7 +120,7 @@ function codexFixture() {
 
 test('Claude projection: steps carry the SAID/THOUGHT/DID/GOT split, noise rows are filtered', () => {
   const { home, file, sessionId } = claudeFixture();
-  const projector = new ClaudeAtifProjector({ store: new ClaudeTraceStore({ home }) });
+  const projector = new ClaudeAtifProjector({ store: new ClaudeTraceStore({ harness: 'claude', home }) });
   const t = projector.project(file);
 
   assert.equal(t.schema_version, ATIF_SCHEMA_VERSION);
@@ -180,7 +181,7 @@ const NO_SQLITE = !SQLITE_OK && 'node:sqlite is unavailable in this Node — the
 
 test('Codex projection: rollout items map to steps with the same structural split', { skip: NO_SQLITE }, () => {
   const { home, file, threadId } = codexFixture();
-  const projector = new CodexAtifProjector({ store: new CodexTraceStore({ home }) });
+  const projector = new CodexAtifProjector({ store: new CodexTraceStore({ harness: 'codex', home }) });
   const t = projector.project(file);
 
   assert.equal(t.session_id, threadId);
@@ -201,18 +202,18 @@ test('Codex projection: rollout items map to steps with the same structural spli
   assert.equal(t.extra.oathe.harness, 'codex');
 });
 
-test('projectorFor picks the projector by store path', () => {
+test('projectorFor picks the projector from the store that OWNS the path', async () => {
   const { home: ch, file: cf } = claudeFixture();
   const { home: xh, file: xf } = codexFixture();
-  assert.ok(projectorFor(cf, { claudeHome: ch, codexHome: xh }) instanceof ClaudeAtifProjector);
-  assert.ok(projectorFor(xf, { claudeHome: ch, codexHome: xh }) instanceof CodexAtifProjector);
+  assert.ok((await projectorFor(cf, { home: ch })) instanceof ClaudeAtifProjector);
+  assert.ok((await projectorFor(xf, { home: xh })) instanceof CodexAtifProjector);
 });
 
 // ------------------------------------------------------------------ validator
 
 function validTrajectory() {
   const { home, file } = claudeFixture();
-  return new ClaudeAtifProjector({ store: new ClaudeTraceStore({ home }) }).project(file);
+  return new ClaudeAtifProjector({ store: new ClaudeTraceStore({ harness: 'claude', home }) }).project(file);
 }
 
 test('the validator accepts every projector output (finalize() already ran it once)', () => {
@@ -245,7 +246,7 @@ test('each broken invariant refuses with its OWN typed code', () => {
 
 test('renderEvidenceView aligns SAID/DID/GOT per step and marks the speech acts', () => {
   const { home, file } = claudeFixture();
-  const t = new ClaudeAtifProjector({ store: new ClaudeTraceStore({ home }) }).project(file);
+  const t = new ClaudeAtifProjector({ store: new ClaudeTraceStore({ harness: 'claude', home }) }).project(file);
   const view = renderEvidenceView(t, { budget: 100000 });
   assert.match(view, /SAID: Running the tests now\./);
   assert.match(view, /DID: Bash\(/);
@@ -258,7 +259,7 @@ test('renderEvidenceView aligns SAID/DID/GOT per step and marks the speech acts'
 
 test('renderEvidenceView under budget pressure elides the HEAD, announces it, keeps the tail whole', () => {
   const { home, file } = claudeFixture();
-  const t = new ClaudeAtifProjector({ store: new ClaudeTraceStore({ home }) }).project(file);
+  const t = new ClaudeAtifProjector({ store: new ClaudeTraceStore({ harness: 'claude', home }) }).project(file);
   const view = renderEvidenceView(t, { budget: 420 });
   assert.ok(view.length <= 1000, 'bounded output');
   assert.match(view, /\[\d+ earlier steps? elided: \d+ tool calls?, \d+ claims?\]/);
@@ -279,7 +280,7 @@ test("GOLDEN: Harbor's own reference trajectory passes OUR validator — we impl
 // ------------------------------------------------------------------ live contract (fail loud on drift)
 
 test('LIVE: the newest real Claude transcript projects to valid ATIF end to end', (t) => {
-  const store = new ClaudeTraceStore({});
+  const store = new ClaudeTraceStore({ harness: 'claude',});
   const newest = store.newestTranscript();
   if (!newest) return t.skip('no local Claude store');
   const trajectory = new ClaudeAtifProjector({ store }).project(newest);
@@ -289,7 +290,7 @@ test('LIVE: the newest real Claude transcript projects to valid ATIF end to end'
 });
 
 test('LIVE: the newest real Codex rollout projects to valid ATIF end to end', { skip: NO_SQLITE }, (t) => {
-  const store = new CodexTraceStore({});
+  const store = new CodexTraceStore({ harness: 'codex',});
   const newest = store.newestRollout();
   if (!newest) return t.skip('no local Codex store');
   const trajectory = new CodexAtifProjector({ store }).project(newest);
@@ -345,4 +346,8 @@ test('R3: sliceForTask keeps exactly the task\'s interval steps — and falls ba
   assert.equal(sliced.steps.length, 3, 'claim step through done step');
   assert.equal(sliceForTask(t, 'unknown-task').steps.length, t.steps.length,
     'no recorded interval → whole-session evidence is the only honest option');
+});
+
+test('projectorFor refuses a path no store owns — typed, never the Claude projector by default', async () => {
+  await assert.rejects(projectorFor('/tmp/random.jsonl'), (e) => e instanceof TraceContractError && e.code === 'TRACE_OWNER_UNKNOWN');
 });

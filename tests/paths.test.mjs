@@ -52,6 +52,8 @@ test('buildPaths honours OATHE_HOME override and derives dependents from it', ()
   assert.equal(p.manifestPath, '/tmp/oathe-home/install-manifest.json');
   assert.equal(p.backupsDir, '/tmp/oathe-home/backups');
   assert.equal(p.artifactDir, '/tmp/oathe-home/artifacts');
+  assert.equal(p.sessionsPath, '/tmp/oathe-home/sessions.json', 'device-local session liveness lives beside the registry');
+  assert.equal(p.welcomePath, '/tmp/oathe-home/welcome-pending.json', 'the one-shot welcome marker lives at the home root — the notch dir is pruned by wireNotch');
 });
 
 test('buildPaths defaults oatheHome to the user home directory', () => {

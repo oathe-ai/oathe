@@ -1,0 +1,22 @@
+{
+  "_source": "recorded live from cursor-agent 2026.08.25-3e8eec8 `agent -p --trust` on 2026-08-29 via OATHE_HOOK_CAPTURE_DIR (drift monitors P3): the CLI sends transcript_path as null and none of the docs' model_id / composer_mode — the 2026-08-28 fixture was docs-derived",
+  "payload": {
+    "conversation_id": "b59ea254-a8af-46a9-8221-82c8be5294db",
+    "generation_id": "b59ea254-a8af-46a9-8221-82c8be5294db",
+    "model": "default",
+    "is_background_agent": false,
+    "session_id": "b59ea254-a8af-46a9-8221-82c8be5294db",
+    "hook_event_name": "sessionStart",
+    "cursor_version": "2026.08.25-3e8eec8",
+    "workspace_roots": [
+      "/Users/dev/app"
+    ],
+    "user_email": "dev@example.com",
+    "transcript_path": null
+  },
+  "expected": {
+    "cwd": "/Users/dev/app",
+    "sessionId": "b59ea254-a8af-46a9-8221-82c8be5294db",
+    "transcriptPath": null
+  }
+}

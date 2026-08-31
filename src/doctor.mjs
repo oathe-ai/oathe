@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { buildContext } from './context.mjs';
+import { buildContext, packageVersion } from './context.mjs';
 import { FencedBlock, FENCE_STYLES, JsonEntries } from './blocks.mjs';
 import { sha256Hex } from './manifest.mjs';
 
@@ -35,13 +35,95 @@ function verifyCliRow(row) {
   return fs.readFileSync(row.file, 'utf8').includes(row.detail?.proof) ? 'ok' : 'removed';
 }
 
-const VERIFIERS = { 'json-path': verifyJsonRow, fence: verifyFenceRow, 'cli-managed': verifyCliRow };
+function verifyJsonArrayRow(row) {
+  if (!fs.existsSync(row.file)) return 'file-missing';
+  let doc;
+  try { doc = JSON.parse(fs.readFileSync(row.file, 'utf8')); } catch { return 'user-edited'; }
+  const present = (entry) => {
+    let node = doc;
+    for (const key of entry.path) {
+      if (node === null || typeof node !== 'object' || !(key in node)) return false;
+      node = node[key];
+    }
+    return Array.isArray(node) && node.some((el) => el?.command === entry.match);
+  };
+  return (row.detail?.entries ?? []).every(present) ? 'ok' : 'removed';
+}
+
+/** The trace-layer refusals that mean "this runtime cannot read the store" — not a format change. */
+const RUNTIME_BOUND_CODES = new Set(['TRACE_CODEX_SQLITE_UNSUPPORTED']);
+
+/**
+ * The trace-contract status for a failed projection: a runtime bound (node:sqlite missing on
+ * Node < 22.5 — the store never got to read the record) is RUNTIME; anything else is format
+ * DRIFT. Both stay loud; the drift lanes need them told apart.
+ */
+export function traceStatusOf(error) {
+  return RUNTIME_BOUND_CODES.has(error?.code) ? 'RUNTIME' : 'DRIFT';
+}
+
+// A LaunchAgent is a whole-file write: present and byte-identical to what init recorded, or
+// user-edited; gone is gone. (The notch ships with the package — every darwin manifest
+// carries this row now.)
+function verifyLaunchAgentRow(row) {
+  if (!fs.existsSync(row.file)) return 'file-missing';
+  return sha256Hex(fs.readFileSync(row.file, 'utf8')) === row.sha256 ? 'ok' : 'user-edited';
+}
+
+// The materialized notch copy: the row's detail names the binary inside the key dir; ok
+// means those exact bytes. A replaced binary under the same key is a drift the same way an
+// edited plist is — materialization promises immutability per key.
+function verifyNotchAppRow(row) {
+  const binary = row.detail?.binary;
+  if (!binary || !fs.existsSync(binary)) return 'file-missing';
+  return sha256Hex(fs.readFileSync(binary)) === row.sha256 ? 'ok' : 'user-edited';
+}
+
+const VERIFIERS = {
+  'json-path': verifyJsonRow, fence: verifyFenceRow, 'cli-managed': verifyCliRow, 'json-array': verifyJsonArrayRow,
+  'launch-agent': verifyLaunchAgentRow, 'notch-app': verifyNotchAppRow,
+};
+
+/**
+ * The per-surface resolution report (`oathe doctor --surface`): what the ladder received,
+ * which rung won, and whether the workspace is registered — no substrate contact, so it
+ * answers even on a machine whose database is down. This is the empirical probe the unknown
+ * surfaces (Cowork, ChatGPT desktop) get pointed at.
+ * @returns {Promise<{resolved: boolean, resolution: object|null, refusal: string|null,
+ *                    registered: boolean|null, env_slice: object}>}
+ */
+export async function runSurfaceReport({ env = process.env, cwd = () => process.cwd() } = {}) {
+  const { WorkspaceResolver } = await import('./workspace-resolver.mjs');
+  const { projectDirEnvVars } = await import('./harnesses/catalog.mjs');
+  const { WorkspaceRegistry } = await import('./registry.mjs');
+  const { buildPaths } = await import('./paths.mjs');
+  const paths = buildPaths(env);
+  const envSlice = Object.fromEntries(
+    ['OATHE_WORKSPACE_DIR', ...projectDirEnvVars().map(([, envVar]) => envVar), 'OATHE_LAUNCHED_HARNESS']
+      .map((name) => [name, env[name] ?? null]));
+  try {
+    const resolution = await new WorkspaceResolver({ env, cwd }).resolve();
+    let registered = null;
+    try {
+      registered = new WorkspaceRegistry({ registryPath: paths.registryPath }).get(resolution.ref) !== null;
+    } catch { registered = null; }
+    return { resolved: true, resolution, refusal: null, registered, env_slice: envSlice };
+  } catch (e) {
+    return { resolved: false, resolution: null, refusal: String(e?.message || e), registered: null, env_slice: envSlice };
+  }
+}
 
 /** @returns {Promise<{rows: object[], substrate: object, plugin: {resolves: boolean, detail: string|null}}>} */
 export async function runDoctor({ env = process.env } = {}) {
   const ctx = buildContext({ env });
-  const { manifest, substrate, paths } = ctx;
+  const { manifest, substrate, paths, harnesses } = ctx;
   try {
+    // Version FACTS, not a check: the code that runs is the bin on PATH (this package); what
+    // each harness has cached is its own manifests-only copy. Upgrade = reinstall + `oathe init`.
+    const version = {
+      package: packageVersion(paths),
+      plugin: Object.fromEntries(harnesses.filter((h) => h.constructor.wiring !== null).map((h) => [h.name, h.installedPluginVersion()])),
+    };
     const rows = manifest.rows.map((row) => ({
       harness: row.harness,
       file: row.file,
@@ -50,29 +132,28 @@ export async function runDoctor({ env = process.env } = {}) {
       status: (VERIFIERS[row.kind] ?? (() => 'unknown-kind'))(row),
     }));
     // The trace-contract monitor: both vendors disclaim transcript-schema stability, so the
-    // doctor validates the NEWEST live record in each store against docs/traces.md and
+    // doctor validates the NEWEST live record in each engine's store against docs/traces.md and
     // reports DRIFT loudly. An absent store is a distinct, visible status — never a silent skip.
-    const { ClaudeTraceStore, CodexTraceStore } = await import('./traces.mjs');
-    const { ClaudeAtifProjector, CodexAtifProjector, AtifValidator } = await import('./atif.mjs');
+    // Store, newest-record lookup, and projector are each engine adapter's own facts.
+    const { byName, traceStores } = await import('./harnesses/catalog.mjs');
+    const { AtifValidator } = await import('./atif.mjs');
     const home = ctx.home;
     const traces = {};
-    for (const [name, store] of Object.entries({
-      claude: new ClaudeTraceStore({ home }),
-      codex: new CodexTraceStore({ home }),
-    })) {
-      const newest = name === 'claude' ? store.newestTranscript() : store.newestRollout();
+    for (const name of traceStores()) {
+      const { traces: capability } = byName(name);
+      const store = await capability.store({ home });
+      const newest = capability.newest(store);
       if (!newest) {
         traces[name] = { status: 'store-absent', newest: null, detail: 'no session records found' };
         continue;
       }
       // Full projection + validation — the deepest read the verifier itself performs.
       try {
-        const projector = name === 'claude'
-          ? new ClaudeAtifProjector({ store }) : new CodexAtifProjector({ store });
+        const projector = await capability.projector({ store });
         new AtifValidator().assert(projector.project(newest), { file: newest });
         traces[name] = { status: 'ok', newest, detail: null };
       } catch (e) {
-        traces[name] = { status: 'DRIFT', newest, detail: String(e?.message || e) };
+        traces[name] = { status: traceStatusOf(e), newest, detail: String(e?.message || e) };
       }
     }
 
@@ -101,7 +182,7 @@ export async function runDoctor({ env = process.env } = {}) {
         capabilities: null, error: String(e?.message || e), probe: null };
     }
 
-    return { rows, substrate: await substrate.status(), plugin, traces, runtime };
+    return { version, rows, substrate: await substrate.status(), plugin, traces, runtime };
   } finally {
     await substrate.close();
   }

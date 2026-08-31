@@ -3,13 +3,12 @@
 // a scratch database without monkey-patching anything.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
-import { buildPaths } from './paths.mjs';
+import { buildPaths, homeOf } from './paths.mjs';
 import { OatheConfig } from './config.mjs';
 import { InstallManifest } from './manifest.mjs';
-import { ClaudeHarness, CodexHarness } from './harness.mjs';
+import { buildAll } from './harnesses/catalog.mjs';
 import { Substrate } from './substrate.mjs';
 
 export function packageVersion(paths) {
@@ -18,13 +17,10 @@ export function packageVersion(paths) {
 
 export function buildContext({ env = process.env, exec, cwd = process.cwd() } = {}) {
   const paths = buildPaths(env);
-  const home = env.HOME || os.homedir();
+  const home = homeOf(env);
   const config = new OatheConfig({ env, cwd });
   const manifest = InstallManifest.load({ manifestPath: paths.manifestPath, backupsDir: paths.backupsDir });
-  const harnesses = [
-    new ClaudeHarness({ home, envPath: env.PATH, paths, exec }),
-    new CodexHarness({ home, envPath: env.PATH, paths, exec }),
-  ];
+  const harnesses = buildAll({ home, envPath: env.PATH, paths, exec }); // the ONE roster; consumers filter by capability
   const substrate = new Substrate({ database: config.get('db'), paths, env, config });
   const identity = {
     orgId: config.get('org'),

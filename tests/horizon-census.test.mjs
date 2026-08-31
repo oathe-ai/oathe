@@ -1,4 +1,4 @@
-// R1 census (correction packet §4.2): NO liveness/code path outside the vendored DDL may
+// R1 census (ruling §4.2): NO liveness/code path outside the vendored DDL may
 // write cell.work_claim.ownership_valid_until. The horizon is set by the substrate's own
 // claim verbs at claim time and moves only through authoritative database verbs.
 import { test } from 'node:test';

@@ -1,0 +1,36 @@
+{
+  "name": "oathe",
+  "version": "0.3.1",
+  "description": "Claims are speech acts: your session opens on this folder's board, records progress as statements, and yields what it cannot finish. Horizons move only by deliberate acts \u2014 never by session liveness.",
+  "author": {
+    "name": "Oathe"
+  },
+  "license": "Apache-2.0",
+  "mcpServers": {
+    "oathe": {
+      "command": "oathe",
+      "args": [
+        "mcp"
+      ]
+    }
+  },
+  "hooks": {
+    "hooks": {
+      "sessionStart": [
+        {
+          "command": "oathe hook render-board"
+        }
+      ],
+      "stop": [
+        {
+          "command": "oathe hook heartbeat"
+        }
+      ],
+      "preCompact": [
+        {
+          "command": "oathe hook frame-note"
+        }
+      ]
+    }
+  }
+}

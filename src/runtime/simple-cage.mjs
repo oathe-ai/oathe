@@ -1,5 +1,5 @@
 // oathe — SimpleCage: the standalone provider's cage, a CLEAN-ROOM implementation of the
-// contract the launcher consumes (documented in docs/PRODUCT.md and the Stage 1 plan; no
+// contract the launcher consumes (documented in docs/PRODUCT.md and the design ruling; no
 // upstream code was read). The contract: synchronous spawnCaged({unit, env, cmd, args, cwd,
 // stdio}) → {child, enumerate(), teardownProvenEmpty()}; the child environment is REPLACED
 // (never merged) and the cage itself stamps OATHE_EXECUTION_ATTEMPT_ID; the child leads a
@@ -33,16 +33,21 @@ export function spawnCaged({ unit, env, cmd, args, cwd, stdio, graceMs = DEFAULT
     try { process.kill(-pgid, 0); return true; } catch { return false; }
   };
 
-  /** Kernel read of the group — live pids, [] once the scope is empty. Full-table scan:
-   *  COLD PATH ONLY (the final proof and its failure detail), never inside a poll loop. */
-  const enumerate = () => {
-    const ps = spawnSync('ps', ['-A', '-o', 'pid=,pgid='], { encoding: 'utf8' });
+  /** Kernel read of the group — member pids, [] once the scope is empty. Full-table scan:
+   *  COLD PATH ONLY (the final proof and its failure detail), never inside a poll loop.
+   *  By default every member counts, zombies included — matching what the alive() probe
+   *  sees. `runnableOnly` drops zombies: an unreaped exit record can never execute again,
+   *  but stopped (T) members still count because a SIGCONT would resume them. */
+  const enumerate = ({ runnableOnly = false } = {}) => {
+    const ps = spawnSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], { encoding: 'utf8' });
     if (ps.status !== 0) {
       throw new Error(`SimpleCage cannot enumerate: ps exited ${ps.status}: ${ps.stderr}`);
     }
     return ps.stdout.split('\n')
-      .map((line) => line.trim().split(/\s+/).map(Number))
-      .filter(([pid, group]) => Number.isInteger(pid) && group === pgid)
+      .map((line) => line.trim().split(/\s+/))
+      .map(([pid, group, stat]) => [Number(pid), Number(group), stat ?? ''])
+      .filter(([pid, group, stat]) => Number.isInteger(pid) && group === pgid
+        && !(runnableOnly && stat.startsWith('Z')))
       .map(([pid]) => pid);
   };
 
@@ -55,7 +60,11 @@ export function spawnCaged({ unit, env, cmd, args, cwd, stdio, graceMs = DEFAULT
   };
 
   /** SIGTERM → grace → SIGKILL, then RE-ENUMERATE: the emptiness is proof, not assumption.
-   *  Polling rides the signal probe; the one authoritative ps scan is the closing proof. */
+   *  Polling rides the signal probe; the one authoritative ps scan is the closing proof.
+   *  The proof counts what can still EXECUTE: a KILLed leader lingers as a zombie until its
+   *  parent reaps it (arbitrarily late on a loaded machine — the probe and the drain both
+   *  see it), and calling that exit record a survivor fails teardowns that in fact emptied
+   *  the scope. */
   const teardownProvenEmpty = async () => {
     if (alive()) {
       signalGroup('SIGTERM');
@@ -65,7 +74,7 @@ export function spawnCaged({ unit, env, cmd, args, cwd, stdio, graceMs = DEFAULT
         await drainUntil(Date.now() + graceMs);
       }
     }
-    const survivors = enumerate();
+    const survivors = enumerate({ runnableOnly: true });
     return {
       empty: survivors.length === 0,
       detail: survivors.length === 0

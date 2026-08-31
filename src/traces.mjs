@@ -9,11 +9,6 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-/** Which harness a trace path belongs to — the codex store dir is the discriminator. */
-export function harnessForTracePath(file) {
-  return String(file).includes(`${path.sep}.codex${path.sep}`) ? 'codex' : 'claude';
-}
-
 export class TraceContractError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -26,7 +21,12 @@ export class TraceContractError extends Error {
 /** Shared machinery: newline-delimited JSON with optional zstd compression. */
 export class TraceStore {
   /** @param {{home?: string}} o home = the user home the store hangs off (default os.homedir()) */
-  constructor({ home } = {}) {
+  constructor({ home, harness } = {}) {
+    if (!harness) {
+      throw new TraceContractError('TRACE_STORE_HARNESS_REQUIRED',
+        'a trace store is built by its harness adapter, which names it — no store spells its own harness');
+    }
+    this.harness = harness;
     this.home = home || os.homedir();
   }
 
@@ -119,7 +119,7 @@ export class ClaudeTraceStore extends TraceStore {
         `${file}: message entries carry no sessionId — the transcript contract drifted`, { file });
     }
     return {
-      harness: 'claude',
+      harness: this.harness,
       session_id: identity.sessionId,
       cwd: messages.find((r) => r.cwd)?.cwd ?? null,
       title: rows.find((r) => r.type === 'ai-title')?.aiTitle ?? null,
@@ -201,7 +201,7 @@ export class CodexTraceStore extends TraceStore {
         `${file}: session_meta carries neither id nor session_id`, { file });
     }
     return {
-      harness: 'codex',
+      harness: this.harness,
       session_id: meta.id ?? meta.session_id,
       cwd: meta.cwd ?? null,
       source: meta.source ?? null,

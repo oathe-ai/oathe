@@ -5,7 +5,7 @@ import { FencedBlock, JsonEntries, FENCE_STYLES } from '../src/blocks.mjs';
 
 // ---------------------------------------------------------------- text fences
 
-test('hash-style fence renders the estate convention: >>> oathe v<version> >>> … <<< oathe <<<', () => {
+test('hash-style fence renders the zprofile-style convention: >>> oathe v<version> >>> … <<< oathe <<<', () => {
   const block = new FencedBlock({ style: FENCE_STYLES.hash });
   const text = block.render('0.1.0', 'board = true');
   assert.match(text, /^# >>> oathe v0\.1\.0 >>>\n/);
@@ -154,4 +154,60 @@ test('JsonEntries remove keeps a parent that still holds keys others own', () =>
 test('JsonEntries refuses a file that is not valid JSON rather than clobbering it', () => {
   const engine = new JsonEntries();
   assert.throws(() => engine.apply('{ not json', [{ path: ['k'], value: 1 }]), /json/i);
+});
+
+// ---------------------------------------------------------------- owned ARRAY elements
+
+test('JsonArrayEntries appends an owned element to an array path, creating parents, never duplicating', async () => {
+  const { JsonArrayEntries } = await import('../src/blocks.mjs');
+  const engine = new JsonArrayEntries();
+  const owns = (el) => String(el?.command ?? '').includes('/abs/oathe');
+  const entry = { path: ['hooks', 'sessionStart'], element: { command: '/abs/oathe hook render-board' }, owns };
+  const first = engine.apply('', [entry]);
+  assert.equal(first.changed, true);
+  const doc = JSON.parse(first.content);
+  assert.deepEqual(doc.hooks.sessionStart, [{ command: '/abs/oathe hook render-board' }]);
+  const second = engine.apply(first.content, [entry]);
+  assert.equal(second.changed, false, 'an owned element already present is not appended again');
+});
+
+test('JsonArrayEntries preserves user elements in the same array, before and after removal', async () => {
+  const { JsonArrayEntries } = await import('../src/blocks.mjs');
+  const engine = new JsonArrayEntries();
+  const owns = (el) => String(el?.command ?? '').includes('/abs/oathe');
+  const before = JSON.stringify({
+    version: 1,
+    hooks: { sessionStart: [{ command: './my-own-hook.sh' }] },
+  }, null, 2);
+  const entry = { path: ['hooks', 'sessionStart'], element: { command: '/abs/oathe hook render-board' }, owns };
+  const applied = engine.apply(before, [entry]);
+  const doc = JSON.parse(applied.content);
+  assert.equal(doc.hooks.sessionStart.length, 2);
+  assert.equal(doc.hooks.sessionStart[0].command, './my-own-hook.sh', 'user element unmoved');
+  assert.equal(doc.version, 1, 'sibling keys untouched');
+  const removed = engine.remove(applied.content, [entry]);
+  const after = JSON.parse(removed.content);
+  assert.deepEqual(after.hooks.sessionStart, [{ command: './my-own-hook.sh' }]);
+});
+
+test('JsonArrayEntries remove prunes an array (and parents) it emptied, keeps ones still holding user elements', async () => {
+  const { JsonArrayEntries } = await import('../src/blocks.mjs');
+  const engine = new JsonArrayEntries();
+  const owns = (el) => String(el?.command ?? '').includes('/abs/oathe');
+  const entry = { path: ['hooks', 'stop'], element: { command: '/abs/oathe hook heartbeat' }, owns };
+  const applied = engine.apply('', [entry]);
+  const removed = engine.remove(applied.content, [entry]);
+  const doc = JSON.parse(removed.content);
+  assert.ok(!('hooks' in doc), 'emptied array and its created parent pruned');
+  const idempotent = engine.remove(removed.content, [entry]);
+  assert.equal(idempotent.changed, false);
+});
+
+test('both JSON engines refuse an unparsable target with the typed OATHE_JSON_TARGET_INVALID', async () => {
+  const { JsonArrayEntries } = await import('../src/blocks.mjs');
+  const arrayEngine = new JsonArrayEntries();
+  const jsonEngine = new JsonEntries();
+  const broken = '{not json';
+  assert.throws(() => arrayEngine.apply(broken, []), (e) => e.code === 'OATHE_JSON_TARGET_INVALID');
+  assert.throws(() => jsonEngine.apply(broken, []), (e) => e.code === 'OATHE_JSON_TARGET_INVALID');
 });

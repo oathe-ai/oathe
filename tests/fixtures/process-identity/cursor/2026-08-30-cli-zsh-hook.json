@@ -1,0 +1,18 @@
+{
+  "observed": "live-contract cursor 2026-08-30: cursor-agent runs hooks through an interposer /bin/zsh — the hook's parent is the shell, the harness is one level up",
+  "payload": {
+    "ancestry": [
+      { "pid": 500, "exec": "/bin/zsh" },
+      { "pid": 400, "exec": "/Users/x/.local/bin/cursor-agent" },
+      { "pid": 300, "exec": "node" },
+      { "pid": 200, "exec": "/bin/zsh" },
+      { "pid": 100, "exec": "/Applications/iTerm.app/Contents/MacOS/iTerm2" },
+      { "pid": 1, "exec": "/sbin/launchd" }
+    ],
+    "transcript_path": null
+  },
+  "expected": {
+    "app": { "bundle": "/Applications/iTerm.app", "pid": 100 },
+    "surface": "cursor"
+  }
+}

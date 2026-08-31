@@ -22,7 +22,7 @@
 -- `unknown` becomes permanent by construction — which is why `evidence_lost` was
 -- REJECTED as a terminal: it mints an unobserved fact. The receipt row is the
 -- durable pre-image, written before the effect, surviving the process that wrote
--- it. The estate's own `slack_post_marker` is the measured precedent: built,
+-- it. The source system's own `slack_post_marker` is the measured precedent: built,
 -- tested, and zero rows, because nothing made it mandatory.
 --
 -- The sequence this table stands under (strategy §2):

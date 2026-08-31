@@ -1,0 +1,22 @@
+{
+  "_source": "cursor.com/docs/hooks — pinned .harness-docs/cursor/hooks.md (2026-08-28) 'Common schema' + '#### sessionStart'; from docs, not yet recorded from a live Cursor session",
+  "payload": {
+    "conversation_id": "conv-0001",
+    "generation_id": "gen-0001",
+    "model": "auto",
+    "model_id": "auto-1",
+    "hook_event_name": "sessionStart",
+    "cursor_version": "1.7.2",
+    "workspace_roots": ["/Users/dev/app"],
+    "user_email": null,
+    "transcript_path": "/Users/dev/.cursor/transcripts/conv-0001.jsonl",
+    "session_id": "conv-0001",
+    "is_background_agent": false,
+    "composer_mode": "agent"
+  },
+  "expected": {
+    "cwd": "/Users/dev/app",
+    "sessionId": "conv-0001",
+    "transcriptPath": "/Users/dev/.cursor/transcripts/conv-0001.jsonl"
+  }
+}

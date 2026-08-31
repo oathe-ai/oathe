@@ -10,6 +10,10 @@ import { buildPaths } from '../src/paths.mjs';
 import { standardPlan, ACCEPTANCE_CLAUSE_KEY } from '../src/plans.mjs';
 import { RECORDED_VERDICT_CHECKER } from '../src/runtime/discharge.mjs';
 import { createOatheTools } from '../src/mcp/oathe-tools.mjs';
+import { OatheConfig } from '../src/config.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const pg = require('pg');
@@ -33,8 +37,12 @@ before(async () => {
     checkerRefs: { 'checker://acceptance_package': 'verification-clause' },
     registeredBy: 'oathe-test' });
   pool = new pg.Pool(substrate.connectionConfig());
+  // Scratch-home config: tools require one (verifier assignment binds at claim), and tests
+  // never read the developer's real ~/.oathe.
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-lane-cfg-')));
+  const config = new OatheConfig({ env: { HOME: home, OATHE_HOME: path.join(home, '.oathe') }, cwd: home });
   tools = createOatheTools({ client: substrate,
-    identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' }, workspace: WS });
+    identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' }, workspace: WS, config });
 });
 
 after(async () => {

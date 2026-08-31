@@ -97,14 +97,58 @@ export class Substrate {
   async #cellClient() {
     if (!this.client) {
       this.client = new pg.Client(this.connectionConfig());
+      // An idle-connection drop without a listener is an UNCAUGHT 'error' event — it used
+      // to kill whole processes (the review's SERVE-CRASH finding). The death becomes a
+      // fact: noted once, and every later query refuses typed instead of exploding.
+      this.client.on('error', (e) => {
+        this.connectionLost = String(e?.message || e);
+        process.stderr.write(`oathe substrate: connection lost (${this.connectionLost.slice(0, 120)})\n`);
+      });
       await this.client.connect();
+    }
+    if (this.connectionLost) {
+      const err = new Error(`the substrate connection was lost (${this.connectionLost}) — reconnect or restart the process`);
+      err.code = 'OATHE_SUBSTRATE_LOST';
+      throw err;
     }
     return this.client;
   }
 
+  // The transaction gate: BEGIN..COMMIT spans hold it, every outside query waits at it.
+  // One shared connection + concurrent MCP tool calls used to interleave an acknowledged
+  // write into an open transaction (swallowed by its ROLLBACK) — the review's sharpest
+  // finding. The gate makes that impossible; a transaction's own queries ride `tx`.
+  #txnGate = Promise.resolve();
+
   async query(sql, params) {
+    await this.#txnGate;
     const client = await this.#cellClient();
     return client.query(sql, params);
+  }
+
+  /**
+   * Run `fn(tx)` inside BEGIN..COMMIT (ROLLBACK on throw) with the gate held for the whole
+   * span. `tx.query` is the only lawful way to speak inside the transaction.
+   */
+  async withTransaction(fn) {
+    const prev = this.#txnGate;
+    let release;
+    this.#txnGate = new Promise((r) => { release = r; });
+    await prev;
+    try {
+      const client = await this.#cellClient();
+      await client.query('BEGIN');
+      try {
+        const out = await fn({ query: (sql, params) => client.query(sql, params) });
+        await client.query('COMMIT');
+        return out;
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+      }
+    } finally {
+      release();
+    }
   }
 
   /** @returns {Promise<{reachable: boolean, detail: string|null}>} */

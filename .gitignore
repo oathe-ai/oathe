@@ -1,8 +1,12 @@
 # AI working docs — plans, scratch analyses; never shipped, never committed
 .ai-docs/
 
-# estate-only re-link artifacts (Stage 1 A6, ruling R-E): npm prunes these once oathe-runtime
-# is no longer a declared dependency; `npm run link-runtime` recreates the symlink on estate
+# Harness docs snapshot — pinned official docs per harness, re-pulled by
+# scripts/pull-harness-docs.mjs; the web is the source of truth, never the repo
+.harness-docs/
+
+# monorepo-machine re-link artifacts (ruling R-E): npm prunes these once oathe-runtime
+# is no longer a declared dependency; `npm run link-runtime` recreates the symlink on monorepo
 # machines, but it must never ride a commit again.
 node_modules/oathe-runtime
 node_modules/.bin/oathe-runtime-*
@@ -10,3 +14,6 @@ node_modules/.bin/oathe-runtime-*
 # local tooling state — never committed
 .serena/
 .oathe.json
+
+# web-scrape scratch — never tracked, never shipped
+.firecrawl/

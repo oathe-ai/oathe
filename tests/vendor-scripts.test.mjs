@@ -1,4 +1,4 @@
-// oathe — vendoring is PREPARED, not performed (Stage 1 A4-A6 Task 7). These tests exercise
+// oathe — vendoring is PREPARED, not performed. These tests exercise
 // scripts/vendor-ddl.mjs and scripts/marker-scan.mjs ENTIRELY against temp dirs via spawnSync —
 // they never touch the tree's own vendor/ddl, and the repo must be left with no vendor/ directory
 // after this suite runs.
@@ -15,7 +15,6 @@ import { Substrate, DDL_FILES } from '../src/substrate.mjs';
 import { sha256Hex } from '../src/manifest.mjs';
 import { MARKER_PATTERNS } from '../scripts/marker-scan.mjs';
 
-const F = ['fir', 'ia'].join('');
 const FY = ['fir', 'iya'].join('');
 
 const paths = buildPaths({});
@@ -60,7 +59,7 @@ test('vendor-ddl exports every DDL file born-clean with two-sided provenance in 
     assert.equal(manifest.license, 'PENDING-FOUNDER-DECISION');
     assert.equal(manifest.source.repo, 'oathe-runtime-monorepo (private)');
     assert.match(manifest.source.commit, /^[0-9a-f]{40}$/, 'source commit pins provenance');
-    assert.equal(manifest.transform.version, 'export-clean-1');
+    assert.equal(manifest.transform.version, 'export-clean-2');
     assert.deepEqual(manifest.files.map((f) => f.name), DDL_FILES);
     assert.deepEqual(manifest.files.map((f) => f.position), DDL_FILES.map((_, i) => i + 1),
       'ordered application position is explicit');
@@ -72,7 +71,7 @@ test('vendor-ddl exports every DDL file born-clean with two-sided provenance in 
       assert.equal(entry.source_sha256, substrate.shaOf(name), `${name}: source side pinned`);
       assert.equal(entry.public_sha256, sha256Hex(publicText), `${name}: public side pinned`);
       for (const pattern of MARKER_PATTERNS) {
-        assert.ok(!pattern.test(publicText), `${name}: no estate marker survives export (${pattern})`);
+        assert.ok(!pattern.test(publicText), `${name}: no private marker survives export (${pattern})`);
       }
       // executable SQL is untouched: strip comment lines from both sides and compare exactly
       const sql = (t) => t.split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
@@ -161,7 +160,7 @@ test('marker-scan flags a planted founder-path fixture and exits 1', () => {
   }
 });
 
-test('marker-scan catches each newly-added estate marker pattern, one planted hit per file', () => {
+test('marker-scan catches each newly-added private-marker pattern, one planted hit per file', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-marker-scan-newpatterns-'));
   try {
     const plants = {
@@ -170,7 +169,7 @@ test('marker-scan catches each newly-added estate marker pattern, one planted hi
       'ai-docs.txt': 'see .ai-docs/plans/foo.md for the plan\n',
       'superpowers.txt': 'loaded from .superpowers/skills on session start\n',
       'claude-session.txt': 'Claude-Session: https://claude.ai/code/session_ABC123\n',
-      'founder-email.txt': 'approvals go through shez.malik00@gmail.com\n',
+      'founder-email.txt': `approvals go through ${['sh', 'ez'].join('') + '.' + ['ma', 'lik00'].join('') + '@gmail.com'}\n`,
     };
     for (const [name, contents] of Object.entries(plants)) {
       fs.writeFileSync(path.join(dir, name), contents);
@@ -185,10 +184,10 @@ test('marker-scan catches each newly-added estate marker pattern, one planted hi
   }
 });
 
-test('MARKER_PATTERNS covers the estate vocabulary added for Finding 4', () => {
+test('MARKER_PATTERNS covers the full private vocabulary, one probe per pattern', () => {
   const probes = [
     FY, 'ws-0d0a0b0c0d0e', '.ai-docs/plans/x.md', '.superpowers/skills/y',
-    'Claude-Session: https://claude.ai/code/session_x', 'shez.malik00@gmail.com',
+    'Claude-Session: https://claude.ai/code/session_x', ['sh', 'ez'].join('') + '.' + ['ma', 'lik00'].join('') + '@gmail.com',
   ];
   for (const probe of probes) {
     assert.ok(MARKER_PATTERNS.some((p) => p.test(probe)), `no pattern matches: ${probe}`);

@@ -1,0 +1,5 @@
+# Packing overrides .gitignore here ON PURPOSE: git never tracks the built app, but the
+# npm tarball SHIPS it (founder ruling 2026-08-30 — the notch installs with oathe for
+# everyone; prepack builds it). Only the build intermediates stay out.
+.build/
+.DS_Store

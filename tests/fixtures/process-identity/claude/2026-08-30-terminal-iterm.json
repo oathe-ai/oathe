@@ -1,0 +1,15 @@
+{
+  "observed": "live trace 2026-08-30: claude in iTerm2 (ShellLauncher/iTermServer chain)",
+  "payload": {
+    "ancestry": [
+      { "pid": 88836, "exec": "/Users/x/.nvm/versions/node/v22.3.0/bin/claude" },
+      { "pid": 85268, "exec": "/bin/zsh" },
+      { "pid": 85265, "exec": "/usr/bin/login" },
+      { "pid": 85264, "exec": "/Users/x/Library/Application Support/iTerm2/iTermServer-3.6.11" },
+      { "pid": 85260, "exec": "/Applications/iTerm.app/Contents/MacOS/iTerm2" },
+      { "pid": 1, "exec": "/sbin/launchd" }
+    ],
+    "transcript_path": "/Users/x/.claude/projects/-x/session.jsonl"
+  },
+  "expected": { "app": { "bundle": "/Applications/iTerm.app", "pid": 85260 }, "surface": "claude" }
+}

@@ -1,0 +1,373 @@
+{
+  "format": 1,
+  "sources": [
+    {
+      "harness": "claude-code",
+      "slug": "cli-reference",
+      "url": "https://code.claude.com/docs/en/cli-reference.md",
+      "file": "claude-code/cli-reference.md",
+      "sha256": "b5b4585ce917230d12e0d9f95600868e0b182e09ce659e7d2848638e06dc4a9d",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "desktop",
+      "url": "https://code.claude.com/docs/en/desktop.md",
+      "file": "claude-code/desktop.md",
+      "sha256": "bf36c994850bb6f6d7895c0382990d4e17474efd4100a0304e355c2ffb27e470",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "headless",
+      "url": "https://code.claude.com/docs/en/headless.md",
+      "file": "claude-code/headless.md",
+      "sha256": "02f132525d009deae88590647bcac872eb2e5d6cca39c4ba3008a0f810db8314",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "hooks",
+      "url": "https://code.claude.com/docs/en/hooks.md",
+      "file": "claude-code/hooks.md",
+      "sha256": "efb33816ae74fc832c47ba45b57c882067d80538407a8d9af8399367d44894f6",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "managed-mcp",
+      "url": "https://code.claude.com/docs/en/managed-mcp.md",
+      "file": "claude-code/managed-mcp.md",
+      "sha256": "6c2e03441287feb80fc955b9ff315ddeeb9e279de399cfce5aae4ff3f446c693",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "mcp",
+      "url": "https://code.claude.com/docs/en/mcp.md",
+      "file": "claude-code/mcp.md",
+      "sha256": "be0624af48b735a4bd2085cbd2d6e227aca3a8c5b3ebf7a40d201c796dad3590",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "memory",
+      "url": "https://code.claude.com/docs/en/memory.md",
+      "file": "claude-code/memory.md",
+      "sha256": "8499a90d02435f460c729f3dc789072dc9224d3efac7cffdd507dafe76f20303",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "plugins",
+      "url": "https://code.claude.com/docs/en/plugins.md",
+      "file": "claude-code/plugins.md",
+      "sha256": "d64f8d772d4cf3780a4af8aa0042e7f65b6dc8a5ceeb1ba70ea440946514fc48",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "plugins-reference",
+      "url": "https://code.claude.com/docs/en/plugins-reference.md",
+      "file": "claude-code/plugins-reference.md",
+      "sha256": "a0bc8cc75ce7b6a02446f7c1abb805a63fb72b0386471a44c476957bebdb5253",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-code",
+      "slug": "settings",
+      "url": "https://code.claude.com/docs/en/settings.md",
+      "file": "claude-code/settings.md",
+      "sha256": "a6f10afd9d41fffa2b14e1f113ef641ea6fbe9b319c114bb986efc3e186de009",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "claude-desktop",
+      "slug": "connect-local-servers",
+      "url": "https://modelcontextprotocol.io/docs/develop/connect-local-servers.md",
+      "file": "claude-desktop/connect-local-servers.md",
+      "sha256": "4285516d216fbd74839238bee3d1b8d160f1f89152bd90cc522b116b44232d15",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "codex",
+      "slug": "agents-md",
+      "url": "https://learn.chatgpt.com/docs/agent-configuration/agents-md.md",
+      "file": "codex/agents-md.md",
+      "sha256": "9d1f87a2d1cb55b4782b95abe710692b35b9659789c2db31a22c7074a3383e8e",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "codex",
+      "slug": "config-reference",
+      "url": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+      "file": "codex/config-reference.md",
+      "sha256": "b60fbf91a216b9a1136fb42c7dbbbf42d3943b212101aae09a1d5b946805e6dd",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "codex",
+      "slug": "environment-variables",
+      "url": "https://learn.chatgpt.com/docs/config-file/environment-variables.md",
+      "file": "codex/environment-variables.md",
+      "sha256": "ba6cf76677497e35af145c6cab6965dd9a550fd2251a580be93160b86416af4c",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "codex",
+      "slug": "hooks",
+      "url": "https://learn.chatgpt.com/docs/hooks.md",
+      "file": "codex/hooks.md",
+      "sha256": "c1f1b2d78195fb6d382f9b9f32fe78d79025d6f0e1c65d87a1eece1693a78271",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "codex",
+      "slug": "mcp",
+      "url": "https://learn.chatgpt.com/docs/extend/mcp.md",
+      "file": "codex/mcp.md",
+      "sha256": "c8241aaeece7a970751e14f9c864e972f8abacc09117e3f8b70f3932a0094f35",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "codex",
+      "slug": "plugins",
+      "url": "https://learn.chatgpt.com/docs/plugins.md",
+      "file": "codex/plugins.md",
+      "sha256": "06b5ffc92327a4123a3f7b3f2e8425f58c59b6d7050b6ccbd437a924c1ef70ae",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "codex",
+      "slug": "projects",
+      "url": "https://learn.chatgpt.com/docs/projects.md",
+      "file": "codex/projects.md",
+      "sha256": "6e5b927e6edde8117acb797422ebf92a6e450b6f4b2da84946aa177d5a8f5588",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "codex",
+      "slug": "submit-claude-plugin",
+      "url": "https://developers.openai.com/plugins/guides/submit-claude-plugin.md",
+      "file": "codex/submit-claude-plugin.md",
+      "sha256": "4eb8560fba23fab854d72f709b50b31b844a81049dd5765c8c605068849fd7fb",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cowork",
+      "slug": "architecture",
+      "url": "https://support.claude.com/en/articles/14479288.md",
+      "file": "cowork/architecture.md",
+      "sha256": "1ea10cf36be14f76b9e910f0b29130d98dbbf0dcbe2f666a5bc5ee484842ea6a",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cowork",
+      "slug": "extensions",
+      "url": "https://claude.com/docs/cowork/3p/extensions.md",
+      "file": "cowork/extensions.md",
+      "sha256": "7306bd90042902a4e4c2515a848d44be127acc1434787c968683c95589211a7b",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cowork",
+      "slug": "overview",
+      "url": "https://claude.com/docs/cowork/overview.md",
+      "file": "cowork/overview.md",
+      "sha256": "ee17379064e39337723b0553a128ca4938ac73febb0251c30d7d8079c9d24cee",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cowork",
+      "slug": "plugins",
+      "url": "https://claude.com/docs/cowork/guide/plugins.md",
+      "file": "cowork/plugins.md",
+      "sha256": "8f1af9bef9ff72a66ecad30170e0014559cc10e175a1c005e83c4ac9b2ac3e74",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cowork",
+      "slug": "projects",
+      "url": "https://claude.com/docs/cowork/guide/projects.md",
+      "file": "cowork/projects.md",
+      "sha256": "ea2003d95c3dc3ddc0c2e1f922918acf9619c3c535e8f48fff646c2931be3300",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cowork",
+      "slug": "surfaces",
+      "url": "https://support.claude.com/en/articles/15520349.md",
+      "file": "cowork/surfaces.md",
+      "sha256": "f0cd04c2d8ad62c20161e52eda71b8ac371954d2c6e1d707bdf59760d0eae749",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cowork",
+      "slug": "use-plugins",
+      "url": "https://support.claude.com/en/articles/13837440.md",
+      "file": "cowork/use-plugins.md",
+      "sha256": "775a6e2eb8ce1be6728b4629a0d3bea488a9fc794ae6190ddd2a5cd5e47ee971",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-authentication",
+      "url": "https://cursor.com/docs/cli/reference/authentication.md",
+      "file": "cursor/cli-authentication.md",
+      "sha256": "c578539ee1ae3d574a75937230b22cea360f28e17da37529ddfceeedd04d2a1e",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-configuration",
+      "url": "https://cursor.com/docs/cli/reference/configuration.md",
+      "file": "cursor/cli-configuration.md",
+      "sha256": "d6921fd7a44cf73c0e09063d42aeebd01695fdc1848505df515b573dbf8d579d",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-github-actions",
+      "url": "https://cursor.com/docs/cli/github-actions.md",
+      "file": "cursor/cli-github-actions.md",
+      "sha256": "2bbbc370fb5f187d65355a9df8d72fe72d7594cdae5845fb440cb7ae62731bda",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-headless",
+      "url": "https://cursor.com/docs/cli/headless.md",
+      "file": "cursor/cli-headless.md",
+      "sha256": "d767966f4e86012bce9e358c80c8a8e056d4ad0c8e73d74fd036d5acdf32a7af",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-installation",
+      "url": "https://cursor.com/docs/cli/installation.md",
+      "file": "cursor/cli-installation.md",
+      "sha256": "50435bbdfe5f3640484df508440b1c6274d8c57f85c2f91ac78ee15caa5a1d3c",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-mcp",
+      "url": "https://cursor.com/docs/cli/mcp.md",
+      "file": "cursor/cli-mcp.md",
+      "sha256": "32c5cea917bd1cc5d8b2133dee98a38dc9f7ce6492c8d16f1f2208dce815cda5",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-output-format",
+      "url": "https://cursor.com/docs/cli/reference/output-format.md",
+      "file": "cursor/cli-output-format.md",
+      "sha256": "add17086b1b46485b73e24e995a5f69f16bcdb0f5f9f94f5f86cadb506063d69",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-overview",
+      "url": "https://cursor.com/docs/cli/overview.md",
+      "file": "cursor/cli-overview.md",
+      "sha256": "c56ae1d766654ca892b2cfb513a2f7f5ef0082f107d225fb4319fa9f20109e85",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-parameters",
+      "url": "https://cursor.com/docs/cli/reference/parameters.md",
+      "file": "cursor/cli-parameters.md",
+      "sha256": "963d15eb1edf8407dfcda3d3334e23f89c6aa3593a7827b9fe53dc1c83112989",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-permissions",
+      "url": "https://cursor.com/docs/cli/reference/permissions.md",
+      "file": "cursor/cli-permissions.md",
+      "sha256": "9f8264f5d8136496f008e0949cdad81760b8fa7784e3d6a2a04757c13c960f15",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-shell-mode",
+      "url": "https://cursor.com/docs/cli/shell-mode.md",
+      "file": "cursor/cli-shell-mode.md",
+      "sha256": "7acca7788419524ddc8f677930401a10d3413a760f830b33d5bc42c9353bc0c7",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-slash-commands",
+      "url": "https://cursor.com/docs/cli/reference/slash-commands.md",
+      "file": "cursor/cli-slash-commands.md",
+      "sha256": "a39f8c0086b6ca6e2bfde6c3595142987cdef4489ad0c0e213510bb746947111",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "cli-using",
+      "url": "https://cursor.com/docs/cli/using.md",
+      "file": "cursor/cli-using.md",
+      "sha256": "b070cb1f882dd8e8b9ab7434ff6f96fe1f181c4907ee242773ae6bbbedb47b0b",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "hooks",
+      "url": "https://cursor.com/docs/hooks.md",
+      "file": "cursor/hooks.md",
+      "sha256": "1ef2eaf7426588d708837c4829b80f54e12d0201c219b4d357a1be5caa2739a0",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "mcp",
+      "url": "https://cursor.com/docs/mcp.md",
+      "file": "cursor/mcp.md",
+      "sha256": "c8fe6bb4d56d582f4898deac48085b3c7308f8fc3376133e5ce1edf51e57d13f",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "mcp-install-links",
+      "url": "https://cursor.com/docs/mcp/install-links.md",
+      "file": "cursor/mcp-install-links.md",
+      "sha256": "426de167d81dae9474ded2f6a2a8156070641ecd32e041130284eae56e4742af",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "plugins",
+      "url": "https://cursor.com/docs/plugins.md",
+      "file": "cursor/plugins.md",
+      "sha256": "4e264117ec2359445a066f8186e2115c1117262746b3b435389d4564cd1c737a",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "plugins-reference",
+      "url": "https://cursor.com/docs/reference/plugins.md",
+      "file": "cursor/plugins-reference.md",
+      "sha256": "48320ef033a7cb4fdafab8b756ca691094b790b4e800624ef6e93f9cf43a6163",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "rules",
+      "url": "https://cursor.com/docs/rules.md",
+      "file": "cursor/rules.md",
+      "sha256": "3206c9381dce1fd1d4898e760e0d7af34db67bfe7a6ab127a7b588dfee00014e",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    },
+    {
+      "harness": "cursor",
+      "slug": "third-party-hooks",
+      "url": "https://cursor.com/docs/reference/third-party-hooks.md",
+      "file": "cursor/third-party-hooks.md",
+      "sha256": "35d19a7acdd0867d1123614a097bf264065ca46d4ffa18c9464929d5d18f7534",
+      "pinned_at": "2026-08-29T16:26:42.986Z"
+    }
+  ]
+}

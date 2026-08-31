@@ -12,7 +12,7 @@
 --
 -- Two standing rules for everything below:
 --
---   1. Enforcement lives HERE, not in a service. The estate's measured lesson
+--   1. Enforcement lives HERE, not in a service. The source system's measured lesson
 --      (STF-1 / migrations 0047 / 0073) is that a rule with a CLI gate and no
 --      substrate trigger gets bypassed by direct publish — 23 historical
 --      `verified` settles did exactly that. A rule this file does not enforce is

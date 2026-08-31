@@ -1,0 +1,15 @@
+{
+  "_source": "code.claude.com/docs/en/hooks — pinned .harness-docs/claude-code/hooks.md (2026-08-28); shape proven live by tests/plugin.test.mjs hook runs",
+  "payload": {
+    "session_id": "cc-session-0001",
+    "transcript_path": "/Users/dev/.claude/projects/-Users-dev-app/cc-session-0001.jsonl",
+    "cwd": "/Users/dev/app",
+    "hook_event_name": "SessionStart",
+    "source": "startup"
+  },
+  "expected": {
+    "cwd": "/Users/dev/app",
+    "sessionId": "cc-session-0001",
+    "transcriptPath": "/Users/dev/.claude/projects/-Users-dev-app/cc-session-0001.jsonl"
+  }
+}

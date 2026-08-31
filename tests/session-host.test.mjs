@@ -1,14 +1,18 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { SessionHost } from '../src/session-host.mjs';
 import { createOatheTools } from '../src/mcp/oathe-tools.mjs';
+import { OatheConfig } from '../src/config.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
 
 const paths = buildPaths({});
 const SCRATCH_DB = `oathe_host_test_${process.pid}`;
-const WS = 'ws-hosttest00000';
 const identity = { orgId: 'oathe', principalId: 'founder', department: 'founder' };
 
 let substrate;
@@ -20,20 +24,17 @@ before(async () => {
   await substrate.applyDdl();
   await substrate.seed({ orgId: 'oathe', principalId: 'founder', department: 'founder' });
   await substrate.registerYieldCause();
-  tools = createOatheTools({ client: substrate, identity, workspace: WS });
+  // A scratch-home config: tools require one (verifier assignment binds at claim), and tests
+  // must never read the developer's real ~/.oathe.
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-host-cfg-')));
+  const config = new OatheConfig({ env: { HOME: home, OATHE_HOME: path.join(home, '.oathe') }, cwd: home });
+  tools = createOatheTools({ client: substrate, identity, config });
 });
 
 after(async () => {
   await substrate.close();
   await substrate.dropDatabase();
 });
-
-async function leaseHoursLeft(taskId) {
-  const { rows } = await substrate.query(
-    `SELECT extract(epoch FROM (ownership_valid_until - now())) / 3600 AS hours
-       FROM cell.work_claim WHERE task_id = $1 AND state = 'active'`, [taskId]);
-  return Number(rows[0].hours);
-}
 
 function sleep(ms) { return new Promise((r) => { setTimeout(r, ms); }); }
 
@@ -47,7 +48,7 @@ test('R1: while the cage shows life, the host NEVER touches the claim horizon', 
   await tools.oathe_claim({ task_id: 'alive', objective: 'stay claimed, untouched' });
   const before = await exactHorizon('alive');
   const host = new SessionHost({
-    client: substrate, identity, workspace: WS,
+    client: substrate, identity,
     liveness: () => true, observeIntervalMs: 40,
   });
   host.start();
@@ -63,7 +64,7 @@ test('BORN-RED SEMANTIC: a killed cage stops the renewals and the lease is left 
     "UPDATE cell.work_claim SET ownership_valid_until = now() + interval '1 minute' WHERE task_id = 'killed'");
   let alive = true;
   const host = new SessionHost({
-    client: substrate, identity, workspace: WS,
+    client: substrate, identity,
     liveness: () => alive, observeIntervalMs: 40,
   });
   const before = await exactHorizon('killed');
@@ -82,7 +83,7 @@ test('BORN-RED SEMANTIC: a killed cage stops the renewals and the lease is left 
 test('a clean exit records the exit statement — terminal from exit', async () => {
   await tools.oathe_claim({ task_id: 'clean', objective: 'exit cleanly' });
   const host = new SessionHost({
-    client: substrate, identity, workspace: WS,
+    client: substrate, identity,
     liveness: () => true, observeIntervalMs: 40,
   });
   host.start();
@@ -94,4 +95,27 @@ test('a clean exit records the exit statement — terminal from exit', async () 
     + "AND execution_actor = 'oathe-session-host'");
   assert.equal(rows.length, 1);
   assert.match(rows[0].proposition, /session ended.*exit 0/i);
+});
+
+test('R-HOME-BOARD: the clean exit speaks on a claim homed on ANOTHER board — custody is the principal\'s', async () => {
+  await substrate.query(`
+    INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                           verify_by, claim_mode, created_at)
+    VALUES ('oathe', 'foreign-exit', 'founder', 'homed elsewhere', 'minted_at_claim',
+            '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
+  await substrate.query(
+    `SELECT cell.claim_work('oathe', 'foreign-exit', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
+            'exclusive', now() + interval '4 hours', 'workspace:ws-foreignhome00;contract:oathe/foreign-exit@v1',
+            now(), gen_random_uuid())`);
+  const host = new SessionHost({
+    client: substrate, identity,
+    liveness: () => true, observeIntervalMs: 40,
+  });
+  host.start();
+  await sleep(60);
+  await host.stop({ exitCode: 0 });
+  const { rows } = await substrate.query(
+    "SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'foreign-exit' "
+    + "AND execution_actor = 'oathe-session-host'");
+  assert.equal(rows[0].n, 1, 'the exit note is not lost because the claim is homed elsewhere');
 });

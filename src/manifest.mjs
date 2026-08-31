@@ -6,6 +6,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { atomicWriteJson } from './fslock.mjs';
+
 export function sha256Hex(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
@@ -35,9 +37,11 @@ export class InstallManifest {
   }
 
   save() {
-    fs.mkdirSync(path.dirname(this.manifestPath), { recursive: true });
-    const doc = { format: MANIFEST_FORMAT, saved_at: this.clock(), rows: this.rows, backups: this.backups };
-    fs.writeFileSync(this.manifestPath, `${JSON.stringify(doc, null, 2)}\n`);
+    // Atomic (temp-then-rename): concurrent hooks and servers read this file; a torn manifest
+    // would break doctor/uninstall. Serializing whole load→mutate→save cycles is the caller's
+    // job (withFileLock), because a lock inside save() alone cannot prevent lost updates.
+    atomicWriteJson(this.manifestPath,
+      { format: MANIFEST_FORMAT, saved_at: this.clock(), rows: this.rows, backups: this.backups });
   }
 
   /** One row per (harness, file, kind, detail identity); a re-run replaces its own row. */

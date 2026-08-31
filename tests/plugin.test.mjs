@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 
 import { buildPaths } from '../src/paths.mjs';
 import { Substrate } from '../src/substrate.mjs';
+import { sandbox } from './helpers.mjs';
 
 const paths = buildPaths({});
 const pkg = JSON.parse(fs.readFileSync(path.join(paths.packageRoot, 'package.json'), 'utf8'));
@@ -65,12 +66,31 @@ test('the skill obeys the Agent Skills spec: name equals its directory, bounded 
   assert.ok(fm[2].split('\n').length < 500, 'body under 500 lines');
 });
 
-test('.mcp.json registers the oathe server through the bin — no paths in the plugin tree', () => {
+test('.mcp.json registers the oathe server through the bin — no paths, NO env block', () => {
   const mcp = JSON.parse(fs.readFileSync(path.join(paths.pluginDir, '.mcp.json'), 'utf8'));
   const server = mcp.mcpServers?.oathe ?? mcp.oathe;
   assert.equal(server.command, 'oathe');
   assert.deepEqual(server.args, ['mcp']);
-  assert.equal(server.env.OATHE_WORKSPACE_DIR, '${CLAUDE_PROJECT_DIR}');
+  assert.equal(server.env, undefined,
+    'the server ladder owns workspace resolution — CLAUDE_PROJECT_DIR arrives in the spawned '
+    + 'env natively, and a ${...} the harness never expands must have nothing to poison');
+});
+
+test('the .cursor-plugin manifest adapter mirrors the plugin: version-locked, inline cursor-dialect hooks, PATH-addressed', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(paths.pluginDir, '.cursor-plugin/plugin.json'), 'utf8'));
+  assert.equal(manifest.name, 'oathe');
+  assert.equal(manifest.version, pkg.version);
+  assert.deepEqual(manifest.mcpServers.oathe, { command: 'oathe', args: ['mcp'] });
+  const events = Object.keys(manifest.hooks.hooks);
+  assert.deepEqual(events.sort(), ['preCompact', 'sessionStart', 'stop'].sort(),
+    'the same three lifecycle moments, in Cursor vocabulary');
+  for (const event of events) {
+    for (const hook of manifest.hooks.hooks[event]) {
+      assert.match(hook.command, /^oathe hook [a-z-]+$/,
+        'plugin-distributed commands ride PATH — no machine paths in the tree');
+    }
+  }
 });
 
 // ------------------------------------------------------- hook scripts against a real cell
@@ -78,12 +98,17 @@ test('.mcp.json registers the oathe server through the bin — no paths in the p
 const SCRATCH_DB = `oathe_plugin_test_${process.pid}`;
 let substrate;
 
-function runHook(script, hookInput, env = {}) {
+// Hooks fire in EVERY session now (the launch gate died with the one-click decision) — so the
+// hook env is a SANDBOX home: activation's registry/manifest/fence writes land there, never in
+// the developer's real ~/.oathe or ~/.claude.
+const hookSb = sandbox({ scratchDb: SCRATCH_DB });
+
+function runHook(script, hookInput, env = {}, { spawnCwd } = {}) {
   return spawnSync('node', [path.join(paths.pluginDir, 'hooks', script)], {
     input: JSON.stringify(hookInput),
     encoding: 'utf8',
-    // The default models a LAUNCHED session (the marker present); unlaunched tests clear it.
-    env: { ...process.env, OATHE_DB: SCRATCH_DB, OATHE_LAUNCHED_HARNESS: 'claude', ...env },
+    ...(spawnCwd ? { cwd: spawnCwd } : {}),
+    env: { ...hookSb.env, OATHE_DB: SCRATCH_DB, ...env },
   });
 }
 
@@ -114,6 +139,9 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
       `SELECT cell.claim_work('oathe', 'render-me', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
               'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
       [`workspace:${ws};contract:oathe/render-me@v1`]);
+    // Second render: the first activates the folder (its write receipt speaks once, pinned
+    // elsewhere); every session after that is the ruling's target — an already-managed folder.
+    runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' }, { OATHE_PRINCIPAL: 'founder' });
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
       { OATHE_PRINCIPAL: 'founder' });
     assert.equal(out.status, 0, out.stderr);
@@ -123,42 +151,46 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
     assert.match(context, /## Oathe board/);
     assert.match(context, /render-me/);
     assert.match(context, /yours/i);
-    // RECOVERY: state carried across sessions earns the celebration + the star ask.
-    assert.match(payload.systemMessage, /\u{1F389}/u);
-    assert.match(payload.systemMessage, /saved your session state/i);
-    assert.match(payload.systemMessage, /1 task still yours/);
-    assert.match(payload.systemMessage, /github\.com\/oathe-ai\/oathe/);
+    // R-QUIET (2026-08-29): a merely-held task is not news — the human channel stays silent;
+    // the restored-state banner belongs to the actual pickup. The board rides the model channel.
+    assert.ok(!('systemMessage' in payload), 'no ambient banner for held tasks');
+    assert.doesNotMatch(context, /github\.com\/oathe-ai\/oathe/, 'the star ask left the product surface');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test('render-board NEVER breaks a session: with the substrate absent it exits 0 with a visible quiet note', () => {
-  const out = runHook('render-board.mjs', { cwd: paths.packageRoot }, { OATHE_DB: 'oathe_never_created' });
-  assert.equal(out.status, 0);
-  const payload = JSON.parse(out.stdout);
-  assert.match(payload.systemMessage, /unavailable|not initialized/i);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-nodb-'));
+  try {
+    const out = runHook('render-board.mjs', { cwd: dir }, { OATHE_DB: 'oathe_never_created' });
+    assert.equal(out.status, 0);
+    const payload = JSON.parse(out.stdout);
+    assert.match(payload.systemMessage, /unavailable|not initialized/i);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test('render-board on a workspace with NOTHING open confirms visibly that oathe is on watch', () => {
+test('render-board on a workspace with NOTHING open is SILENT on the human channel', () => {
   // OUTSIDE the repo: any dir under packageRoot resolves to the repo's own workspace ref.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-empty-'));
   try {
+    // Second render — the first run's activation receipt is not this test's subject.
+    runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' }, { OATHE_PRINCIPAL: 'founder' });
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
       { OATHE_PRINCIPAL: 'founder' });
     assert.equal(out.status, 0, out.stderr);
     const payload = JSON.parse(out.stdout);
-    assert.match(payload.systemMessage, /\u{1F37A}/u); // the beer
-    assert.match(payload.systemMessage, /no open tasks/i);
-    assert.match(payload.systemMessage, /keeping track/i);
-    assert.doesNotMatch(payload.systemMessage, /github\.com/, 'the star ask rides RECOVERY only');
+    // R-QUIET: an empty board changes nothing about what the person does next — silence.
+    assert.ok(!('systemMessage' in payload), 'an empty board is silence, not a beer');
     assert.match(payload.hookSpecificOutput.additionalContext, /no open tasks/i);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('open tasks that are NOT yours summarize without celebration or the star ask', async () => {
+test('open tasks that are NOT yours ride the model channel only — no ambient summary', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-offered-'));
   try {
     // An unclaimed task carries no workspace yet, so every folder's list offers it.
@@ -167,19 +199,157 @@ test('open tasks that are NOT yours summarize without celebration or the star as
                              verify_by, claim_mode, created_at)
       VALUES ('oathe', 'unsigned-task', 'founder', 'anyone may sign', 'minted_at_claim',
               '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
+    // Second render — the first run's activation receipt is not this test's subject.
+    runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' }, { OATHE_PRINCIPAL: 'founder' });
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
       { OATHE_PRINCIPAL: 'founder' });
     assert.equal(out.status, 0, out.stderr);
     const payload = JSON.parse(out.stdout);
-    assert.match(payload.systemMessage, /\u{1F512}/u); // the lock
-    assert.match(payload.systemMessage, /1 open task\b/);
-    assert.doesNotMatch(payload.systemMessage, /held/, 'zero held stays unsaid');
-    assert.doesNotMatch(payload.systemMessage, /asserted/, 'zero asserted stays unsaid');
-    assert.doesNotMatch(payload.systemMessage, /contracts|for signing|elsewhere/i);
-    assert.doesNotMatch(payload.systemMessage, /\u{1F389}/u);
-    assert.doesNotMatch(payload.systemMessage, /github\.com/);
+    // R-QUIET: status pulls (oathe ls) — an open-task inventory is never pushed at the human.
+    assert.ok(!('systemMessage' in payload), 'no ambient inventory push');
+    assert.match(payload.hookSpecificOutput.additionalContext, /unsigned-task/);
   } finally {
     await substrate.query("DELETE FROM cell.task WHERE task_id = 'unsigned-task'");
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('R-QUIET: breaches PUSH — a breached promise is the one thing that speaks at session start', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-breach-'));
+  try {
+    // A quiet breach: an active claim whose holder has said nothing past the threshold. The
+    // claim is 2h old; only this test's 1h threshold sees it — the other renders stay clean.
+    await substrate.query(`
+      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                             verify_by, claim_mode, created_at)
+      VALUES ('oathe', 'gone-quiet', 'founder', 'claimed then abandoned', 'minted_at_claim',
+              '{"plan_status":"unknown"}'::jsonb, now() + interval '7 days', 'exclusive', now())`);
+    await substrate.query(
+      `SELECT cell.claim_work('oathe', 'gone-quiet', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
+              'exclusive', now() + interval '4 hours', 'workspace:ws-000000000000;contract:oathe/gone-quiet@v1',
+              now() - interval '2 hours', gen_random_uuid())`);
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
+      { OATHE_PRINCIPAL: 'founder', OATHE_PAGER_QUIET_HOURS: '1' });
+    assert.equal(out.status, 0, out.stderr);
+    const payload = JSON.parse(out.stdout);
+    // Founder wording (2026-08-31): counts BY KIND in plain words — the kind-blind
+    // "N unclaimed tasks expiring" lied about what the rows were. Details stay on the
+    // model channel; the push names the kind so the human knows what it IS.
+    assert.match(payload.systemMessage, /1 gone quiet/, 'a breach is pushed at the human, named by kind');
+    assert.doesNotMatch(payload.systemMessage, /promise breached|unclaimed|expiring|gone-quiet\b.*\]/i, 'no alarm-speak, no detail dump');
+    assert.doesNotMatch(payload.systemMessage, /\u{1F389}|github\.com/u, 'no celebration, no ask');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The row describes THE HARNESS PROCESS: the hook walks up from its ppid to the nearest
+ * adapter-owned ancestor (cursor-agent interposes a short-lived /bin/zsh — registering the
+ * shell would sweep the session when it exits), else keeps the ppid. The expectation is
+ * computed with the same public helpers the hook uses; the helpers themselves are pinned
+ * by the process-identity fixtures in harness-contract.
+ */
+async function expectedHookPid() {
+  const { processAncestry } = await import('../src/sessions.mjs');
+  const { ownedAncestorIndex } = await import('../src/harnesses/catalog.mjs');
+  const walk = processAncestry({ pid: process.pid }); // the hook's ppid IS this test runner
+  const owned = ownedAncestorIndex(walk);
+  return owned <= 0 ? process.pid : walk[owned].pid;
+}
+
+test('SessionStart registers the session — the DURABLE harness pid (nearest owned ancestor), ancestry, alive at read', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-sess-reg-'));
+  try {
+    const out = runHook('render-board.mjs', {
+      cwd: dir, hook_event_name: 'SessionStart', session_id: 'sess-hook-1',
+      transcript_path: path.join(hookSb.env.HOME, '.claude', 'projects', 'x', 't.jsonl'),
+    }, { OATHE_PRINCIPAL: 'founder' });
+    assert.equal(out.status, 0, out.stderr);
+    const doc = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'sessions.json'), 'utf8'));
+    const row = doc.sessions['sess-hook-1'];
+    assert.ok(row, 'the session registered');
+    if (process.platform === 'darwin') {
+      const expected = await expectedHookPid();
+      assert.equal(row.pid, expected, 'the row keys on the durable harness process, never an interposer');
+      assert.equal(row.ancestry[0]?.pid, expected, 'ancestry starts at that process');
+    } else {
+      // Ancestry is a darwin fact (processAncestry gives [] elsewhere, by design): the
+      // session still registers, keyed on a real pid, with the degradation visible.
+      assert.deepEqual(row.ancestry, [], 'off darwin the recorded degradation is an EMPTY ancestry');
+      assert.ok(Number.isInteger(row.pid) && row.pid > 0, 'still keyed on a real pid');
+    }
+    assert.ok(row.transcript_path.endsWith('t.jsonl'));
+    assert.ok(!('surface' in row), 'facts only — names resolve at read');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('heartbeat beats the session row — last_seen_at moves, registered_at and the facts stay', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-sess-beat-'));
+  try {
+    runHook('render-board.mjs', {
+      cwd: dir, hook_event_name: 'SessionStart', session_id: 'sess-hook-2',
+      transcript_path: path.join(hookSb.env.HOME, '.claude', 'projects', 'x', 't2.jsonl'),
+    }, { OATHE_PRINCIPAL: 'founder' });
+    const before = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'sessions.json'), 'utf8')).sessions['sess-hook-2'];
+    const out = runHook('heartbeat.mjs', {
+      cwd: dir, hook_event_name: 'Stop', session_id: 'sess-hook-2',
+      transcript_path: path.join(hookSb.env.HOME, '.claude', 'projects', 'x', 't2.jsonl'),
+    }, { OATHE_PRINCIPAL: 'founder' });
+    assert.equal(out.status, 0, out.stderr);
+    const after = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'sessions.json'), 'utf8')).sessions['sess-hook-2'];
+    assert.equal(after.registered_at, before.registered_at, 'first-writer facts stay');
+    assert.deepEqual(after.ancestry, before.ancestry);
+    assert.ok(after.last_seen_at >= before.last_seen_at, 'the beat moved last_seen_at');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the heartbeat REGISTERS a session the registry has never seen — a living session is never invisible', async () => {
+  // The pin that would have caught the founder's bug: a session predating the registry
+  // (or one whose sessions.json was wiped) heals at its next turn end, not never.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-sess-heal-'));
+  try {
+    const out = runHook('heartbeat.mjs', {
+      cwd: dir, hook_event_name: 'Stop', session_id: 'sess-hook-heal',
+      transcript_path: path.join(hookSb.env.HOME, '.claude', 'projects', 'x', 'th.jsonl'),
+    }, { OATHE_PRINCIPAL: 'founder' });
+    assert.equal(out.status, 0, out.stderr);
+    const row = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'sessions.json'), 'utf8'))
+      .sessions['sess-hook-heal'];
+    assert.ok(row, 'no SessionStart ever ran for this session — the heartbeat converges it');
+    if (process.platform === 'darwin') {
+      const expected = await expectedHookPid();
+      assert.equal(row.pid, expected, 'the durable harness pid — a real, live process');
+      assert.equal(row.ancestry[0]?.pid, expected, 'the full facts land, not a bare beat');
+    } else {
+      assert.deepEqual(row.ancestry, [], 'off darwin the heartbeat converges the row with the recorded empty-ancestry degradation');
+      assert.ok(Number.isInteger(row.pid) && row.pid > 0, 'still keyed on a real pid');
+    }
+    assert.ok(row.transcript_path.endsWith('th.jsonl'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a broken sessions file costs the session NOTHING — the board still renders, the failure rides stderr', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-sess-broken-'));
+  const sessionsFile = path.join(hookSb.env.OATHE_HOME, 'sessions.json');
+  const saved = fs.existsSync(sessionsFile) ? fs.readFileSync(sessionsFile) : null;
+  try {
+    fs.writeFileSync(sessionsFile, 'not json{');
+    const out = runHook('render-board.mjs', {
+      cwd: dir, hook_event_name: 'SessionStart', session_id: 'sess-hook-3',
+      transcript_path: path.join(hookSb.env.HOME, '.claude', 'projects', 'x', 't3.jsonl'),
+    }, { OATHE_PRINCIPAL: 'founder' });
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(JSON.parse(out.stdout).hookSpecificOutput.additionalContext, /## Oathe board/);
+    assert.match(out.stderr, /sessions/i, 'the failure speaks on stderr, never costs the board');
+  } finally {
+    if (saved) fs.writeFileSync(sessionsFile, saved); else fs.rmSync(sessionsFile, { force: true });
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -215,7 +385,9 @@ test('heartbeat (Stop) renews the active lease for this workspace', async () => 
 
 /** A real Claude-shaped transcript fixture; oatheActs = [[toolName, taskId], ...] (empty = planning only). */
 function writeSessionFixture(dir, sessionId, oatheActs = []) {
-  const file = path.join(dir, `${sessionId}.jsonl`);
+  // A Claude transcript lives in Claude's store layout — trace ownership is by path.
+  const file = path.join(dir, '.claude', 'projects', 'fixture', `${sessionId}.jsonl`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   const lines = [
     JSON.stringify({ type: 'user', uuid: 'u1', sessionId, cwd: dir, message: { role: 'user', content: 'plan the work first' } }),
     JSON.stringify({
@@ -295,11 +467,13 @@ test('heartbeat links traces for ASSERTED claims too — claim-and-done inside o
   try {
     const { workspaceRef } = await import('../src/workspace.mjs');
     const { createOatheTools } = await import('../src/mcp/oathe-tools.mjs');
+    const { OatheConfig } = await import('../src/config.mjs');
     const ws = workspaceRef(dir);
     const tools = createOatheTools({
       client: substrate,
       identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' },
       workspace: ws,
+      config: new OatheConfig({ env: { HOME: hookSb.home, OATHE_HOME: hookSb.env.OATHE_HOME }, cwd: dir }),
     });
     // the same-turn flow: claim → done BEFORE any Stop hook ever fires
     await tools.oathe_claim({ task_id: 'one-turn', objective: 'claimed and asserted in one turn' });
@@ -320,81 +494,112 @@ test('heartbeat links traces for ASSERTED claims too — claim-and-done inside o
   }
 });
 
-// ------------------------------------------- the launch gate: no `oathe <harness>`, no firing
-// The plugin installs at user scope, so its hooks reach EVERY session on the machine. Only a
-// session the oathe launcher started (marked by OATHE_LAUNCHED_HARNESS in the caged env) has
-// opted in — everything else gets a silent exit 0: no output, no substrate contact.
+// -------------------------------------- activation: opening a session on a folder ACTIVATES it
+// The launch gate died with the one-click decision (founder, 2026-08-28): hooks fire in every
+// session, SessionStart registers the workspace centrally and writes the context-file fences
+// through the ONE activation writer, and DISCLOSES what it wrote. OATHE_LAUNCHED_HARNESS is a
+// custody marker only. (The old silent-noop tests are superseded, deleted deliberately.)
 
-test('render-board is a SILENT noop in a session not launched by `oathe <harness>`', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-unlaunched-'));
+test('render-board ACTIVATES: registry row, fences on disk, and the write disclosed in both channels', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-activate-'));
+  try {
+    const { workspaceRef } = await import('../src/workspace.mjs');
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' });
+    assert.equal(out.status, 0, out.stderr);
+    const payload = JSON.parse(out.stdout);
+    assert.match(payload.systemMessage, /pinned this folder's board/i, 'the write is disclosed to the user');
+    assert.match(payload.hookSpecificOutput.additionalContext, /pinned this folder's board/i);
+    const claudeMd = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
+    assert.ok(claudeMd.includes('## Oathe'));
+    assert.ok(claudeMd.includes(workspaceRef(dir)));
+    assert.ok(fs.existsSync(path.join(dir, 'AGENTS.md')), 'codex + cursor detected in the sandbox home');
+    const registryDoc = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'workspaces.json'), 'utf8'));
+    const row = registryDoc.workspaces[workspaceRef(dir)];
+    assert.equal(row.registered_by, 'hook:session-start');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a second session start is byte-idempotent and repeats no disclosure', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-activate2-'));
+  try {
+    const first = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' });
+    assert.equal(first.status, 0, first.stderr);
+    const bytes = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
+    const second = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' });
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal(fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), bytes);
+    const payload = JSON.parse(second.stdout);
+    // Nothing new written, nothing held, no breach: the human channel is absent entirely.
+    assert.ok(!('systemMessage' in payload), 'nothing new written — nothing re-disclosed');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('autoActivate=false: the session registers centrally but writes NO files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-activate-off-'));
+  try {
+    const { workspaceRef } = await import('../src/workspace.mjs');
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
+      { OATHE_AUTO_ACTIVATE: 'false' });
+    assert.equal(out.status, 0, out.stderr);
+    assert.ok(!fs.existsSync(path.join(dir, 'CLAUDE.md')), 'no fence files with activation off');
+    const registryDoc = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'workspaces.json'), 'utf8'));
+    assert.ok(registryDoc.workspaces[workspaceRef(dir)], 'registration still happened');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a session with NO resolvable workspace exits 0 in silence — nothing to speak about', () => {
+  // No cwd in the payload, no env binding, and the process cwd is the sandbox home itself
+  // (the ladder refuses a home directory rather than minting a silently-wrong board).
+  const out = runHook('render-board.mjs', { hook_event_name: 'SessionStart' },
+    {}, { spawnCwd: hookSb.home });
+  assert.equal(out.status, 0);
+  assert.equal(out.stdout, '');
+  assert.equal(out.stderr, '');
+});
+
+test('the CURSOR dialect round-trips: workspace_roots in, snake_case additional_context out', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-cursor-dialect-'));
+  try {
+    const out = runHook('render-board.mjs', {
+      hook_event_name: 'sessionStart',
+      conversation_id: 'conv-1',
+      session_id: 'conv-1',
+      workspace_roots: [dir],
+      cursor_version: '1.7.2',
+      is_background_agent: false,
+    });
+    assert.equal(out.status, 0, out.stderr);
+    const payload = JSON.parse(out.stdout);
+    assert.match(payload.additional_context, /Oathe board|no open tasks/i);
+    assert.ok(!('hookSpecificOutput' in payload), 'the reply speaks Cursor, not Claude');
+    assert.ok(fs.existsSync(path.join(dir, 'AGENTS.md')), 'activation fired from the roots payload');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('activation failing never costs the session its board — reported on stderr, board still renders', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-activate-fail-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-ro-home-'));
+  const roOatheHome = path.join(home, '.oathe');
+  fs.mkdirSync(roOatheHome);
+  fs.writeFileSync(path.join(roOatheHome, 'workspaces.json'), 'not json{');
   try {
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
-      { OATHE_PRINCIPAL: 'founder', OATHE_LAUNCHED_HARNESS: '' });
-    assert.equal(out.status, 0);
-    assert.equal(out.stdout, '', 'an unlaunched session sees no board, no quiet note, nothing');
-    assert.equal(out.stderr, '');
+      { OATHE_HOME: roOatheHome });
+    assert.equal(out.status, 0, out.stderr);
+    const payload = JSON.parse(out.stdout);
+    assert.ok(payload.hookSpecificOutput.additionalContext.length > 0, 'the board rendered');
+    assert.match(out.stderr, /activation/i, 'the failure is visible, never silent');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('heartbeat in an unlaunched session touches NOTHING — no renewal, no trace linkage', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-unlaunched-hb-'));
-  try {
-    const { workspaceRef } = await import('../src/workspace.mjs');
-    const ws = workspaceRef(dir);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'unlaunched-beat', 'founder', 'must not renew', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'unlaunched-beat', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '1 minute', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/unlaunched-beat@v1`]);
-    const out = runHook('heartbeat.mjs', {
-      cwd: dir, hook_event_name: 'Stop',
-      session_id: 'sess-unlaunched', transcript_path: '/fake/home/.claude/projects/x/sess-unlaunched.jsonl',
-    }, { OATHE_PRINCIPAL: 'founder', OATHE_LAUNCHED_HARNESS: '' });
-    assert.equal(out.status, 0);
-    assert.equal(out.stdout, '');
-    assert.equal(out.stderr, '');
-    const { rows } = await substrate.query(
-      "SELECT ownership_valid_until < now() + interval '2 minutes' AS untouched "
-      + "FROM cell.work_claim WHERE task_id = 'unlaunched-beat' AND state = 'active'");
-    assert.equal(rows[0].untouched, true, 'the short lease was NOT renewed');
-    const { rows: linked } = await substrate.query(
-      "SELECT count(*)::int AS n FROM cell.agent_statement WHERE subject_ref = 'trace:sess-unlaunched'");
-    assert.equal(linked[0].n, 0, 'no trace statement from a session that never opted in');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('frame-note in an unlaunched session writes NO statements', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-unlaunched-fn-'));
-  try {
-    const { workspaceRef } = await import('../src/workspace.mjs');
-    const ws = workspaceRef(dir);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'unlaunched-note', 'founder', 'must stay silent', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'unlaunched-note', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/unlaunched-note@v1`]);
-    const out = runHook('frame-note.mjs', { cwd: dir, hook_event_name: 'PreCompact' },
-      { OATHE_PRINCIPAL: 'founder', OATHE_LAUNCHED_HARNESS: '' });
-    assert.equal(out.status, 0);
-    assert.equal(out.stdout, '');
-    assert.equal(out.stderr, '');
-    const { rows } = await substrate.query(
-      "SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'unlaunched-note'");
-    assert.equal(rows[0].n, 0);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -505,6 +710,151 @@ test('R3 §5.5#2/#10: rendering the board writes NOTHING and focuses nothing —
     const { rows: claims } = await substrate.query(
       "SELECT count(*)::int AS n FROM cell.work_claim WHERE task_id IN ('neutral-a','neutral-b') AND state = 'active'");
     assert.equal(claims.rows?.[0]?.n ?? claims[0].n, 2, 'no implicit choice, no focus, no claim mutation');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ------------------------------------------ R-HOME-BOARD: custody follows the principal, not the folder
+// A claim you hold on a task homed ELSEWHERE is still yours: the turn-end heartbeat must link
+// its trace evidence and the compaction note must land — the folder you happen to stand in
+// is not the boundary of your obligations.
+
+async function seedForeignHomedClaim(taskId) {
+  await substrate.query(`
+    INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                           verify_by, claim_mode, created_at)
+    VALUES ('oathe', $1, 'founder', 'homed on another board', 'minted_at_claim',
+            '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`, [taskId]);
+  await substrate.query(
+    `SELECT cell.claim_work('oathe', $1, gen_random_uuid(), NULL, NULL, 'founder', 'founder',
+            'exclusive', now() + interval '4 hours', $2, now(), gen_random_uuid())`,
+    [taskId, `workspace:ws-foreignhome00;contract:oathe/${taskId}@v1`]);
+}
+
+test('heartbeat links trace evidence for a claim homed on ANOTHER board — custody is the principal\'s', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-foreign-hb-'));
+  try {
+    await seedForeignHomedClaim('foreign-linked');
+    const transcript = writeSessionFixture(dir, 'sess-foreign', [['oathe_statement', 'foreign-linked']]);
+    const out = runHook('heartbeat.mjs', {
+      cwd: dir, hook_event_name: 'Stop', session_id: 'sess-foreign', transcript_path: transcript,
+    });
+    assert.equal(out.status, 0, out.stderr);
+    const { rows } = await substrate.query(
+      "SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'foreign-linked' AND subject_ref = 'trace:sess-foreign'");
+    assert.equal(rows[0].n, 1, 'the evidence the verifier will demand is linked regardless of the folder');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('frame-note leaves the compaction statement on a foreign-homed claim this principal holds', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-foreign-fn-'));
+  try {
+    await seedForeignHomedClaim('foreign-noted');
+    const out = runHook('frame-note.mjs', { cwd: dir, hook_event_name: 'PreCompact' });
+    assert.equal(out.status, 0, out.stderr);
+    const { rows } = await substrate.query(
+      "SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'foreign-noted' AND execution_actor = 'oathe-precompact-hook'");
+    assert.equal(rows[0].n, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ------------------------------------------ R-BOARD-SCOPE: a synthetic surface sees the whole board
+test('render-board on a ChatGPT-desktop staging dir serves the FULL board and writes nothing there', async () => {
+  const staging = path.join(hookSb.home, '.codex/.chatgpt-projects/g-p-sim');
+  fs.mkdirSync(staging, { recursive: true });
+  const out = runHook('render-board.mjs', { cwd: staging, hook_event_name: 'SessionStart' });
+  assert.equal(out.status, 0, out.stderr);
+  const payload = JSON.parse(out.stdout);
+  assert.match(payload.hookSpecificOutput.additionalContext, /all workspaces/i, 'no folder lens on a synthetic surface');
+  assert.ok(!fs.existsSync(path.join(staging, 'CLAUDE.md')), 'no fence inside ~/.codex');
+  assert.ok(!fs.existsSync(path.join(staging, 'AGENTS.md')));
+  const registryPath = path.join(hookSb.env.OATHE_HOME, 'workspaces.json');
+  const rows = fs.existsSync(registryPath) ? JSON.parse(fs.readFileSync(registryPath, 'utf8')).workspaces : {};
+  assert.ok(!Object.values(rows).some((r) => r.root === staging), 'no registry row for a staging dir');
+});
+
+// ------------------------------------------ R-PAGER: breached promises ride the SessionStart context
+test('render-board carries the machine-wide breach digest in context — a quiet claim from ANOTHER folder pages here', async () => {
+  const dir = fs.mkdtempSync(path.join(paths.packageRoot, 'tmp-ws-'));
+  try {
+    await substrate.query(`
+      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                             verify_by, claim_mode, created_at)
+      VALUES ('oathe', 'quiet-elsewhere', 'founder', 'claimed three days ago, not a word since', 'minted_at_claim',
+              '{"plan_status":"unknown"}'::jsonb, now() + interval '30 days', 'exclusive', now() - interval '3 days')`);
+    await substrate.query(
+      `SELECT cell.claim_work('oathe', 'quiet-elsewhere', gen_random_uuid(), NULL, NULL, 'athena', 'founder',
+              'exclusive', now() + interval '4 hours', $1, now() - interval '3 days', gen_random_uuid())`,
+      ['workspace:ws-000000000aaa;contract:oathe/quiet-elsewhere@v1']);
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' });
+    assert.equal(out.status, 0, out.stderr);
+    const context = JSON.parse(out.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /## Breached promises \(all workspaces\)/);
+    assert.match(context, /quiet-elsewhere/);
+    assert.match(context, /athena/);
+    assert.match(context, /quiet for 7[0-9]h/);
+    assert.match(context, /## Oathe board/, 'the board itself still renders');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('render-board with a BROKEN pager still delivers the board — the failure goes to stderr', async () => {
+  const dir = fs.mkdtempSync(path.join(paths.packageRoot, 'tmp-ws-'));
+  await substrate.query('ALTER FUNCTION cell.unverified_past_verify_by(timestamptz) RENAME TO pager_test_broken');
+  try {
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' });
+    assert.equal(out.status, 0, out.stderr);
+    const payload = JSON.parse(out.stdout);
+    assert.match(payload.hookSpecificOutput.additionalContext, /## Oathe board/);
+    assert.doesNotMatch(payload.hookSpecificOutput.additionalContext, /Breached promises/);
+    assert.match(out.stderr, /pager/i);
+  } finally {
+    await substrate.query('ALTER FUNCTION cell.pager_test_broken(timestamptz) RENAME TO unverified_past_verify_by');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('render-board carries the standing rule on EVERY render — a session with no fence still learns to claim', async () => {
+  const dir = fs.mkdtempSync(path.join(paths.packageRoot, 'tmp-ws-'));
+  try {
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' });
+    assert.equal(out.status, 0, out.stderr);
+    const context = JSON.parse(out.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /## Oathe board/);
+    assert.match(context, /claim before you build/i);
+    // the render-me task from the first test keeps this a NON-empty machine-wide picture in the staging dir
+    const staging = path.join(hookSb.home, '.codex/.chatgpt-projects/g-p-rule');
+    fs.mkdirSync(staging, { recursive: true });
+    const sim = runHook('render-board.mjs', { cwd: staging, hook_event_name: 'SessionStart' });
+    const simContext = JSON.parse(sim.stdout).hookSpecificOutput.additionalContext;
+    assert.match(simContext, /all workspaces/);
+    assert.match(simContext, /claim before you build/i);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ------------------------------------------ drift monitors P3: the hook capture tap
+test('OATHE_HOOK_CAPTURE_DIR makes a hook write its RAW stdin payload before normalizing — off by default', () => {
+  const dir = fs.mkdtempSync(path.join(paths.packageRoot, 'tmp-ws-'));
+  const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-capture-'));
+  try {
+    const payload = { cwd: dir, hook_event_name: 'SessionStart', session_id: 'cap-1', transcript_path: '/nowhere.jsonl', source: 'startup' };
+    const out = runHook('render-board.mjs', payload, { OATHE_HOOK_CAPTURE_DIR: captureDir });
+    assert.equal(out.status, 0, out.stderr);
+    const files = fs.readdirSync(captureDir);
+    assert.equal(files.length, 1);
+    assert.match(files[0], /^SessionStart-.*\.json$/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(captureDir, files[0]), 'utf8')), payload, 'the raw payload, byte-faithful');
+    const quiet = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-capture-off-'));
+    runHook('render-board.mjs', payload);
+    assert.equal(fs.readdirSync(quiet).length, 0, 'nothing is captured unless asked');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -1,7 +1,7 @@
 // oathe — the successor sequence seam (pickup is what "continue task-x" means; the founder
 // ruling: resuming is what launching means, and picking up happens here).
 //
-// THIN WRAPPER (Stage 1 ruling, 2026-08-26): no execution logic lives in this tree. The real
+// THIN WRAPPER (ruling, 2026-08-26): no execution logic lives in this tree. The real
 // three-call sequence — buildProductionDeps → readPriorAttemptStep → reallocateStep, with the
 // RECOMPILE-vs-RESUME decision inside allocate() — ships with the `oathe-runtime` package and
 // lands behind `oathe-runtime/seam`, which must export

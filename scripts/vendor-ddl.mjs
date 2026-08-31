@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// oathe — the DDL export script (Stage 1 A4-A6 prep, amended by the D0 correction packet §7).
+// oathe — the DDL export script.
 // Exports each DDL_FILES entry from the runtime monorepo's DDL directory into an out dir,
-// BORN-CLEAN: executable SQL is copied byte-exact, while comment lines carrying estate markers
-// are rewritten to generic invariant language (R-OSS-7 — the public drop passes the estate
-// marker scan with count zero). Provenance is TWO-SIDED in the sidecar manifest.json: the
+// BORN-CLEAN: executable SQL is copied byte-exact, while comment lines carrying private markers
+// are rewritten to generic invariant language (R-OSS-7 — the public drop passes the
+// private-marker scan with count zero). Provenance is TWO-SIDED in the sidecar manifest.json: the
 // source commit and per-file source sha256 pin exactly what was exported; the public sha256
 // pins exactly what shipped; the transform version names how one became the other. Never
 // per-file headers — the substrate's DDL_DRIFT law (Substrate#applyDdl) compares the shipped
 // bytes, and the manifest is the one place provenance lives.
 //
 // This script is PREPARED, not performed: it is never run with its default output during
-// development or CI — dropping vendor/ddl into the tree is a founder-gated estate decision.
+// development or CI — dropping vendor/ddl into the tree is a founder-gated decision.
 // Tests always pass an explicit --out pointed at a temp dir.
 
 import fs from 'node:fs';
@@ -24,21 +24,27 @@ import { sha256Hex } from '../src/manifest.mjs';
 import { MARKER_PATTERNS } from './marker-scan.mjs';
 
 export const MANIFEST_SOURCE = Object.freeze({
-  // Deliberately non-nominal: naming the private repo would put an estate marker inside the
-  // public manifest (§7.2's count-zero rule governs §7.3's fields). The commit hash plus the
+  // Deliberately non-nominal: naming the private repo would put a private marker inside the
+  // public manifest (the count-zero rule governs the manifest's own fields). The commit hash plus the
   // per-file source sha256 pin provenance precisely without the name.
   repo: 'oathe-runtime-monorepo (private)',
 });
 
 export const MANIFEST_LICENSE_PENDING = 'PENDING-FOUNDER-DECISION';
 
-export const EXPORT_TRANSFORM_VERSION = 'export-clean-1';
+export const EXPORT_TRANSFORM_VERSION = 'export-clean-2';
 
 // Token-level rewrites applied ONLY to comment lines. Meaning-preserving generic language:
-// the public DDL explains its invariants without estate vocabulary. Order matters — most
+// the public DDL explains its invariants without private vocabulary. Order matters — most
 // specific first; the final catch-all guarantees count-zero or the loud refusal below fires.
 const F = ['fir', 'ia'].join(''); // assembled so this script itself greps clean (R-OSS-7)
+const E = ['est', 'ate'].join(''); // the internal word for the private production system
 export const COMMENT_REWRITES = Object.freeze([
+  [new RegExp(`\\bThe ${E}'s\\b`, 'g'), "The source system's"],
+  [new RegExp(`\\bthe ${E}'s\\b`, 'g'), "the source system's"],
+  [new RegExp(`\\bThe ${E}\\b`, 'g'), 'The source system'],
+  [new RegExp(`\\bthe ${E}\\b`, 'g'), 'the source system'],
+  [new RegExp(`\\b${E}-wide\\b`, 'g'), 'system-wide'],
   [new RegExp('`?' + F + '_cell_domain`?\\.?', 'g'), 'the cell schema'],
   [new RegExp(F + '-executor-dispatcher/sql/001_dispatcher\\.sql', 'g'), "the dispatcher's own DDL (not vendored here)"],
   [new RegExp('`bin/' + F + '-acceptance-checkerd\\.mjs`', 'g'), 'the acceptance checker daemon'],
@@ -50,26 +56,30 @@ export const COMMENT_REWRITES = Object.freeze([
   [new RegExp('\\b' + F + '\\b', 'gi'), 'oathe'],
 ]);
 
+// What makes a line transformable: any private marker OR the internal-jargon vocabulary.
+// The scanner (marker-scan) stays identity-only; the transform additionally generalizes jargon.
+const TRANSFORM_TRIGGERS = Object.freeze([...MARKER_PATTERNS, new RegExp(`\\b${E}\\b`, 'i')]);
+
 function fail(message) {
   process.stderr.write(`vendor-ddl: ${message}\n`);
   process.exit(1);
 }
 
 /** Born-clean transform: comments (line comments AND the prose inside COMMENT ON string
- *  literals) lose their estate markers; real executable SQL is untouchable. */
+ *  literals) lose their private markers; real executable SQL is untouchable. */
 export function transformForExport(name, text) {
   let inCommentOn = false;
   return text.split('\n').map((line, i) => {
     const wasInCommentOn = inCommentOn;
     if (/^\s*COMMENT ON /.test(line)) inCommentOn = true;
     if (inCommentOn && /';\s*$/.test(line)) inCommentOn = false;
-    if (!MARKER_PATTERNS.some((p) => p.test(line))) return line;
+    if (!TRANSFORM_TRIGGERS.some((p) => p.test(line))) return line;
     if (!/^\s*--/.test(line) && !wasInCommentOn && !/^\s*COMMENT ON /.test(line)) {
-      fail(`${name}:${i + 1}: estate marker on a NON-comment line — refusing to transform executable SQL`);
+      fail(`${name}:${i + 1}: private marker on a NON-comment line — refusing to transform executable SQL`);
     }
     let clean = line;
     for (const [pattern, replacement] of COMMENT_REWRITES) clean = clean.replace(pattern, replacement);
-    if (MARKER_PATTERNS.some((p) => p.test(clean))) {
+    if (TRANSFORM_TRIGGERS.some((p) => p.test(clean))) {
       fail(`${name}:${i + 1}: a marker survives every rewrite — extend COMMENT_REWRITES for: ${line.trim()}`);
     }
     return clean;
@@ -169,7 +179,7 @@ function run(argv, env) {
 // macOS's /tmp -> /private/tmp, otherwise still breaks the match) — compare against
 // pathToFileURL(realpath(argv[1])), never a raw `file://${argv[1]}` template, or a path with a
 // space/non-ASCII char (or a symlinked ancestor dir) silently fails the guard.
-if (import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   run(process.argv.slice(2), process.env);
 }
 

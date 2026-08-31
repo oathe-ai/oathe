@@ -1,0 +1,103 @@
+name: Harness live contract
+
+# Per harness, one REAL headless session in a sandboxed, oathe-wired project: the model answers
+# in the documented output shape, our SessionStart hook captures the harness's raw payload, the
+# payload normalizes through the adapter's dialect (a field diff against the pinned fixture on
+# drift), the project registers, the transcript projects. Needs each harness's documented
+# non-interactive auth from repository secrets. Nightly; fails loud through an issue per harness.
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-live-contract
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Harnesses from the adapter catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      harnesses: ${{ steps.list.outputs.harnesses }}
+    steps:
+      - name: Check out the proposed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+      - name: Install from the lockfile without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: List the harnesses that declare this lane
+        id: list
+        run: echo "harnesses=$(node -e "import('./src/harnesses/catalog.mjs').then((m) => console.log(JSON.stringify(m.liveTestable())))")" >> "$GITHUB_OUTPUT"
+
+  live:
+    name: ${{ matrix.harness }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      # The auth env each adapter declares (Harness.headless.auth); a missing one is a loud refusal.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
+      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJson(needs.plan.outputs.harnesses) }}
+    steps:
+      - name: Check out the proposed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+      - name: Install from the lockfile without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Install the real CLI the adapter declares
+        env:
+          HARNESS: ${{ matrix.harness }}
+        run: |
+          command="$(node -e "import('./src/harnesses/catalog.mjs').then((m) => { const i = m.byName(process.env.HARNESS).install; console.log(i.npm ? 'npm install -g ' + i.npm + '@latest' : i.installer); })")"
+          echo "+ $command"
+          bash -c "$command"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Run one real session and assert what came back
+        env:
+          HARNESS: ${{ matrix.harness }}
+        run: npm run live-contract -- "$HARNESS" | tee "live-contract-$HARNESS.txt"
+      - name: Open or update the drift issue (fail loud)
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "harness live drift: ${{ matrix.harness }}"
+          REPORT: live-contract-${{ matrix.harness }}.txt
+        run: |
+          body="$(printf '%s\n\n```\n%s\n```\n\nRun: %s' "Recorded by the scheduled monitor on $(date -u +%Y-%m-%dT%H:%M:%SZ)." "$(cat "$REPORT")" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")"
+          number="$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title --jq ".[] | select(.title == \"$TITLE\") | .number" | head -1)"
+          if [ -n "$number" ]; then gh issue comment "$number" --body "$body"; else gh issue create --title "$TITLE" --label drift --body "$body"; fi

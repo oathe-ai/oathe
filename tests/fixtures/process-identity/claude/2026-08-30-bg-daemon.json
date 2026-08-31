@@ -1,0 +1,12 @@
+{
+  "observed": "live trace 2026-08-30: claude bg-spare under the transient daemon — no app ancestor",
+  "payload": {
+    "ancestry": [
+      { "pid": 32942, "exec": "/Users/x/.nvm/versions/node/v22.3.0/bin/claude" },
+      { "pid": 32926, "exec": "/Users/x/.nvm/versions/node/v22.3.0/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe" },
+      { "pid": 1, "exec": "/sbin/launchd" }
+    ],
+    "transcript_path": "/Users/x/.claude/projects/-x/bg-session.jsonl"
+  },
+  "expected": { "app": null, "surface": "claude" }
+}

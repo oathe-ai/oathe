@@ -1,0 +1,12 @@
+{
+  "observed": "live trace 2026-08-30: oathe mcp under ChatGPT's embedded codex app-server",
+  "payload": {
+    "ancestry": [
+      { "pid": 3246, "exec": "/Applications/ChatGPT.app/Contents/Resources/codex" },
+      { "pid": 1345, "exec": "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT" },
+      { "pid": 1, "exec": "/sbin/launchd" }
+    ],
+    "transcript_path": "/Users/x/.codex/sessions/2026/08/30/rollout-abc.jsonl"
+  },
+  "expected": { "app": { "bundle": "/Applications/ChatGPT.app", "pid": 1345 }, "surface": "chatgpt" }
+}

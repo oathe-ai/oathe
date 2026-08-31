@@ -2,8 +2,12 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
+import os from 'node:os';
+import path from 'node:path';
+
 import { OatheRuntimeProvider } from '../src/runtime/provider.mjs';
 import { createOatheTools } from '../src/mcp/oathe-tools.mjs';
+import { OatheConfig } from '../src/config.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
 
@@ -32,7 +36,10 @@ before(async () => {
   await substrate.applyDdl();
   await substrate.seed({ orgId: 'oathe', principalId: 'founder', department: 'founder' });
   await substrate.registerYieldCause();
-  tools = createOatheTools({ client: substrate, identity, workspace: WS });
+  // Scratch-home config: tools require one (verifier binds at claim); never the real ~/.oathe.
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-succ-cfg-')));
+  const config = new OatheConfig({ env: { HOME: home, OATHE_HOME: path.join(home, '.oathe') }, cwd: home });
+  tools = createOatheTools({ client: substrate, identity, workspace: WS, config });
   successor = await new OatheRuntimeProvider({ paths }).successor({ substrate, identity, paths });
 });
 

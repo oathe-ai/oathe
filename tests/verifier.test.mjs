@@ -10,13 +10,19 @@ import { createOatheTools } from '../src/mcp/oathe-tools.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
 import { OatheConfig } from '../src/config.mjs';
-import { standardPlan, ACCEPTANCE_CLAUSE_KEY } from '../src/plans.mjs';
+import { standardPlan } from '../src/plans.mjs';
 import { OatheRuntimeProvider, StandaloneRuntimeProvider } from '../src/runtime/provider.mjs';
 
 const paths = buildPaths({});
 const WS = 'ws-verify0000000';
 const OPERATOR = 'founder';
 const VERIFIER = 'oathe-verifier';
+
+/** A scratch-home config — tools require one, and tests never read the real ~/.oathe. */
+function scratchConfig() {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vcfg-')));
+  return new OatheConfig({ env: { HOME: home, OATHE_HOME: path.join(home, '.oathe') }, cwd: home });
+}
 
 // The oathe provider's settlement lane runs only where oathe-runtime actually resolves —
 // the same machine-truth guard as runtime-provider.test.mjs; standalone always runs.
@@ -28,7 +34,8 @@ const PROVIDERS = [
 
 /** A minimal REAL claude-shaped transcript the trace contract accepts. */
 function fixtureTranscript(name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vtrace-'));
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vtrace-')), '.claude', 'projects', 'fixture');
+  fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${name}.jsonl`);
   const sessionId = crypto.randomUUID();
   fs.writeFileSync(file, [
@@ -48,7 +55,8 @@ function fixtureTranscript(name) {
 /** A transcript with a planning prefix, then an explicit oathe_claim act, then the work —
  *  the R3 slicing fixture: everything before the claim is context, not evidence. */
 function fixtureTranscriptWithInterval(name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vtrace-int-'));
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vtrace-int-')), '.claude', 'projects', 'fixture');
+  fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${name}.jsonl`);
   const sessionId = crypto.randomUUID();
   fs.writeFileSync(file, [
@@ -117,13 +125,14 @@ for (const [providerName, makeProvider] of PROVIDERS) {
         client: substrate,
         identity: { orgId: 'oathe', principalId: OPERATOR, department: 'founder' },
         workspace: WS,
+        config: scratchConfig(),
       });
       engineCalls = [];
       verifier = new Verifier({
         substrate,
         paths,
         workspace: WS,
-        config: new OatheConfig({ env: process.env }),
+        config: scratchConfig(),
         operatorPrincipal: OPERATOR,
         provider: makeProvider(),
         engineRunner: async ({ engine, prompt }) => {
@@ -249,9 +258,154 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       assert.ok(!Object.values(sections).flat().some((r) => r.task_id === 'verify:reject-me'),
         'the settled review left the board');
 
-      // R8: rejection reopens work — the task is claimable again
-      const reclaim = await workerTools.oathe_claim({ task_id: 'reject-me', objective: 'second attempt' });
+      // R8: rejection reopens work — the task is claimable again. R-HOME-BOARD: the reclaim verb
+      // TRANSCRIBES the prior interval's ref (016), so a re-claim from a FOREIGN folder reports
+      // the work's home, never the claiming session's — and the return says so honestly.
+      const foreignTools = createOatheTools({
+        client: substrate,
+        identity: { orgId: 'oathe', principalId: OPERATOR, department: 'founder' },
+        workspace: 'ws-fedcba654321',
+        config: scratchConfig(),
+      });
+      const reclaim = await foreignTools.oathe_claim({ task_id: 'reject-me', objective: 'second attempt' });
       assert.equal(reclaim.claimed, true);
+      assert.equal(reclaim.contract_ref, `workspace:${WS};contract:oathe/reject-me@v1`);
+      assert.equal(reclaim.home, WS);
+    });
+
+    it('CURSOR judges too: an engine override of cursor runs the cursor headless command and settles', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'cursor-judged', objective: 'judged by cursor' });
+      await linkTrace('cursor-judged', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'cursor-judged', proposition: 'done', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'cursor says fine' };
+      const out = await verifier.verify({ taskId: 'cursor-judged', engine: 'cursor' });
+      assert.equal(out.engine, 'cursor');
+      assert.equal(out.settled, true);
+      assert.equal(engineCalls.at(-1).engine, 'cursor');
+    });
+
+    it('a VERDICT rides the wire the moment it lands — fail-soft: the settlement stands even if the wire is down', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'wired-verdict', objective: 'emit on settle' });
+      await linkTrace('wired-verdict', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'wired-verdict', proposition: 'done', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'fine' };
+      const notifies = [];
+      const realQuery = substrate.query.bind(substrate);
+      substrate.query = async (sql, params) => {
+        if (/pg_notify/i.test(String(sql))) { notifies.push(JSON.parse(params[1])); if (notifies.length === 999) throw new Error('wire down'); }
+        return realQuery(sql, params);
+      };
+      try {
+        const out = await verifier.verify({ taskId: 'wired-verdict' });
+        assert.equal(out.settled, true);
+      } finally {
+        substrate.query = realQuery;
+      }
+      const verdictNudge = notifies.find((n) => n.task_id === 'wired-verdict' && n.kind === 'settled');
+      assert.ok(verdictNudge, `the settle nudged the wire: ${JSON.stringify(notifies.map((n) => n.kind))}`);
+    });
+
+    it('the engine runs IN the task workspace — cwd resolved by the one home resolver, prompt invites file inspection', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'workspace-eyes', objective: 'judge with the folder in view' });
+      await linkTrace('workspace-eyes', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'workspace-eyes', proposition: 'artifact on disk', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'the artifact is on disk' };
+      const seen = [];
+      const eyed = new Verifier({
+        substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
+        provider: makeProvider(),
+        engineRunner: async ({ engine, prompt, cwd }) => { seen.push({ engine, prompt, cwd }); return engineVerdict; },
+        homePathFor: () => '/tmp/the-task-home', // the ONE resolver, injected
+      });
+      try {
+        await eyed.verify({ taskId: 'workspace-eyes' });
+      } finally {
+        await eyed.close();
+      }
+      assert.equal(seen[0].cwd, '/tmp/the-task-home', 'the engine judges FROM the task home, never the caller\'s folder');
+      assert.match(seen[0].prompt, /task's workspace — check asserted artifacts against the files on disk/,
+        'the prompt invites workspace inspection — the engine is the evidence reader');
+    });
+
+    it('a pre-verdict failure EMITS verify_failed on the wire — the glass hears it, not just a log', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'loud-death', objective: 'die loudly' });
+      await linkTrace('loud-death', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'loud-death', proposition: 'done', evidence_ref: 'x' });
+      const notifies = [];
+      const spyClient = {
+        query: (sql, params) => {
+          if (/pg_notify/i.test(String(sql))) notifies.push(JSON.parse(params[1]));
+          return substrate.query(sql, params);
+        },
+        connectionConfig: () => substrate.connectionConfig(),
+      };
+      const failing = new Verifier({
+        substrate: spyClient, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
+        provider: new StandaloneRuntimeProvider({ paths }),
+        engineRunner: async () => { const e = new Error('engine evaporated'); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
+      });
+      try {
+        await assert.rejects(failing.verify({ taskId: 'loud-death' }), /evaporated/);
+      } finally {
+        await failing.close();
+      }
+      const failed = notifies.find((n) => n.kind === 'verify_failed');
+      assert.ok(failed, `verify_failed rode the wire: ${JSON.stringify(notifies.map((n) => n.kind))}`);
+      assert.equal(failed.task_id, 'loud-death', 'named by the ORIGINAL task — the row the glass shows');
+    });
+
+    it('ENGINE DEATH releases: a pre-verdict engine failure records a durable statement and YIELDS the verify claim — no wedge, retry names another engine', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'engine-dies', objective: 'survive the engine' });
+      await linkTrace('engine-dies', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'engine-dies', proposition: 'done', evidence_ref: 'x' });
+      engineVerdict = null; // the runner throws instead
+      const failing = new Verifier({
+        substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
+        provider: new StandaloneRuntimeProvider({ paths }),
+        engineRunner: async () => { const e = new Error('codex exited 1: usage limit reached — try again at 2:56 AM'); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
+      });
+      try {
+        await assert.rejects(failing.verify({ taskId: 'engine-dies' }), /usage limit reached/);
+      } finally {
+        await failing.close();
+      }
+      const { rows: claimRows } = await substrate.query(
+        "SELECT state FROM cell.work_claim WHERE org_id='oathe' AND task_id='verify:engine-dies' ORDER BY claimed_at DESC LIMIT 1");
+      assert.notEqual(claimRows[0].state, 'active', 'the dead run RELEASED its claim — a re-dispatch is not wedged');
+      const { rows: stmts } = await substrate.query(
+        `SELECT proposition, evidence_refs FROM cell.agent_statement
+          WHERE org_id='oathe' AND task_id='verify:engine-dies' AND statement_type='progress'
+            AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(evidence_refs) er WHERE er LIKE 'engine-failure:%')`);
+      assert.equal(stmts.length, 1, 'the failure is DURABLE in the substrate, not only in a log');
+      assert.match(stmts[0].proposition, /usage limit reached/, 'the real error text, not a banner');
+    });
+
+    it('RECOVERY: re-verifying an ALREADY-SETTLED task recovers instead of OATHE_SETTLEMENT_BLOCKED — the kill-window wedge', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'wedge-me', objective: 'settle once, recover on retry' });
+      await linkTrace('wedge-me', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'wedge-me', proposition: 'done', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'fine' };
+      const first = await verifier.verify({ taskId: 'wedge-me' });
+      assert.equal(first.settled, true);
+      // The kill window: a child dies after the accepted settle, before the review settles.
+      // A re-run re-claims verify:wedge-me, re-judges, and must RECOGNIZE the settled claim.
+      const again = await verifier.verify({ taskId: 'wedge-me' });
+      assert.equal(again.settled, true, 'already-settled reads as settled, never OATHE_SETTLEMENT_BLOCKED');
+      assert.equal(again.verdict, 'accepted');
+    });
+
+    it('RECOVERY: a second REJECTED verify is idempotent-safe — duplicate verification rows lawful, reopen idempotent', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'rewedge', objective: 'reject twice safely' });
+      await linkTrace('rewedge', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'rewedge', proposition: 'done', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'rejected', reason: 'not enough' };
+      const first = await verifier.verify({ taskId: 'rewedge' });
+      assert.equal(first.reopened, true);
+      const again = await verifier.verify({ taskId: 'rewedge' });
+      assert.equal(again.reopened, true, 'the reopen path never throws on a re-run');
+      const { rows } = await substrate.query(
+        "SELECT origin FROM cell.task WHERE org_id = 'oathe' AND task_id = 'rewedge'");
+      assert.equal(rows[0].origin, 'reopened');
     });
 
     it('a malformed engine verdict is a typed refusal — the lane never guesses', async () => {
@@ -269,5 +423,88 @@ for (const [providerName, makeProvider] of PROVIDERS) {
         () => verifier.verify({ taskId: 'never-done' }),
         (e) => e instanceof VerifierError && e.code === 'OATHE_NOTHING_TO_VERIFY');
     });
+    it("R-HOME-BOARD: the verification task inherits the WORK's home, not the verifier's folder", async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'homed-verify', objective: 'homed in WS' });
+      await linkTrace('homed-verify', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'homed-verify', proposition: 'done in WS', evidence_ref: 'commit:h' });
+      // A verifier standing in ANOTHER folder judges it — its claim on verify:homed-verify must
+      // carry WS (the parent's home), never the verifier's own workspace (leak #2).
+      const foreign = new Verifier({
+        substrate, paths, workspace: 'ws-fedcba654321', config: scratchConfig(),
+        operatorPrincipal: OPERATOR, provider: makeProvider(),
+        engineRunner: async () => ({ verdict: 'accepted', reason: 'fine' }),
+      });
+      try {
+        await foreign.verify({ taskId: 'homed-verify' });
+      } finally {
+        await foreign.close();
+      }
+      const { rows } = await substrate.query(
+        "SELECT contract_ref FROM cell.work_claim WHERE task_id = 'verify:homed-verify' ORDER BY claimed_at ASC LIMIT 1");
+      assert.equal(rows[0].contract_ref, `workspace:${WS};contract:oathe/verify:homed-verify@v1`);
+    });
   });
 }
+
+it('OATHE_ENGINE_FAILED carries the TAIL of stderr — the banner must not eat the actual error', async () => {
+  const { defaultEngineRunner } = await import('../src/verifier.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-tail-eng-'));
+  fs.mkdirSync(path.join(home, 'bin'));
+  fs.writeFileSync(path.join(home, 'bin', 'claude'),
+    `#!/bin/sh\nfor i in $(seq 1 40); do echo "BANNER LINE $i padding padding padding" 1>&2; done\necho "usage limit reached - try again at 2:56 AM" 1>&2\nexit 1\n`);
+  fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
+  await assert.rejects(
+    defaultEngineRunner({ engine: 'claude', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'bin')}:${process.env.PATH}` } }),
+    (e) => e.code === 'OATHE_ENGINE_FAILED' && /usage limit reached/.test(e.message));
+});
+
+it('defaultEngineRunner hands the engine a CLOSED stdin — an engine that reads stdin to EOF must not wait forever', async () => {
+  const { defaultEngineRunner } = await import('../src/verifier.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-stdin-eng-'));
+  fs.mkdirSync(path.join(home, 'bin'));
+  const payload = JSON.stringify({ result: JSON.stringify({ verdict: 'accepted', reason: 'stdin closed' }) });
+  // Many CLIs (codex exec among them, live 2026-08-30) drain stdin to EOF before answering.
+  // spawnSync used to close stdin implicitly; async spawn defaults to an OPEN pipe nobody ends.
+  fs.writeFileSync(path.join(home, 'bin', 'claude'), `#!/bin/sh\ncat > /dev/null\ncat <<'JSON'\n${payload}\nJSON\n`);
+  fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
+  const out = await Promise.race([
+    defaultEngineRunner({ engine: 'claude', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'bin')}:${process.env.PATH}` } }),
+    new Promise((_, reject) => { setTimeout(() => reject(new Error('runner hung — stdin pipe never closed')), 8000).unref(); }),
+  ]);
+  assert.equal(out.verdict, 'accepted');
+});
+
+it('defaultEngineRunner resolves on ENGINE EXIT even when a grandchild keeps the stdio pipes open — the codex-helper hang', async () => {
+  const { defaultEngineRunner } = await import('../src/verifier.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-hang-eng-'));
+  fs.mkdirSync(path.join(home, 'bin'));
+  const payload = JSON.stringify({ result: JSON.stringify({ verdict: 'accepted', reason: 'exited fine' }) });
+  // The engine backgrounds a long-lived helper that INHERITS stdout, then exits. 'close' never
+  // fires while the helper lives; the runner must resolve on 'exit' after draining (found live
+  // 2026-08-30: a detached verify sat at 0% CPU for 20 minutes after codex finished).
+  fs.writeFileSync(path.join(home, 'bin', 'claude'), `#!/bin/sh\nsleep 300 &\ncat <<'JSON'\n${payload}\nJSON\nexit 0\n`);
+  fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
+  const out = await Promise.race([
+    defaultEngineRunner({ engine: 'claude', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'bin')}:${process.env.PATH}` } }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('runner hung on close — the grandchild pipe hang')), 8000).unref?.() ?? undefined),
+  ]);
+  assert.equal(out.verdict, 'accepted');
+});
+
+it('defaultEngineRunner does not block the event loop — a timer ticks while the engine runs', async () => {
+  const { defaultEngineRunner } = await import('../src/verifier.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-async-eng-'));
+  fs.mkdirSync(path.join(home, 'bin'));
+  const payload = JSON.stringify({ result: JSON.stringify({ verdict: 'accepted', reason: 'slept fine' }) });
+  fs.writeFileSync(path.join(home, 'bin', 'claude'), `#!/bin/sh\nsleep 0.4\ncat <<'JSON'\n${payload}\nJSON\n`);
+  fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
+  let ticks = 0;
+  const timer = setInterval(() => { ticks += 1; }, 25);
+  try {
+    const out = await defaultEngineRunner({
+      engine: 'claude', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'bin')}:${process.env.PATH}` },
+    });
+    assert.equal(out.verdict, 'accepted');
+  } finally { clearInterval(timer); }
+  assert.ok(ticks >= 4, `the loop must keep turning during the engine run (ticks: ${ticks})`);
+});

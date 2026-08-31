@@ -1,0 +1,12 @@
+{
+  "observed": "live trace 2026-08-30: Cursor Helper mcp-process under Cursor.app; cursor hooks carry transcript_path null",
+  "payload": {
+    "ancestry": [
+      { "pid": 58915, "exec": "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Plugin).app/Contents/MacOS/Cursor Helper (Plugin)" },
+      { "pid": 58213, "exec": "/Applications/Cursor.app/Contents/MacOS/Cursor" },
+      { "pid": 1, "exec": "/sbin/launchd" }
+    ],
+    "transcript_path": null
+  },
+  "expected": { "app": { "bundle": "/Applications/Cursor.app", "pid": 58213 }, "surface": "cursor" }
+}

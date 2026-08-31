@@ -3,10 +3,10 @@
   "source": {
     "repo": "oathe-runtime-monorepo (private)",
     "commit": null,
-    "commit_note": "pre-D0 drop predates commit stamping; per-file source_sha256 pins the exact exported bytes — the commit lands with the next estate regeneration"
+    "commit_note": "pre-D0 drop predates commit stamping; per-file source_sha256 pins the exact exported bytes — the commit lands with the next regeneration from source"
   },
   "transform": {
-    "version": "export-clean-1",
+    "version": "export-clean-2",
     "script": "scripts/vendor-ddl.mjs"
   },
   "license": "Apache-2.0",
@@ -15,7 +15,7 @@
       "position": 1,
       "name": "001_core.sql",
       "source_sha256": "9537a30072f1aa0dede348f2393602e4631b1b9132a6d6294df286e05a512180",
-      "public_sha256": "9537a30072f1aa0dede348f2393602e4631b1b9132a6d6294df286e05a512180"
+      "public_sha256": "fa2e00bb84e4c7c5581c3f244e7a009bd0134a2d993c26dc10ea74ee42e13c70"
     },
     {
       "position": 2,
@@ -33,7 +33,7 @@
       "position": 4,
       "name": "004_delegation.sql",
       "source_sha256": "e96dc76ab5fd05d222d7987273181c769f735b0b167da39428305fa3537f16a4",
-      "public_sha256": "e96dc76ab5fd05d222d7987273181c769f735b0b167da39428305fa3537f16a4"
+      "public_sha256": "31e93bde29cd8f88665676729a35a7337cd1111ed85590d2e757f77c6d8d1280"
     },
     {
       "position": 5,
@@ -45,7 +45,7 @@
       "position": 6,
       "name": "006_dependency.sql",
       "source_sha256": "6060070147323f8bdc126454acb890221c3d52c56acd1b267222634d7ccab77e",
-      "public_sha256": "6060070147323f8bdc126454acb890221c3d52c56acd1b267222634d7ccab77e"
+      "public_sha256": "afb564f20edf154607457d6e13005deebd1099558b4db2792a41a35c45f3d485"
     },
     {
       "position": 7,
@@ -57,13 +57,13 @@
       "position": 8,
       "name": "008_effect_receipt.sql",
       "source_sha256": "c4c96d55fcb241005d926c6e06637172a4925007a535abfe2ea3a70ba0abe78d",
-      "public_sha256": "c4c96d55fcb241005d926c6e06637172a4925007a535abfe2ea3a70ba0abe78d"
+      "public_sha256": "77b061c0a5c5beb63170f01bce848ba4cdbc9f38dc4c32ac6d1e78075675f2a8"
     },
     {
       "position": 9,
       "name": "009_verified_edge.sql",
       "source_sha256": "9c1bcff2d2028b16151fa422237437c820de93e19f6cd76ce21287571ad4e514",
-      "public_sha256": "9c1bcff2d2028b16151fa422237437c820de93e19f6cd76ce21287571ad4e514"
+      "public_sha256": "83b285b538e407f1e6cc04f1bc0ac6d512187d7c59a787b91c0027a11a2806d2"
     },
     {
       "position": 10,
@@ -75,7 +75,7 @@
       "position": 11,
       "name": "011_confirm.sql",
       "source_sha256": "59a608f8828491bffe9d5e3851c2a17a06f6ac8a97e58271e6b76a743668ab8a",
-      "public_sha256": "59a608f8828491bffe9d5e3851c2a17a06f6ac8a97e58271e6b76a743668ab8a"
+      "public_sha256": "882e7bcc1759447af04de2f50ee5dd506eed3b9b3ef4ac807a4e6e0c1cd4d249"
     },
     {
       "position": 12,

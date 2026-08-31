@@ -1,0 +1,17 @@
+{
+  "_source": "recorded live from codex-cli 0.150.0 `codex exec` on 2026-08-29 via OATHE_HOOK_CAPTURE_DIR (drift monitors P3); adds `model` and `permission_mode` to the 2026-08-28 docs-derived shape",
+  "payload": {
+    "session_id": "01a04e64-ea62-7950-8c77-2d3b49cb1bb6",
+    "transcript_path": "/Users/dev/.codex/sessions/2026/08/29/rollout-2026-08-29T12-40-31-01a04e64-ea62-7950-8c77-2d3b49cb1bb6.jsonl",
+    "cwd": "/Users/dev/app",
+    "hook_event_name": "SessionStart",
+    "model": "gpt-5.6-sol",
+    "permission_mode": "bypassPermissions",
+    "source": "startup"
+  },
+  "expected": {
+    "cwd": "/Users/dev/app",
+    "sessionId": "01a04e64-ea62-7950-8c77-2d3b49cb1bb6",
+    "transcriptPath": "/Users/dev/.codex/sessions/2026/08/29/rollout-2026-08-29T12-40-31-01a04e64-ea62-7950-8c77-2d3b49cb1bb6.jsonl"
+  }
+}

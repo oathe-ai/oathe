@@ -217,7 +217,7 @@ $reader_check$;
 
 -- ------------------------------------- §4.2 the declare-time evaluability guard
 --
--- Fail-closed, per the estate's own guard doctrine (migrations 0073/0081).
+-- Fail-closed, per the source system's own guard doctrine (migrations 0073/0081).
 -- Declaring a `verified` edge whose dep_key matches no registered checker FAILS
 -- loudly, unless the declarer acknowledges the debt — which mints the typed
 -- event naming its owner and due date, rather than passing silently.
