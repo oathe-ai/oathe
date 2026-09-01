@@ -32,11 +32,9 @@ struct NotchView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                if hardwareNotch, presentedOpen {
-                    // The band the camera housing physically covers: nothing readable lives
-                    // here — the glass wraps the hardware and speaks BELOW it, island-style.
-                    Color.clear.frame(width: barWidth, height: notchSize.height)
-                }
+                // The trio holds its rest seat in the HOUSING LINE even open (founder,
+                // 2026-08-31: dropping it below the notch split lock and count around a
+                // phantom gap on real screen) — the sheet starts directly under the notch.
                 bar
             }
             .background(Glass.ground)
@@ -127,7 +125,13 @@ struct NotchView: View {
     @ViewBuilder private func surface<Content: View>(_ content: Content) -> some View {
         Group {
             if #available(macOS 26.0, *) {
-                content.glassEffect(.regular, in: clip)
+                // Liquid Glass samples the BACKDROP, not the appearance — on a light
+                // desktop it came up white under near-white ink (founder, 2026-08-31;
+                // the darkAqua pin aimed at the wrong mechanism). The scrim rides between
+                // glass and content: the blur stays, the glass always reads dark.
+                content
+                    .background(Glass.ground.opacity(0.82))
+                    .glassEffect(.regular, in: clip)
             } else {
                 content.background(Glass.ground)
             }
@@ -267,6 +271,18 @@ struct NotchView: View {
                 if !model.entries.isEmpty {
                     Divider().overlay(Glass.hairline).padding(.horizontal, 10)
                 }
+            }
+            // A claimless board is an answer, not a shrug (founder, 2026-08-31): name the
+            // machine's chosen agent when onboarding picked one, stay generic when not.
+            if model.entries.isEmpty && model.failure == nil && model.lastNotice == nil {
+                Text("No agent claims open.")
+                    .font(rounded(10.5, .medium))
+                    .foregroundStyle(Glass.muted)
+                    .padding(.horizontal, 16).padding(.top, 9).padding(.bottom, 1)
+                Text(model.defaultAgent.map { "Start a new \($0) session." } ?? "Start a new agent session.")
+                    .font(rounded(10.5, .medium))
+                    .foregroundStyle(Glass.muted)
+                    .padding(.horizontal, 16).padding(.top, 1).padding(.bottom, 7)
             }
             ForEach(Array(model.entries.enumerated()), id: \.element.id) { index, entry in
                 row(for: entry)

@@ -51,6 +51,9 @@ final class NotchPanelController {
         panel.hasShadow = false
         panel.isMovable = false // we move it ourselves, with a snap at the end
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        // The glass is ALWAYS dark (founder, 2026-08-31): the palette is fixed dark-ink,
+        // and Liquid Glass otherwise follows the system into a light surface no ink survives.
+        panel.appearance = NSAppearance(named: .darkAqua)
         hosting = NSHostingView(rootView: NotchView(
             model: model, notchSize: notchSize, hardwareNotch: hardwareSeat, dockEdge: anchor.edge,
             onIslandFrame: { [weak self] rect in self?.islandFrame = rect }))

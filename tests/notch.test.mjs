@@ -84,6 +84,13 @@ test('wireNotch points launchd at the MATERIALIZED copy, records both rows, prun
       'the agent runs the materialized copy, never the package tree');
     assert.ok(!plist.includes(root), 'the mutable package tree appears NOWHERE in the agent');
 
+    // The bin FACT rides the install: a hand-started app (no launchd PATH) reads the
+    // stamped answer instead of gambling on a login shell that never sources .zshrc.
+    const stamped = fs.readFileSync(path.join(home, '.oathe', 'notch',
+      fs.readdirSync(path.join(home, '.oathe', 'notch'))[0], 'oathe-bin'), 'utf8').trim();
+    assert.ok(stamped.startsWith(path.dirname(process.execPath)), 'the stamp names the wiring node\'s bin dir');
+    assert.ok(stamped.endsWith('/oathe'), 'and the oathe bin inside it');
+
     const rows = manifest.rows;
     const agentRow = rows.find((r) => r.kind === 'launch-agent');
     const appRow = rows.find((r) => r.kind === 'notch-app');

@@ -46,24 +46,34 @@ enum OatheNotchApp {
     /// executable — never the bare process name: a name-wide supersede killed the
     /// founder's live notch every time the test suite bootstrapped a sandbox-home app
     /// (2026-08-31, the same lesson as the per-home launchd label).
-    static func installRoot(of url: URL?) -> String? {
-        guard let path = url?.resolvingSymlinksInPath().path else { return nil }
-        guard let range = path.range(of: "/.oathe/notch/") else { return nil }
-        return String(path[..<range.upperBound])
-    }
-
-    static func supersedeElders() {
+    /// ONE notch per BOARD (founder, 2026-08-31: two copies could coexist because a
+    /// dev-tree launch had no install root and escaped kinship entirely). Kinship is the
+    /// home a copy SERVES (Install.servedHome — one rule with the feed's fallback). A
+    /// MATERIALIZED copy supersedes kin elders newest-wins (KeepAlive-compatible: the
+    /// durable copy's restart always retakes the rect). A BARE copy defers: when an
+    /// installed kin already runs, the hand launch exits instead of stacking — and a
+    /// KeepAlive relaunch would out-new it moments later anyway.
+    static func enforceOneNotch() {
+        guard let mine = Installation.current else { return }
         let me = ProcessInfo.processInfo.processIdentifier
-        guard let myRoot = installRoot(of: Bundle.main.executableURL) else { return } // a dev run outside a materialized key supersedes nothing
-        for elder in NSWorkspace.shared.runningApplications
-        where elder.processIdentifier != me && installRoot(of: elder.executableURL) == myRoot {
-            FileHandle.standardError.write(Data("Oathe notch: superseding pid \(elder.processIdentifier)\n".utf8))
-            elder.forceTerminate()
+        let kin = NSWorkspace.shared.runningApplications.filter {
+            $0.processIdentifier != me
+                && $0.executableURL?.lastPathComponent == "OatheNotch"
+                && mine.servesSameBoard(as: Installation(of: $0.executableURL))
+        }
+        if mine.materialized {
+            for elder in kin {
+                FileHandle.standardError.write(Data("Oathe notch: superseding pid \(elder.processIdentifier)\n".utf8))
+                elder.forceTerminate()
+            }
+        } else if !kin.isEmpty {
+            FileHandle.standardError.write(Data("Oathe notch: an installed notch already serves this board — deferring\n".utf8))
+            exit(0)
         }
     }
 
     static func main() {
-        supersedeElders()
+        enforceOneNotch()
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let delegate = AppDelegate()
