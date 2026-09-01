@@ -47,6 +47,7 @@ final class NotchModel: ObservableObject {
     @Published private(set) var failure: String? // a dead feed is a standing condition — amber until it heals
     @Published private(set) var state: NotchState = .rest
     @Published private(set) var lastNotice: Notice? // the most recent event's words — read in the sheet, never on the bar
+    @Published private(set) var defaultAgent: String? // rides every frame; the empty-board invite names it
     @Published private(set) var expandedId: String?
     @Published private(set) var flashTask: String? // which row just acted…
     @Published private(set) var flashWord = ""     // …and what actually happened
@@ -116,6 +117,7 @@ final class NotchModel: ObservableObject {
         }
         knownTasks = seen
         if let notice = frame.notice { lastNotice = notice }
+        defaultAgent = frame.default_agent
         self.frame = frame
         if let open = expandedId, !entries.contains(where: { $0.id == open }) { expandedId = nil }
         // The one-time welcome rides the frame like everything else — the frame is the only
@@ -161,7 +163,9 @@ final class NotchModel: ObservableObject {
         }
         if state == .open {
             close()
-        } else if !entries.isEmpty || lastNotice != nil || failure != nil {
+        } else {
+            // An empty board answers too (founder, 2026-08-31): the sheet holds the
+            // no-claims invite, so a click is never ignored.
             state = .open // the sheet answers "which ones" — and holds the latest words
             onChange?()
         }
@@ -257,7 +261,7 @@ final class NotchModel: ObservableObject {
         let bundle = URL(fileURLWithPath: resume.terminal_bundle ?? "/System/Applications/Utilities/Terminal.app")
         var script = "#!/bin/zsh\n"
         if let bin = OatheFeed.resolveBin() {
-            script += "export PATH=\(shellQuote((bin as NSString).deletingLastPathComponent)):$PATH\n"
+            script += "export PATH=\(shellQuote(Installation.binDir(of: bin))):$PATH\n"
         }
         script += "cd \(shellQuote(cwd)) && \(command)\n"
         let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".oathe/resume.command")

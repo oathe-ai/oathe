@@ -102,8 +102,14 @@ export function wireNotch({ home, manifest, config, version, exec = defaultExec,
 
   const app = materializeNotchApp({ home, appBinary: source, version });
   const label = notchLabel(home);
+  // The bin FACT rides the install: any launch mode — launchd, a hand-started app, a dev
+  // double-click — reads the same answer Node stamped at wire time. The login-shell probe
+  // stays a last resort (it never sources .zshrc, so nvm setups don't answer there). ONE
+  // nodeBinDir feeds both the stamp and the agent's PATH — they can never disagree.
+  const nodeBinDir = path.dirname(process.execPath);
+  fs.writeFileSync(path.join(app.dir, 'oathe-bin'), `${path.join(nodeBinDir, 'oathe')}\n`);
   const file = launchAgentPath(home);
-  const content = launchAgentPlist(app.binary, { label });
+  const content = launchAgentPlist(app.binary, { label, nodeBinDir });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content);
 

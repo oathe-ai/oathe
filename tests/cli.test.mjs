@@ -289,6 +289,7 @@ test('oathe notch is PURE JSON on stdout — push, breaches, sections, workspace
   assert.equal(out.status, 0, out.stderr);
   const frame = JSON.parse(out.stdout); // pure JSON or this throws — the whole point
   assert.equal(frame.workspace, null, 'the machine frame has no folder lens');
+  assert.ok('default_agent' in frame, 'the machine default agent rides the frame — the glass reads no config');
   assert.ok(Array.isArray(frame.breaches), 'the breach digest rides the frame');
   assert.ok(frame.sections.mine.some((r) => r.task_id === 'notch-cli-task'), 'sections are the one classification');
   if (frame.breaches.length === 0) assert.equal(frame.push, null, 'breaches-or-silence');

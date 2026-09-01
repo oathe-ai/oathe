@@ -485,6 +485,10 @@ const handlers = {
         idle: sections.mine.filter((r) => !moving(r)).map((r) => glassRow(r, sess)),
         sections,
         workspace: null,
+        // The machine's chosen agent rides every frame — the glass reads no config (the
+        // welcome ruling generalized: Node owns the words and the facts; the glass plays
+        // them). null when onboarding never chose one; the empty-board invite goes generic.
+        default_agent: launchables.includes(defaultAgent) ? defaultAgent : null,
       };
     };
     if (!values.serve) {

@@ -1,10 +1,10 @@
-<!-- >>> oathe v0.1.2 >>> -->
+<!-- >>> oathe v0.3.1 >>> -->
 ## Oathe
 
-This folder has an Oathe board (workspace `ws-63d60b8f9275`). Claims are speech acts:
+This folder has an Oathe board (workspace `ws-6fb73e6686d6`). Claims are speech acts:
 claim before you build, record progress as statements, yield what you cannot finish —
-via the `oathe_*` MCP tools. The board renders at SessionStart; `continue <task>`
-picks work back up.
+via the `oathe_*` MCP tools. Where your session opens on this folder, the board loads
+with it; `continue <task>` picks work back up.
 <!-- <<< oathe <<< -->
 
 ## Working on this package (outside the oathe fence — contributors' rules)

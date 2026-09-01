@@ -90,6 +90,7 @@ struct Frame: Decodable {
     let sections: Sections
     let notice: Notice?
     let welcome: Welcome? // optional — an old feed's frames stay decodable
+    let default_agent: String? // the machine's chosen agent — the glass reads no config
 }
 
 protocol FeedClient: AnyObject {
@@ -134,6 +135,10 @@ final class OatheFeed: FeedClient {
             let candidate = String(dir) + "/oathe"
             if fm.isExecutableFile(atPath: candidate) { return candidate }
         }
+        // Rung 2: the fact Node stamped at wire time, through the ONE installation object
+        // — beside this bundle when materialized, else the served home's install. No
+        // launch mode gambles on a shell.
+        if let stamped = Installation.current?.stampedBin { return stamped }
         let probe = Process()
         probe.executableURL = URL(fileURLWithPath: "/bin/zsh")
         probe.arguments = ["-lc", "command -v oathe"]
@@ -176,6 +181,11 @@ final class OatheFeed: FeedClient {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
         proc.arguments = ["notch", "--serve"]
+        // The bin's own directory leads the child's PATH — the oathe script's `env node`
+        // shebang needs node, which lives beside the bin. Installation owns the rule.
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = Installation.nodePath(for: bin, over: env["PATH"])
+        proc.environment = env
         let out = Pipe()
         let inp = Pipe()
         proc.standardOutput = out
