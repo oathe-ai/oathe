@@ -2,6 +2,7 @@
 
 **Auto save across your harnesses.**
 
+Make sure your agent actually **DID** what it **SAID.**
 ![Claude Code hits its usage limit mid-fix; Codex opens in the same repo and Oathe resumes the task — progress, statements, and verification target intact.](assets/oathe-hero.png)
 
 You're mid-refactor in Claude Code when it hits a usage limit. You open Codex and it picks up the same task checkpointed, what's done, what's left, and a test that decides whether it's actually finished. Nothing pasted, nothing retyped, and the new agent doesn't have to take the old agent's word for anything because models are very good at being wrong AND confident.
