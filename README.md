@@ -10,6 +10,28 @@ That's the product. Below is exactly how much of it works today, because a relia
 
 [![CI](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE) [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/sjrdWEj4W8)
 
+## Quickstart
+
+You need Node ≥ 22 and a running Postgres. Every command below is real and exercised by the
+test suite.
+
+```bash
+npm install -g @oathe/oathe@latest
+
+cd your-project
+oathe init          # one screen: local substrate up (createdb + schema), every detected
+                    # harness pre-selected — space toggles, Enter installs
+oathe claude        # a normal interactive session — the board shows, nothing auto-resumes
+```
+
+Ctrl-C anytime. Open `oathe codex` in the same folder — same board, same claims, other
+harness. On macOS, init also seats the notch: a quiet glass on the camera housing that
+pulses verdicts and answers a click with the board (`oathe notch --welcome` replays its
+tour).
+
+What Oathe reads, stores, and sends: [docs/PRIVACY.md](docs/PRIVACY.md). The full
+technical reference: [docs/PACKAGE.md](docs/PACKAGE.md).
+
 ## What gets saved
 
 most harnesses save transcripts today. 
@@ -20,8 +42,8 @@ oathe goes up a layer of abstraction:
 | Saved | Why it matters |
 | --- | --- |
 | The task and who owns it | The next agent continues *assigned work*, not the last sentence someone typed |
-| Progress and evidence | Finished parts don't get rediscovered by archaeology |
-| Side-effect receipts | A payment, deploy, or message that already happened doesn't happen again on retry |
+| Progress and evidence | no grep, proper evidence and agent trajectory analysis to **make sure agents are DOING what they SAY they're doing** |
+| Side-effect receipts | critical actions get deduplicated — a payment, deploy, or message that already happened doesn't happen again on retry |
 | The definition of done | assigned before agent work starts, so it can't quietly drift |
 | A workspace checkpoint | Branch, commit, and work-in-progress bytes survive your session |
 
@@ -61,17 +83,27 @@ Two rules carry most of the weight:
 
 Honest labels, kept current in [ROADMAP.md](ROADMAP.md):
 
-- **Working:** durable tasks and attempts, death-and-recovery with a freshly compiled briefing, non-author verification, effect receipts (partial).
-- **Designed:** workspace checkpoints, the Claude→Codex end-to-end path, teammate handoff, the reliability benchmark, per-harness drift monitors (docs, install, and live lanes — proven on a developer machine against Claude Code, Codex, and Cursor; the scheduled workflows go live with this repository).
+- **Working:** durable tasks and attempts, death-and-recovery with a freshly compiled briefing, non-author verification, effect receipts (partial), cross-harness handoff (`continue`: same board, same claims, either harness).
+- **Designed:** workspace checkpoints, teammate handoff, the reliability benchmark, per-harness drift monitors (docs, install, and live lanes — proven on a developer machine against Claude Code, Codex, and Cursor; the scheduled workflows go live with this repository).
 - **Planned:** automatic pickup of interrupted work, cloud continuation, third-party conformance.
 
 Known limitations are disclosed in the roadmap, including the ones that are semi-embarrassing.
 
-<!-- QUICKSTART: fill from the actual pushed code — real install, real commands, real test run. Do not publish invented commands. -->
-
 ## Under the hood
 
 A small runtime plus a Postgres schema that carries the invariants. The database is deliberately load-bearing: the rules that keep work safe (one current attempt per task, receipts before effects, verification before settlement) are enforced where no caller can route around them. Harness adapters are thin; the substrate is strict.
+
+## CLI and MCP
+
+Claim work in-session through the `oathe_*` tools (or from the terminal):
+
+```bash
+oathe claim fix-login "users can sign in again"
+oathe note  fix-login "found the stale token check"
+oathe done  fix-login "guard rewritten, test added" src/auth.test.js
+oathe verify fix-login   # a NON-author engine judges it from your recorded session traces
+oathe ls                 # the board; `oathe uninstall` removes exactly what init recorded
+```
 
 ## Contributing
 

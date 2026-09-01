@@ -27,6 +27,10 @@ not a fabricated goodbye.
                                   # recorded trace INTERVALS; a DETERMINISTIC acceptance lane
                                   # settles under the non-author seat (accepted → settled;
                                   # rejected → reopened)
+    oathe amend <id> <objective> <why>  # change what done means, ON THE RECORD — the
+                                  # amendment trail rides into verification
+    oathe notch [--welcome]       # the machine-wide board as pure JSON (the macOS glass's
+                                  # feed); --welcome replays the notch's first-run tour
     oathe trace <id> [--out dir]  # export the claim's linked session traces as ATIF trajectories
     oathe config <key> [value]    # read/write tunables (workspace .oathe.json or --global)
     oathe yield <id> <note>       # the task goes back on the board, unowned
@@ -62,6 +66,9 @@ each harness's cached plugin version.
 - Project `CLAUDE.md`/`AGENTS.md` (at `oathe claude` pre-flight) — one tiny managed section
   inside `<!-- >>> oathe … >>> -->` fences; content outside the fence is never touched.
 - `~/.oathe/` — install manifest, pre-edit backups, artifact store.
+- `~/Library/LaunchAgents/ai.oathe.notch.*.plist` + `~/.oathe/notch/` (macOS) — the notch
+  app, materialized under a version+content key and kept alive by launchd; booted out and
+  removed by `oathe uninstall`.
 
 The monorepo is consumed **read-only** (a `file:` dependency plus one sanctioned path import
 for the cage); nothing here edits it, and nothing here is published anywhere.
