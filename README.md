@@ -13,9 +13,6 @@ That's the product. Below is exactly how much of it works today, because a relia
 
 ## Quickstart
 
-You need Node ≥ 22 and a running Postgres. Every command below is real and exercised by the
-test suite.
-
 ```bash
 npm install -g @oathe/oathe@latest
 
