@@ -16,6 +16,7 @@ import { sha256Hex } from '../src/manifest.mjs';
 import { MARKER_PATTERNS } from '../scripts/marker-scan.mjs';
 
 const FY = ['fir', 'iya'].join('');
+const SMB = ['sh', 'ez'].join('') + ['ma', 'lik'].join(''); // the founder's home-directory (bare) form, assembled so no fragment is a literal
 
 const paths = buildPaths({});
 const VENDOR_SCRIPT = path.join(paths.packageRoot, 'scripts/vendor-ddl.mjs');
@@ -170,6 +171,11 @@ test('marker-scan catches each newly-added private-marker pattern, one planted h
       'superpowers.txt': 'loaded from .superpowers/skills on session start\n',
       'claude-session.txt': 'Claude-Session: https://claude.ai/code/session_ABC123\n',
       'founder-email.txt': `approvals go through ${['sh', 'ez'].join('') + '.' + ['ma', 'lik00'].join('') + '@gmail.com'}\n`,
+      // 2026-09-03: the 0.4.1 final review found 655 build intermediates naming the founder's
+      // HOME path that only the launch-side scan caught — the bare name (no dot) and any real
+      // user's home-directory path are hunted here too; the sanitizer's synthetic users are not.
+      'founder-home.txt': `built under /Users/${SMB}/Library/Developer on the box\n`,
+      'home-path.txt': 'the transcript sits at /Users/alice/.claude/projects/x.jsonl\n',
     };
     for (const [name, contents] of Object.entries(plants)) {
       fs.writeFileSync(path.join(dir, name), contents);
@@ -188,9 +194,29 @@ test('MARKER_PATTERNS covers the full private vocabulary, one probe per pattern'
   const probes = [
     FY, 'ws-0d0a0b0c0d0e', '.ai-docs/plans/x.md', '.superpowers/skills/y',
     'Claude-Session: https://claude.ai/code/session_x', ['sh', 'ez'].join('') + '.' + ['ma', 'lik00'].join('') + '@gmail.com',
+    SMB, '/Users/alice/proj/',
   ];
   for (const probe of probes) {
     assert.ok(MARKER_PATTERNS.some((p) => p.test(probe)), `no pattern matches: ${probe}`);
+  }
+});
+
+test("marker-scan leaves the sanitizer's synthetic users and build intermediates alone", () => {
+  // The derive gate scans every sanitized fixture, and the sanitizer writes /Users/dev, /Users/x
+  // and /Users/someone on purpose — a home-path pattern that flagged them would break the gate.
+  // SwiftPM's .build is toolchain state (gitignored, never tree content) and every Mac build
+  // writes the toolchain's home-relative paths into it — skipped, like node_modules.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-marker-scan-synthetic-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'synthetic.txt'),
+      'fixtures live at /Users/dev/app, /Users/x/.local/bin/agent and /Users/someone/proj today\n');
+    fs.mkdirSync(path.join(dir, '.build'));
+    fs.writeFileSync(path.join(dir, '.build', 'manifest.json'), `{"path":"/Users/${SMB}/Library/Developer/x"}\n`);
+    const result = runScan([dir]);
+    assert.equal(result.status, 0, result.stdout);
+    assert.match(result.stdout, /clean — 0 hits across 1 file\(s\) scanned/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

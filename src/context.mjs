@@ -24,7 +24,7 @@ export function buildContext({ env = process.env, exec, cwd = process.cwd() } = 
   const substrate = new Substrate({ database: config.get('db'), paths, env, config });
   const identity = {
     orgId: config.get('org'),
-    principalId: config.get('principal') || env.USER || 'operator',
+    principalId: config.get('principal'),
     department: config.get('department'),
   };
   return { paths, home, manifest, harnesses, substrate, identity, config, version: packageVersion(paths), env };

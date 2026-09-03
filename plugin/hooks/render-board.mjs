@@ -32,14 +32,14 @@ await failSoft(async ({ substrate, workspace, synthetic, identity, config, cwd, 
   // R-PAGER: the breach digest is computed apart from the board, and a failure there is
   // reported on stderr while the board still renders — the digest is a courtesy, the board
   // is the session's contract.
-  let breaches = [];
+  let digest = null;
   try {
     const { Pager } = await import('../../src/pager.mjs');
-    breaches = await new Pager({ client: substrate, identity, config, registry }).breaches();
+    digest = await new Pager({ client: substrate, identity, config, registry }).digest();
   } catch (e) {
     process.stderr.write(`oathe hook: pager ${String(e?.message || e)}\n`);
   }
-  const { context, message } = await renderBoard({ client: substrate, identity, workspace, config, synthetic, breaches });
+  const { context, message } = await renderBoard({ client: substrate, identity, workspace, config, synthetic, digest });
   // R-QUIET: the board message is breaches-or-silence; a real write's disclosure still speaks
   // (a receipt, printed once) even when the board itself has nothing to push.
   const visible = [message, disclosed].filter(Boolean).join('\n') || null;

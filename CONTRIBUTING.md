@@ -45,6 +45,10 @@ Three lanes hold those facts to the world:
   against it through the doctor's row verification. It blocks merges.
 - **Harness live contract** (nightly) runs one real headless session per harness and checks the
   hook payload, the transcript, and the output against the pinned fixtures.
+- **Harbor conformance** (nightly) installs the Harbor pinned in `harbor-conformance.lock.json`,
+  drives its converters on every trace fixture, and compares the structure against the reviewed
+  baseline in that lock — fails loud on a divergence the baseline does not carry. It never
+  blocks a PR.
 
 When a lane goes red, the fix is a pin, never a silence:
 
@@ -55,10 +59,13 @@ When a lane goes red, the fix is a pin, never a silence:
    one (`tests/fixtures/hooks/<harness>/<date>-<event>.json`); the contract suite must keep
    serving both shapes.
 3. Re-pin the docs: `npm run pull-harness-docs && npm run harness-docs-lock`, and commit
-   `harness-docs.lock.json` with the change that answers it.
+   `harness-docs.lock.json` with the change that answers it. Re-pin the Harbor baseline the
+   same way: `npm run harbor-conformance-lock` with `harbor` importable from `python3`, and
+   commit `harbor-conformance.lock.json` with the converter change that explains the diff.
 
 Run any lane locally: `npm run harness-docs-drift`, `npm run install-contract -- <harness>`,
-`npm run live-contract -- <harness> --in-place` (your own login, no sandbox).
+`npm run live-contract -- <harness> --in-place` (your own login, no sandbox),
+`npm run harbor-conformance` (with `harbor` on your `python3`).
 
 ## Review and merge
 

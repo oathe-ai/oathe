@@ -1,0 +1,76 @@
+{
+  "_source": "sanitized from a real codex record by scripts/derive-trace-fixtures.mjs — review this diff before it lands",
+  "record": ".codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-00000000-0000-7000-8000-000000000001.jsonl",
+  "trajectory": {
+    "schema_version": "ATIF-v1.7",
+    "session_id": "00000000-0000-7000-8000-000000000001",
+    "agent": {
+      "name": "codex",
+      "version": "0.150.0",
+      "model_name": "codex-auto-review"
+    },
+    "steps": [
+      {
+        "step_id": 1,
+        "source": "system",
+        "message": "redacted 7c4d429f (len 54)"
+      },
+      {
+        "step_id": 2,
+        "source": "user",
+        "message": "redacted c49eb1e9 (len 1397)\nredacted 071bd52f (len 505)"
+      },
+      {
+        "step_id": 3,
+        "source": "user",
+        "message": "redacted f3c2bf52 (len 225)\nredacted df948757 (len 21)\nredacted 811fa6b2 (len 7917)\nredacted c54138f7 (len 539)\nredacted fcffc5ad (len 1237)\nredacted 83528f80 (len 307)\nredacted 98ac7b99 (len 2286)\nredacted cbbafa57 (len 514)\nredacted f4d39ff6 (len 4010)\nredacted c0d58d35 (len 542)\nredacted 0acb8691 (len 4020)\nredacted cbf94960 (len 612)\nredacted 4e18d4e7 (len 19)\nredacted 7ddad8ba (len 64)\nredacted 523474a1 (len 52)\nredacted bc5d0c20 (len 27)\nredacted be2a2d85 (len 91)\nredacted 080d7698 (len 21)\nredacted 15219e62 (len 559)\nredacted 68b96c2f (len 25)"
+      },
+      {
+        "step_id": 4,
+        "source": "agent",
+        "message": "redacted d31f7631 (len 169)",
+        "timestamp": "2026-09-01T02:58:55.282Z",
+        "metrics": {
+          "prompt_tokens": 13348,
+          "completion_tokens": 200,
+          "cached_tokens": 4864
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 5,
+        "source": "system",
+        "message": "redacted 70034929 (len 279)"
+      },
+      {
+        "step_id": 6,
+        "source": "user",
+        "message": "redacted 360af612 (len 273)\nredacted 845c2f1b (len 27)\nredacted a598058a (len 4005)\nredacted 93f1aeff (len 1131)\nredacted a7c21103 (len 25)\nredacted 7ddad8ba (len 64)\nredacted 12c9e4f5 (len 57)\nredacted bc5d0c20 (len 27)\nredacted be2a2d85 (len 91)\nredacted 080d7698 (len 21)\nredacted 934b6311 (len 1078)\nredacted 68b96c2f (len 25)"
+      },
+      {
+        "step_id": 7,
+        "source": "agent",
+        "message": "redacted 1239da1d (len 220)",
+        "timestamp": "2026-09-01T02:59:11.161Z",
+        "metrics": {
+          "prompt_tokens": 15819,
+          "completion_tokens": 136,
+          "cached_tokens": 13056
+        },
+        "llm_call_count": 1
+      }
+    ],
+    "final_metrics": {
+      "total_prompt_tokens": 29167,
+      "total_completion_tokens": 336,
+      "total_cached_tokens": 17920,
+      "total_steps": 7
+    },
+    "extra": {
+      "record": {
+        "source_path": "<home>/.codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-00000000-0000-7000-8000-000000000001.jsonl",
+        "step_boundary": "token_count"
+      }
+    }
+  }
+}

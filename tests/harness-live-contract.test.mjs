@@ -60,7 +60,7 @@ before(async () => {
   await runInit({ env: sb.env, exec: sb.exec });
   // node wearing cursor's bin name: ps `comm=` resolves symlinks, so the impersonation
   // needs a REAL file — hardlink where the filesystem allows, copy where it doesn't.
-  cursorNodeLink = path.join(sb.home, 'cursor-agent');
+  cursorNodeLink = path.join(sb.home, 'agent');
   try {
     fs.linkSync(process.execPath, cursorNodeLink);
   } catch {

@@ -81,9 +81,8 @@ function curatedEnv(env, { hermetic, extra }) {
 }
 
 /**
- * ONE launcher, both harnesses — same cage, same session host, same pre-flight; only the
- * binary differs. (An earlier plan deferred `oathe codex` on the premise that Codex lacked
- * Stop/PreCompact; the docs pass proved both exist, so the premise — and the wait — died.)
+ * ONE launcher, every launchable harness (Claude Code, Codex) — same cage, same session host,
+ * same pre-flight; only the binary differs.
  *
  * @param {{harness: 'claude'|'codex', env?: object, cwd?: string, args?: string[],
  *          hermetic?: boolean, exec?: object, observeIntervalMs?: number}} o
@@ -109,9 +108,9 @@ export async function runHarness({
         import('./board-render.mjs'), import('./pager.mjs'), import('./registry.mjs'),
       ]);
       const registry = new WorkspaceRegistry({ registryPath: paths.registryPath });
-      const breaches = await new Pager({ client: substrate, identity, config, registry }).breaches();
-      const seen = await renderBoard({ client: substrate, identity, workspace, config, synthetic, breaches });
-      out.write(renderSplash({ message: seen.message, sections: seen.sections, workspace: seen.lens, breaches }));
+      const digest = await new Pager({ client: substrate, identity, config, registry }).digest();
+      const seen = await renderBoard({ client: substrate, identity, workspace, config, synthetic, digest });
+      out.write(renderSplash({ digest, sections: seen.sections, workspace: seen.lens }));
       openWork = Object.values(seen.sections).some((rows) => rows.length > 0);
     } catch (e) {
       out.write(`Oathe board unavailable (${String(e?.message || e).slice(0, 120)})\n`);

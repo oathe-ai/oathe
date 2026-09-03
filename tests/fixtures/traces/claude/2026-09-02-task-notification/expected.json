@@ -1,0 +1,488 @@
+{
+  "_source": "sanitized from a real claude record by scripts/derive-trace-fixtures.mjs — review this diff before it lands",
+  "record": ".claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001.jsonl",
+  "window": {
+    "from": 399,
+    "max_lines": 23
+  },
+  "trajectory": {
+    "schema_version": "ATIF-v1.7",
+    "session_id": "00000000-0000-7000-8000-000000000001",
+    "agent": {
+      "name": "claude",
+      "version": "2.1.239",
+      "model_name": "claude-fable-5"
+    },
+    "steps": [
+      {
+        "step_id": 1,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-08-28T02:22:53.562Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "toolu_1",
+            "function_name": "Agent",
+            "arguments": {
+              "description": "redacted-b4ad4e32",
+              "subagent_type": "redacted-c857d09d",
+              "prompt": "redacted-aa4d9776"
+            }
+          },
+          {
+            "tool_call_id": "toolu_2",
+            "function_name": "Agent",
+            "arguments": {
+              "description": "redacted-afcaf385",
+              "subagent_type": "redacted-c857d09d",
+              "prompt": "redacted-e32330b7"
+            }
+          },
+          {
+            "tool_call_id": "toolu_3",
+            "function_name": "Agent",
+            "arguments": {
+              "description": "redacted-563cd4cb",
+              "subagent_type": "redacted-c857d09d",
+              "prompt": "redacted-b38a3583"
+            }
+          }
+        ],
+        "metrics": {
+          "prompt_tokens": 241570,
+          "completion_tokens": 15345,
+          "cached_tokens": 237663,
+          "extra": {
+            "cache_creation_input_tokens": 3905
+          }
+        },
+        "llm_call_count": 1,
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "toolu_1",
+              "content": "redacted a4c8ad42 (len 1072)",
+              "subagent_trajectory_ref": [
+                {
+                  "trajectory_id": "id19",
+                  "extra": {
+                    "agent_type": "claude"
+                  }
+                }
+              ]
+            },
+            {
+              "source_call_id": "toolu_2",
+              "content": "redacted 2ec3aefd (len 1072)",
+              "subagent_trajectory_ref": [
+                {
+                  "trajectory_id": "id41",
+                  "extra": {
+                    "agent_type": "claude"
+                  }
+                }
+              ]
+            },
+            {
+              "source_call_id": "toolu_3",
+              "content": "redacted 4105a7e6 (len 1072)",
+              "subagent_trajectory_ref": [
+                {
+                  "trajectory_id": "id30",
+                  "extra": {
+                    "agent_type": "claude"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "step_id": 2,
+        "source": "agent",
+        "message": "redacted 46e729a9 (len 84)",
+        "timestamp": "2026-08-28T02:23:31.712Z",
+        "reasoning_content": "redacted e3b0c442 (len 0)",
+        "metrics": {
+          "prompt_tokens": 259358,
+          "completion_tokens": 401,
+          "cached_tokens": 241568,
+          "extra": {
+            "cache_creation_input_tokens": 17788
+          }
+        },
+        "llm_call_count": 1,
+        "tool_calls": [
+          {
+            "tool_call_id": "toolu_4",
+            "function_name": "mcp__plugin_oathe_oathe__oathe_statement",
+            "arguments": {
+              "task_id": "session-055-engagement",
+              "proposition": "redacted-4419486f",
+              "evidence_ref": "redacted-a4d74d32"
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "toolu_4",
+              "content": "redacted 0cbf56a0 (len 121)"
+            }
+          ]
+        }
+      },
+      {
+        "step_id": 3,
+        "source": "agent",
+        "message": "redacted 14593363 (len 279)",
+        "timestamp": "2026-08-28T02:23:45.518Z",
+        "reasoning_content": "redacted e3b0c442 (len 0)",
+        "metrics": {
+          "prompt_tokens": 259848,
+          "completion_tokens": 417,
+          "cached_tokens": 259356,
+          "extra": {
+            "cache_creation_input_tokens": 490
+          }
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 4,
+        "source": "system",
+        "message": ""
+      },
+      {
+        "step_id": 5,
+        "source": "system",
+        "message": ""
+      },
+      {
+        "step_id": 6,
+        "source": "system",
+        "message": "[inbound task-notification id19]",
+        "timestamp": "2026-08-28T02:25:40.759Z",
+        "llm_call_count": 0,
+        "extra": {
+          "record": {
+            "inbound": {
+              "kind": "task-notification",
+              "task_id": "id19",
+              "tool_use_id": "toolu_1"
+            }
+          }
+        },
+        "observation": {
+          "results": [
+            {
+              "content": "<task-notification>\n<task-id>id19</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<output-file>redacted 8be0f2cd (len 131)</output-file>\n<status>completed</status>\n<summary>redacted f1eb3a63 (len 47)</summary>\n<note>redacted 6c1f6549 (len 196)</note>\n<result>redacted 5a421f93 (len 6557)</result>\n<usage>redacted 44caf938 (len 97)</usage>\n</task-notification>",
+              "subagent_trajectory_ref": [
+                {
+                  "trajectory_id": "id19"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "final_metrics": {
+      "total_prompt_tokens": 1019122,
+      "total_completion_tokens": 50275,
+      "total_cached_tokens": 878072,
+      "total_steps": 6
+    },
+    "extra": {
+      "record": {
+        "source_path": "<home>/.claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001.jsonl",
+        "session_title": "Fixture title"
+      }
+    },
+    "subagent_trajectories": [
+      {
+        "schema_version": "ATIF-v1.7",
+        "session_id": "00000000-0000-7000-8000-000000000001",
+        "agent": {
+          "name": "claude",
+          "version": "2.1.239",
+          "model_name": "claude-fable-5"
+        },
+        "steps": [
+          {
+            "step_id": 1,
+            "source": "user",
+            "message": "redacted aa4d9776 (len 6127)"
+          },
+          {
+            "step_id": 2,
+            "source": "agent",
+            "message": "redacted 8da87e0e (len 96)",
+            "timestamp": "2026-08-28T02:22:56.829Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 31824,
+              "completion_tokens": 241,
+              "cached_tokens": 15073,
+              "extra": {
+                "cache_creation_input_tokens": 16749
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_5",
+                "function_name": "Read",
+                "arguments": {
+                  "file_path": "redacted-cc42876d (len 107)"
+                }
+              },
+              {
+                "tool_call_id": "toolu_6",
+                "function_name": "Read",
+                "arguments": {
+                  "file_path": "redacted-b544eeb4 (len 109)"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_5",
+                  "content": "redacted 81dfd599 (len 24471)"
+                },
+                {
+                  "source_call_id": "toolu_6",
+                  "content": "redacted 213c3ebc (len 18840)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 3,
+            "source": "agent",
+            "message": "redacted 5a421f93 (len 6557)",
+            "timestamp": "2026-08-28T02:25:19.564Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 55078,
+              "completion_tokens": 10529,
+              "cached_tokens": 31822,
+              "extra": {
+                "cache_creation_input_tokens": 23254
+              }
+            },
+            "llm_call_count": 1
+          }
+        ],
+        "final_metrics": {
+          "total_prompt_tokens": 86902,
+          "total_completion_tokens": 10770,
+          "total_cached_tokens": 46895,
+          "total_steps": 3
+        },
+        "extra": {
+          "record": {
+            "source_path": "<home>/.claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001/subagents/agent-id19.jsonl",
+            "subagent_meta": {
+              "agentType": "claude",
+              "description": "redacted",
+              "toolUseId": "toolu_1",
+              "spawnDepth": 1
+            }
+          }
+        },
+        "trajectory_id": "id19"
+      },
+      {
+        "schema_version": "ATIF-v1.7",
+        "session_id": "00000000-0000-7000-8000-000000000001",
+        "agent": {
+          "name": "claude",
+          "version": "2.1.239",
+          "model_name": "claude-fable-5"
+        },
+        "steps": [
+          {
+            "step_id": 1,
+            "source": "user",
+            "message": "redacted b38a3583 (len 3949)"
+          },
+          {
+            "step_id": 2,
+            "source": "agent",
+            "message": "redacted 7ee632d6 (len 59)",
+            "timestamp": "2026-08-28T02:23:30.941Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 30968,
+              "completion_tokens": 267,
+              "cached_tokens": 15073,
+              "extra": {
+                "cache_creation_input_tokens": 15893
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_7",
+                "function_name": "Read",
+                "arguments": {
+                  "file_path": "redacted-cc42876d (len 107)"
+                }
+              },
+              {
+                "tool_call_id": "toolu_8",
+                "function_name": "Read",
+                "arguments": {
+                  "file_path": "redacted-b544eeb4 (len 109)"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_7",
+                  "content": "redacted 81dfd599 (len 24471)"
+                },
+                {
+                  "source_call_id": "toolu_8",
+                  "content": "redacted 213c3ebc (len 18840)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 3,
+            "source": "agent",
+            "message": "redacted d2b2927d (len 4747)",
+            "timestamp": "2026-08-28T02:25:35.785Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 54248,
+              "completion_tokens": 8770,
+              "cached_tokens": 30966,
+              "extra": {
+                "cache_creation_input_tokens": 23280
+              }
+            },
+            "llm_call_count": 1
+          }
+        ],
+        "final_metrics": {
+          "total_prompt_tokens": 85216,
+          "total_completion_tokens": 9037,
+          "total_cached_tokens": 46039,
+          "total_steps": 3
+        },
+        "extra": {
+          "record": {
+            "source_path": "<home>/.claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001/subagents/agent-id30.jsonl",
+            "subagent_meta": {
+              "agentType": "claude",
+              "description": "redacted",
+              "toolUseId": "toolu_3",
+              "spawnDepth": 1
+            }
+          }
+        },
+        "trajectory_id": "id30"
+      },
+      {
+        "schema_version": "ATIF-v1.7",
+        "session_id": "00000000-0000-7000-8000-000000000001",
+        "agent": {
+          "name": "claude",
+          "version": "2.1.239",
+          "model_name": "claude-fable-5"
+        },
+        "steps": [
+          {
+            "step_id": 1,
+            "source": "user",
+            "message": "redacted e32330b7 (len 5121)"
+          },
+          {
+            "step_id": 2,
+            "source": "agent",
+            "message": "redacted 578450cb (len 53)",
+            "timestamp": "2026-08-28T02:23:16.834Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 31480,
+              "completion_tokens": 255,
+              "cached_tokens": 15073,
+              "extra": {
+                "cache_creation_input_tokens": 16405
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_9",
+                "function_name": "Read",
+                "arguments": {
+                  "file_path": "redacted-cc42876d (len 107)"
+                }
+              },
+              {
+                "tool_call_id": "toolu_10",
+                "function_name": "Read",
+                "arguments": {
+                  "file_path": "redacted-b544eeb4 (len 109)"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_9",
+                  "content": "redacted 81dfd599 (len 24471)"
+                },
+                {
+                  "source_call_id": "toolu_10",
+                  "content": "redacted 213c3ebc (len 18840)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 3,
+            "source": "agent",
+            "message": "redacted c084c432 (len 6117)",
+            "timestamp": "2026-08-28T02:26:29.570Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 54748,
+              "completion_tokens": 14050,
+              "cached_tokens": 31478,
+              "extra": {
+                "cache_creation_input_tokens": 23268
+              }
+            },
+            "llm_call_count": 1
+          }
+        ],
+        "final_metrics": {
+          "total_prompt_tokens": 86228,
+          "total_completion_tokens": 14305,
+          "total_cached_tokens": 46551,
+          "total_steps": 3
+        },
+        "extra": {
+          "record": {
+            "source_path": "<home>/.claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001/subagents/agent-id41.jsonl",
+            "subagent_meta": {
+              "agentType": "claude",
+              "description": "redacted",
+              "toolUseId": "toolu_2",
+              "spawnDepth": 1
+            }
+          }
+        },
+        "trajectory_id": "id41"
+      }
+    ]
+  }
+}

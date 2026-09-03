@@ -1,7 +1,7 @@
 {
   "name": "oathe",
-  "version": "0.3.2",
-  "description": "Claims are speech acts: your session opens on this folder's board, records progress as statements, and yields what it cannot finish. Horizons move only by deliberate acts \u2014 never by session liveness.",
+  "version": "0.4.1",
+  "description": "Claims are speech acts: your session opens on this folder's board, records progress as statements, and yields what it cannot finish. Horizons move only by deliberate acts — never by session liveness.",
   "author": {
     "name": "Oathe"
   },

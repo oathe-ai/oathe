@@ -19,7 +19,7 @@ keyboard) is the last gate before a public flip — never the first place a rule
    so the screen cannot promise what the write does not do. Nobody has to read anything to press
    Enter. — held by `tests/setup.test.mjs, tests/harness-contract.test.mjs`
 3. **Presence is stated as facts.** "found: CLI on PATH, config at ~/.claude"; "found: config
-   at ~/.cursor (no cursor-agent/cursor on PATH)"; "not found (no codex on PATH, no ~/.codex)"
+   at ~/.cursor (no agent on PATH)"; "not found (no codex on PATH, no ~/.codex)"
    — what was found, or what was looked for; never a bare "installed". — held by
    `tests/setup.test.mjs`
 4. **The default is visible and Enter takes it.** Detected harnesses start `[x]`; the verifier
@@ -76,6 +76,37 @@ keyboard) is the last gate before a public flip — never the first place a rule
 16. **Public copy promises only what tests prove.** `docs/PRODUCT.md` §3 names every file a
     wiring adapter says init writes; the README's "What init touches" is the founder's copy and
     is compared by hand against the same list. — held by `tests/ux-contract.test.mjs`
+
+## Breaches
+
+17. **Breaches push; status pulls.** The only ambient line a person sees is the count by kind
+    — `3 to fix · 1 to verify · 2 gone quiet` — composed once, in `BreachDigest.push`; a clean
+    machine is silence. What the rows are rides the model channel and the pulls
+    (`oathe_board`, `oathe ls`, the glass). — held by
+    `tests/breach-digest.test.mjs, tests/board-render.test.mjs, tests/plugin.test.mjs`
+18. **A digest is a budget, not a wall.** Every breach list is the same digest: at most eight
+    rows, sharpest first, one row per task or per sibling group, then one `+N more` that names
+    the pull (`oathe_board` for the model, `oathe ls` for the terminal — uncapped, no flag). A
+    rendered detail is clipped by its renderer; the data stays whole. — held by
+    `tests/breach-digest.test.mjs, tests/board-render.test.mjs, tests/cli.test.mjs`
+19. **Attention is this board's, to fix, never a flood.** A tool response carries only the
+    rejected and verify-failed work homed on this board (a synthetic surface sees the machine),
+    under the same budget and order, with the same `+N more`; a board with nothing to fix
+    carries no key. It is derived from conditions on every call — no read-state, so it repeats
+    while true and vanishes when the condition clears. `oathe_board.breaches` is the pull: every
+    kind, grouped, ordered, uncapped. — held by `tests/pager.test.mjs, tests/oathe-tools.test.mjs`
+20. **The glass plays the frame.** The frame carries every word the glass shows — kind words,
+    act words, the children line, the `+N more` number ride from Node (`src/notch-frame.mjs`);
+    the glass reads no config and composes no sentence. The Swift decoder's fields are pinned
+    by a Node test that reads `Feed.swift`, and the sheet's row cap equals the digest's. A row
+    expands to the task card: what is owed, where it stands, the last word (whole), where it
+    lives, the one act. — held by `tests/notch-frame.test.mjs, tests/cli.test.mjs`
+21. **Siblings are one row.** Work claimed while a session holds a claim is recorded as spawned
+    under it (`oathe_claim` `parent`: omit for the session's root, an id to name the claim it
+    serves, `null` for standalone work; a parent you do not hold is a typed refusal before any
+    claim lands). Children never surface top-level while their parent is in view: the parent's
+    row gains one counts line (`spawned 3 — 2 active · 1 settled`), and a breached group is one
+    digest row with one act. — held by `tests/lineage.test.mjs, tests/breach-digest.test.mjs`
 
 ## Words
 

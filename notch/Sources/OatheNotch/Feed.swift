@@ -23,7 +23,10 @@ struct Sections: Decodable {
 
 struct Breach: Decodable {
     let kind: String // overdue | reopened | stalled | quiet
+    let kind_word: String // the person word for the kind — Node's, never composed here
     let task_id: String
+    let objective: String? // what is owed — the card's first line
+    let home: String? // where it lives, as the package labels it
     let detail: String
     let at: String? // the breach's own clock (UTC) — the glass renders an age from it
     let act: Resume? // the package-owned act: verify for overdue/stalled, the resumption else
@@ -38,17 +41,19 @@ struct SessionRef: Decodable {
 /// The package-owned resumption: the glass EXECUTES, it never decides.
 struct Resume: Decodable {
     let kind: String // activate | spawn-terminal | open-app | copy-only
+    let word: String // the act's word on the button (continue ↗ / verify ↗ / retry ↗) — Node's
     let app_pid: Int32?
     let bundle: String?
     let command: String?
     let cwd: String?
     let terminal_bundle: String?
 
-    private enum CodingKeys: String, CodingKey { case kind, app_pid, bundle, command, cwd, terminal_bundle }
+    private enum CodingKeys: String, CodingKey { case kind, word, app_pid, bundle, command, cwd, terminal_bundle }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         kind = try c.decode(String.self, forKey: .kind)
+        word = try c.decode(String.self, forKey: .word)
         app_pid = try c.decodeIfPresent(Int32.self, forKey: .app_pid)
         bundle = try c.decodeIfPresent(String.self, forKey: .bundle)
         command = try c.decodeIfPresent(String.self, forKey: .command)
@@ -59,6 +64,8 @@ struct Resume: Decodable {
 
 struct MotionRow: Decodable {
     let task_id: String
+    let objective: String? // what is owed — the card's first line
+    let children_line: String? // "spawned 2 — 1 active · 1 settled", from the board; nil until the claim spawns
     let holder: String?
     let state: String?
     let last_word_at: String?
@@ -82,9 +89,12 @@ struct Welcome: Decodable {
     let lines: [String]
 }
 
+/// The frame is the digest's budget: `breaches` are its rows (sharpest first, at most the
+/// sheet's rowCap) and `more` the count beyond them. The bar is color and a count; the
+/// sheet's rows carry the words — no push line rides the frame.
 struct Frame: Decodable {
-    let push: String?
     let breaches: [Breach]
+    let more: Int?
     let motion: [MotionRow]
     let idle: [MotionRow]
     let sections: Sections

@@ -27,6 +27,19 @@ test('defaults are named once and reachable — no consumer hardcodes them', () 
   assert.equal(cfg.get('pagerQuietHours'), 24);
 });
 
+test('principal defaults to the OS user — the one fallback, named once here (D0-PREVIEW: OATHE_PRINCIPAL or the OS user)', () => {
+  // Before 2026-09-03 the key defaulted to null and three consumers each wrote
+  // `config.get('principal') || env.USER || 'operator'` — the same fallback hardcoded thrice,
+  // and `oathe config principal` answered null. The founder's word: it should be the user.
+  const { env, cwd } = scratch();
+  const cfg = new OatheConfig({ env, cwd });
+  assert.equal(cfg.get('principal'), os.userInfo().username);
+  assert.equal(cfg.source('principal'), 'default');
+  assert.equal(new OatheConfig({ env: { ...env, OATHE_PRINCIPAL: 'ada' }, cwd }).get('principal'), 'ada');
+  assert.throws(() => new OatheConfig({ env: { ...env, OATHE_PRINCIPAL: '' }, cwd }),
+    (e) => e.code === 'OATHE_CONFIG_VALUE_INVALID', 'an empty principal is refused, never silently someone else');
+});
+
 test('R-PAGER: pagerQuietHours is a positive-int key with a 24h default — the quiet-claim threshold', () => {
   const { env, cwd } = scratch();
   assert.equal(new OatheConfig({ env, cwd }).get('pagerQuietHours'), 24);

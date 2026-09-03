@@ -6,7 +6,7 @@
 import { parseArgs } from 'node:util';
 
 import { isTraceSubjectSql } from '../src/statements.mjs';
-import { byName, launchable, projectorFor, verifierCapable } from '../src/harnesses/catalog.mjs';
+import { byName, launchable, verifierCapable } from '../src/harnesses/catalog.mjs';
 
 const VERBS = ['init', ...launchable(), 'claim', 'ls', 'note', 'amend', 'done', 'verify', 'trace', 'notch', 'yield', 'config', 'doctor', 'uninstall', 'status', 'version', 'hook', 'mcp'];
 
@@ -14,7 +14,7 @@ const USAGE = `usage: oathe <verb> [args]
 
 verbs:
   init [--harness a,b] [--yes] bring up the local cell substrate + wire the harnesses you pick
-${launchable().map((name) => `  ${name.padEnd(6)} [--hermetic] [args…]  launch interactive ${byName(name).displayName} inside the cage, board attached`).join('\n')}
+${launchable().map((name) => `  ${name.padEnd(6)} [--hermetic] [args…]  ${byName(name).displayName} here as one tracked attempt (what the notch's continue runs; plain ${byName(name).launch.bin} works too)`).join('\n')}
   claim <task-id> [objective]  claim a task (minting it when new — objective required then)
   ls [--all]                   this workspace's board (--all: every workspace)
   note <task-id> <text> [ref]  record a progress statement against your active claim
@@ -133,9 +133,10 @@ const handlers = {
     }
     // The moment after init (live polish #7): what to do next, coloured only on a TTY.
     const tty = process.stdout.isTTY === true;
-    const [B, D, R] = tty ? ['\x1b[1m', '\x1b[2m', '\x1b[0m'] : ['', '', ''];
-    const [first, ...rest] = launchable();
-    process.stdout.write(`\n  Next: ${B}oathe ${first}${R} ${D}(or ${rest.join(', ')})${R} in any project — the board rides every session.\n`);
+    const [B, R] = tty ? ['\x1b[1m', '\x1b[0m'] : ['', ''];
+    // The harness itself is the way in — the plugin rides every session (the launcher is the notch's).
+    const bins = launchable().map((name) => byName(name).launch.bin);
+    process.stdout.write(`\n  Next: ${B}${bins.slice(0, -1).join(', ')} or ${bins.at(-1)}${R} in any project — the board rides every session.\n`);
     summary('init', 'ok');
   },
 
@@ -162,7 +163,7 @@ const handlers = {
     const { ctx, tools } = await toolsForCwd();
     try {
       const out = await tools.oathe_claim({ task_id: taskId, objective });
-      process.stdout.write(`claimed: ${out.task_id} (lease ${out.lease}) — ${out.note}\n`);
+      process.stdout.write(`claimed: ${out.task_id} (lease ${out.lease}) — ${out.note}${out.lineage ? ` — spawned under ${out.lineage.parent}` : ''}\n`);
       summary('claim', 'ok');
     } finally {
       await ctx.substrate.close();
@@ -182,6 +183,21 @@ const handlers = {
       for (const r of listed) {
         const holder = r.state === 'active' ? `${r.principal_id}, lease until ${r.lease_until}` : (r.state ?? 'open');
         process.stdout.write(`  [${(r.state ?? 'open').padEnd(8)}] ${r.task_id} — ${r.objective} (${holder})\n`);
+      }
+      // UX rule 18: the terminal is the uncapped pull — every breached promise on the machine,
+      // one line per task or sibling group (a group's children under it), no flag: the models
+      // that script the CLI look here when a `+N more` points them at it.
+      const [{ Pager }, { WorkspaceRegistry }, { rowLine }, { MACHINE_SCOPE_LABEL }] = await Promise.all([
+        import('../src/pager.mjs'), import('../src/registry.mjs'), import('../src/breach-digest.mjs'), import('../src/board-render.mjs'),
+      ]);
+      const registry = new WorkspaceRegistry({ registryPath: ctx.paths.registryPath });
+      const digest = await new Pager({ client: ctx.substrate, identity: ctx.identity, config: ctx.config, registry }).digest();
+      if (digest.total > 0) {
+        process.stdout.write(`breached (${MACHINE_SCOPE_LABEL}):\n`);
+        for (const g of digest.groups) {
+          process.stdout.write(`  [${g.kind_word}] ${g.task_id} — ${g.objective} (${rowLine(g)} · ${g.home})\n`);
+          if (g.group) for (const line of g.detail.split('\n')) process.stdout.write(`    ${line}\n`);
+        }
       }
       summary('ls', 'ok');
     } finally {
@@ -288,13 +304,13 @@ const handlers = {
 
   async trace(argv) {
     const { values, positionals } = parseFlags('trace', {
-      args: argv, options: { out: { type: 'string' } }, allowPositionals: true,
+      args: argv, options: { out: { type: 'string' }, pure: { type: 'boolean', default: false } }, allowPositionals: true,
     });
     const [taskId] = positionals;
-    if (!taskId) throw new Error('usage: oathe trace <task-id> [--out <dir>]');
-    const [{ buildContext }, { workspaceRef }, fs, path] = await Promise.all([
-      import('../src/context.mjs'), import('../src/workspace.mjs'),
-      import('node:fs'), import('node:path'),
+    if (!taskId) throw new Error('usage: oathe trace <task-id> [--out <dir>] [--pure]');
+    const [{ buildContext }, { workspaceRef }, { projectAnnotated }, { projectorFor }, fs, path] = await Promise.all([
+      import('../src/context.mjs'), import('../src/workspace.mjs'), import('../src/oathe-annotator.mjs'),
+      import('../src/harnesses/catalog.mjs'), import('node:fs'), import('node:path'),
     ]);
     const ctx = buildContext({});
     try {
@@ -315,17 +331,23 @@ const handlers = {
       const files = traceRows.flatMap((r) => r.evidence_refs);
       if (files.length === 0) throw new Error(`'${taskId}' has no linked traces — nothing to export`);
       const trajectories = [];
+      // The export is the annotated read with the OBLIGATION stamped on the root — what this
+      // trajectory is evidence for, in the annotator's own slot. --pure exports the
+      // converter's output alone (no oathe key anywhere): what a Harbor converter could also
+      // emit, for a cross-implementation check against their validator and converters.
       for (const file of files) {
-        const trajectory = (await projectorFor(file)).project(file);
-        Object.assign(trajectory.extra.oathe, {
-          org_id: ctx.identity.orgId,
-          task_id: taskId,
-          work_claim_id: claim.work_claim_id,
-          contract_ref: claim.contract_ref,
-          workspace: workspaceRef(process.cwd()),
-          ...(verdicts[0] ? { verdict: verdicts[0] } : {}),
-        });
-        trajectories.push(trajectory);
+        trajectories.push(values.pure
+          ? (await projectorFor(file)).project(file)
+          : await projectAnnotated(file, {
+            obligation: {
+              org_id: ctx.identity.orgId,
+              task_id: taskId,
+              work_claim_id: claim.work_claim_id,
+              contract_ref: claim.contract_ref,
+              workspace: workspaceRef(process.cwd()),
+              ...(verdicts[0] ? { verdict: verdicts[0] } : {}),
+            },
+          }));
       }
       if (values.out) {
         fs.mkdirSync(values.out, { recursive: true });
@@ -360,8 +382,8 @@ const handlers = {
       err.code = 'OATHE_NOTCH_WELCOME_SERVE';
       throw err;
     }
-    const [{ buildContext }, { renderBoard }, { Pager }, { WorkspaceRegistry }, { WIRE_CHANNEL, noticeFor, emit }, { plantWelcome, consumeWelcome }] = await Promise.all([
-      import('../src/context.mjs'), import('../src/board-render.mjs'),
+    const [{ buildContext }, { createOatheTools }, { Pager }, { WorkspaceRegistry }, { WIRE_CHANNEL, noticeFor, emit }, { plantWelcome, consumeWelcome }] = await Promise.all([
+      import('../src/context.mjs'), import('../src/mcp/oathe-tools.mjs'),
       import('../src/pager.mjs'), import('../src/registry.mjs'), import('../src/wire.mjs'),
       import('../src/welcome.mjs'),
     ]);
@@ -381,115 +403,32 @@ const handlers = {
       return;
     }
     const registry = new WorkspaceRegistry({ registryPath: ctx.paths.registryPath });
-    // MOTION (founder ruling, 2026-08-30): a row on the glass means a LIVE session — a claim
-    // whose last word is younger than notchMotionMinutes, or one the wire just heard (serve
-    // mode overlays `heard`, ephemeral by design). Idle-held work is `oathe ls`'s business.
-    const { ownerOfTracePath, surfaceForSession, launchable: launchableNames } = await import('../src/harnesses/catalog.mjs');
-    const { SessionRegistry, pidAlive } = await import('../src/sessions.mjs');
+    const [{ NotchFrame }, { SessionRegistry }, { homeOf }] = await Promise.all([
+      import('../src/notch-frame.mjs'), import('../src/sessions.mjs'), import('../src/paths.mjs'),
+    ]);
     const sessionsReg = new SessionRegistry({ sessionsPath: ctx.paths.sessionsPath });
-    // A broken sessions file costs the frame its session refs, never the frame.
-    const loadSessions = () => {
-      try { return sessionsReg.load().sessions; } catch (e) {
-        process.stderr.write(`oathe notch: sessions ${String(e?.message || e).slice(0, 120)}\n`);
-        return {};
-      }
-    };
-    const launchables = launchableNames();
-    const defaultAgent = ctx.config.get('defaultAgent');
-    const TERMINAL_FALLBACK = '/System/Applications/Utilities/Terminal.app'; // the system terminal — an OS fact
-    const shellQuote = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
-    const heard = new Map(); // task → {at, via}: what the wire heard, ephemeral by design
-    const motionWindowMs = ctx.config.get('notchMotionMinutes') * 60_000;
-    const moving = (r) => (heard.get(r.task_id)?.at ?? 0) > Date.now() - motionWindowMs
-      || (r.last_word_at && Date.parse(r.last_word_at) > Date.now() - motionWindowMs);
-    // Continue is a RESUMPTION, never a shrug (founder ruling 2026-08-30): activate the
-    // living app; else spawn the agent at the task's home in a terminal; else open the
-    // desktop app; else the clipboard is the act. The package decides — the glass executes.
-    const resumeFor = (base, ref) => {
-      if (ref?.alive && ref.app_pid !== null && ref.app_pid !== undefined) {
-        // The bundle rides along: macOS may deny a background app's activate (cooperative
-        // activation) — opening the bundle is the permission-free fallback that still switches.
-        return { kind: 'activate', app_pid: ref.app_pid, bundle: ref.bundle ?? null };
-      }
-      const surface = ref?.surface ?? base.surface;
-      const agent = launchables.includes(surface) ? surface
-        : (launchables.includes(defaultAgent) ? defaultAgent : null);
-      if (agent && typeof base.home_path === 'string' && base.home_path.startsWith('/')) {
-        return {
-          kind: 'spawn-terminal',
-          command: `oathe ${agent} ${shellQuote(`continue ${base.task_id}`)}`,
-          cwd: base.home_path,
-          terminal_bundle: ref?.bundle ?? TERMINAL_FALLBACK,
-        };
-      }
-      if (ref?.bundle) return { kind: 'open-app', bundle: ref.bundle };
-      return { kind: 'copy-only' };
-    };
-    const glassRow = (r, sess) => {
-      const row = (r.trace_session_id && sess[r.trace_session_id]) || null;
-      const h = heard.get(r.task_id);
-      // The durable registry row outranks the wire's ephemeral word; either way the ref
-      // carries surface + the focusable app, so a HOMELESS task heard from a living app
-      // (ChatGPT's embedded codex — no hooks, no registry row) still resolves to a switch.
-      const ref = row !== null ? {
-        surface: surfaceForSession({ ancestry: row.ancestry, app: row.app, transcriptPath: row.transcript_path }),
-        app_pid: row.app?.pid ?? null,
-        bundle: row.app?.bundle ?? null,
-        alive: pidAlive(row.pid),
-      } : (h?.app ? {
-        surface: h.via ?? null,
-        app_pid: h.app.pid ?? null,
-        bundle: h.app.bundle ?? null,
-        alive: h.app.pid !== null && h.app.pid !== undefined && pidAlive(h.app.pid),
-      } : null);
-      const base = {
-        task_id: r.task_id, holder: r.principal_id, state: r.state,
-        last_word_at: r.last_word_at, last_progress: r.last_progress,
-        home_path: registry.rootOf(r.home) ?? r.home ?? 'homeless',
-        // The surface speaking on the claim: the wire's live word wins; the durable fallback
-        // is the latest trace-link statement's transcript, mapped by its owning store.
-        surface: heard.get(r.task_id)?.via ?? (r.trace_path ? ownerOfTracePath(r.trace_path) : null),
-      };
-      return { ...base, session: ref, resume: resumeFor(base, ref) };
-    };
-    // A breach row carries the ONE act that can change its truth (ruling 2026-08-31):
-    // never-judged (overdue) → dispatch the judgment, DETACHED (closing the window can't
-    // orphan it); engine-failed (stalled) → retry, same dispatcher; judged-rejected
-    // (reopened) and gone-quiet → CONTINUE into the work (the reclaim bundle carries the
-    // verdict — re-judging a judged assertion is the one act that can never help).
-    // Home is the ONE resolver's answer; a homeless judgment runs from the operator's home.
-    const { homeOf } = await import('../src/paths.mjs');
-    const glassBreach = (b) => {
-      const home = typeof b.home === 'string' && b.home.startsWith('/') ? b.home : null;
-      let act = { kind: 'copy-only' };
-      if (b.kind === 'overdue' || b.kind === 'stalled') {
-        act = { kind: 'spawn-terminal', command: `oathe verify --detach ${shellQuote(b.task_id)}`, cwd: home ?? homeOf(), terminal_bundle: TERMINAL_FALLBACK };
-      } else if (home !== null && launchables.includes(defaultAgent)) {
-        act = { kind: 'spawn-terminal', command: `oathe ${defaultAgent} ${shellQuote(`continue ${b.task_id}`)}`, cwd: home, terminal_bundle: TERMINAL_FALLBACK };
-      }
-      return { ...b, act };
-    };
+    // The frame (src/notch-frame.mjs) decides what the glass shows and every word of it;
+    // this verb fetches and serves. A broken sessions file costs the frame its session
+    // refs, never the frame.
+    const notchFrame = new NotchFrame({
+      registry,
+      sessions: () => {
+        try { return sessionsReg.load().sessions; } catch (e) {
+          process.stderr.write(`oathe notch: sessions ${String(e?.message || e).slice(0, 120)}\n`);
+          return {};
+        }
+      },
+      defaultAgent: ctx.config.get('defaultAgent'),
+      motionWindowMs: ctx.config.get('notchMotionMinutes') * 60_000,
+      operatorHome: homeOf(),
+    });
+    const pager = new Pager({ client: ctx.substrate, identity: ctx.identity, config: ctx.config, registry });
+    // The machine board, classified once by the tools (attention:false — the digest is the
+    // frame's own read, and no response channel is served here).
+    const tools = createOatheTools({ client: ctx.substrate, identity: ctx.identity, workspace: null, config: ctx.config, attention: false });
     const frame = async () => {
-      const breaches = (await new Pager({ client: ctx.substrate, identity: ctx.identity, config: ctx.config, registry }).breaches())
-        .map(glassBreach);
-      const { message, sections } = await renderBoard({
-        client: ctx.substrate, identity: ctx.identity, workspace: null, config: ctx.config, all: true, breaches,
-      });
-      const sess = loadSessions();
-      return {
-        push: message,
-        breaches,
-        // motion = anyone's active claim with a recent word (or heard live on the wire);
-        // idle = YOUR held claims gone quiet — the sheet shows them after motion, aged.
-        motion: [...sections.mine, ...sections.held].filter(moving).map((r) => glassRow(r, sess)),
-        idle: sections.mine.filter((r) => !moving(r)).map((r) => glassRow(r, sess)),
-        sections,
-        workspace: null,
-        // The machine's chosen agent rides every frame — the glass reads no config (the
-        // welcome ruling generalized: Node owns the words and the facts; the glass plays
-        // them). null when onboarding never chose one; the empty-board invite goes generic.
-        default_agent: launchables.includes(defaultAgent) ? defaultAgent : null,
-      };
+      const [digest, { sections }] = await Promise.all([pager.digest(), tools.oathe_board({ all: true })]);
+      return notchFrame.build({ digest, sections });
     };
     if (!values.serve) {
       try {
@@ -530,8 +469,7 @@ const handlers = {
     // A TRANSIENT substrate failure (a Postgres restart, a locked table) must never kill
     // the feed — the error is a typed stderr note and the next event/heartbeat retries.
     // A DEAD CONNECTION is fatal-but-clean: exit nonzero; the app's backoff restart is
-    // the recovery. (An unguarded rejection here used to kill the process with no
-    // trailer at all — the review's SERVE-CRASH finding.)
+    // the recovery.
     const guarded = (label, fn) => async (...args) => {
       try {
         await fn(...args);
@@ -542,7 +480,7 @@ const handlers = {
     listener.on('notification', guarded('wire frame', async (msg) => {
       let ev = null;
       try { ev = JSON.parse(msg.payload); } catch { /* a foreign payload nudges, it does not speak */ }
-      if (ev?.task_id) heard.set(ev.task_id, { at: Date.now(), via: ev.via ?? null, app: ev.app ?? null }); // the wire IS liveness
+      if (ev?.task_id) notchFrame.hear(ev.task_id, { at: Date.now(), via: ev.via ?? null, app: ev.app ?? null }); // the wire IS liveness
       const f = await serveFrame();
       // The event's own notice rides the frame it caused — the glass PULSES its tone and
       // keeps the words for the sheet (never expanding the bar; founder ruling 2026-08-31).
@@ -565,7 +503,8 @@ const handlers = {
 
   async yield(argv) {
     const [taskId, note] = argv;
-    if (!taskId || !note) throw new Error('usage: oathe yield <task-id> <note>');
+    // A missing note is the tool's typed refusal (OATHE_YIELD_NOTE_REQUIRED), one implementation.
+    if (!taskId) throw new Error('usage: oathe yield <task-id> <note>');
     const { ctx, tools } = await toolsForCwd();
     try {
       const out = await tools.oathe_yield({ task_id: taskId, note });
@@ -723,6 +662,11 @@ if (!verb || !VERBS.includes(verb)) {
   process.exit(2);
 }
 try {
+  // The engines floor, executed at the door (R-NODE-FLOOR): npm only warns on engines, so the
+  // bin itself refuses a runtime that cannot read the codex thread index (node:sqlite).
+  const [{ assertNodeFloor }, { buildPaths }] = await Promise.all([
+    import('../src/node-floor.mjs'), import('../src/paths.mjs')]);
+  assertNodeFloor({ packageRoot: buildPaths(process.env).packageRoot });
   // Launch verbs come from the catalog (every adapter with a `launch` capability), not a handler each.
   const handler = launchable().includes(verb) ? (argv) => launchHarness(verb, argv) : handlers[verb];
   await handler(rest);

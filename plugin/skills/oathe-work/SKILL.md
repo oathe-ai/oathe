@@ -12,7 +12,10 @@ The substrate refuses dishonesty by construction — work with it, not around it
 
 1. **Claim before you build.** Substantive work starts with `oathe_claim {task_id, objective}`.
    A claim takes responsibility; it never mints the work as done. A task without a real plan
-   is honestly `plan_status: "unknown"` — never fabricate one.
+   is honestly `plan_status: "unknown"` — never fabricate one. Work you claim while this
+   session already holds a claim is recorded as spawned under it (the board and the breach
+   digest show siblings as one row under the parent); pass `parent: null` for standalone
+   work, or `parent: "<task>"` to name the claim it serves.
 2. **Statements as you go.** Record findings and progress with
    `oathe_statement {task_id, proposition, evidence_ref}`. A statement is a statement, not
    truth — nothing settles by saying it.

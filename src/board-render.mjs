@@ -7,29 +7,37 @@
 // this operator's to answer for), status PULLS (`oathe ls`), and the restored-state banner
 // rides the actual pickup (oathe_pickup), never ambient session start. The model's context
 // channel still carries the full board; only the human channel keeps quiet.
+//
+// The breaches arrive as the BreachDigest (src/breach-digest.mjs): the push line, the rows
+// under the budget, the count beyond it. This module words them and computes nothing —
+// UX rules 17 and 18.
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
 import { SPEECH_ACT_RULE } from './fence.mjs';
-
-
+import { BreachDigest, clip, rowLine, pullPointer } from './breach-digest.mjs';
 
 /** The board's scope, spoken once: the folder lens, or the whole machine (R-BOARD-SCOPE). */
 export const MACHINE_SCOPE_LABEL = 'all workspaces';
 
+const nothingBreached = () => new BreachDigest({ breaches: [] });
+
 /**
  * @param {{client: {query: Function}, identity: object, workspace: string|null, config?: object,
- *          synthetic?: boolean, all?: boolean, breaches?: object[]}} o  synthetic — the session
- *          sits on a harness staging dir (R-BOARD-SCOPE): the tools serve the full board and the
- *          render says so. all — an honest machine lens (the notch feed): the folder filter is
- *          dropped without borrowing synthetic's staging-dir semantics. breaches — the Pager's
- *          digest (R-PAGER), rendered machine-wide below the board.
+ *          synthetic?: boolean, all?: boolean, digest?: BreachDigest|null}} o  synthetic — the
+ *          session sits on a harness staging dir (R-BOARD-SCOPE): the tools serve the full board
+ *          and the render says so. all — an honest machine lens (the notch feed): the folder
+ *          filter is dropped without borrowing synthetic's staging-dir semantics. digest — the
+ *          Pager's digest (R-PAGER), machine-wide, rendered below the board; null (the hook's
+ *          fail-soft path) renders the board alone and stays silent.
  * @returns {Promise<{context: string, message: string|null, sections: object, lens: string|null}>}
  *          context = the full board (model / scrollback); message = the one visible push line
- *          (breaches only — null is silence); lens = the workspace the board was scoped to,
+ *          (the digest's — null is silence); lens = the workspace the board was scoped to,
  *          null for the whole machine
  */
-export async function renderBoard({ client, identity, workspace, config, synthetic = false, all = false, breaches = [] }) {
-  const tools = createOatheTools({ client, identity, workspace, config, synthetic });
+export async function renderBoard({ client, identity, workspace, config, synthetic = false, all = false, digest = null }) {
+  digest ??= nothingBreached();
+  // A read-only composition: the digest arrives from the caller, so the tools read no breach.
+  const tools = createOatheTools({ client, identity, workspace, config, synthetic, attention: false });
   const { sections, workspace: lens } = await tools.oathe_board({ all });
   const { mine, open, asserted, held } = sections;
   const total = mine.length + open.length + asserted.length + held.length;
@@ -42,11 +50,14 @@ export async function renderBoard({ client, identity, workspace, config, synthet
   if (total === 0) {
     lines.push(`_No open tasks ${where}._`);
   }
+  // UX rule 21: a root's spawned work is one counts line under it, never child bullets.
+  const spawned = (r) => (r.children ? [`  ↳ ${r.children.line}`] : []);
   if (mine.length > 0) {
     lines.push('**Yours (still claimed by you — completion not asserted; say `continue <task>` to pick one up):**');
     for (const r of mine) {
       lines.push(`- [${r.task_id}] ${r.objective} — lease until ${r.lease_until}`);
       if (r.last_progress) lines.push(`  ↳ last recorded progress${r.last_progress_at ? ` (${r.last_progress_at})` : ''}: ${r.last_progress}`);
+      lines.push(...spawned(r));
     }
     lines.push('');
   }
@@ -54,43 +65,31 @@ export async function renderBoard({ client, identity, workspace, config, synthet
     lines.push('**Open (claimable):**');
     for (const r of open) {
       const note = r.state === 'reopened' ? ' (came back incomplete — actionable again)' : (r.state ? ` (${r.state})` : '');
-      lines.push(`- [${r.task_id}] ${r.objective}${note}`);
+      lines.push(`- [${r.task_id}] ${r.objective}${note}`, ...spawned(r));
     }
     lines.push('');
   }
   if (asserted.length > 0) {
     lines.push('**Asserted (completion claimed — awaiting a non-author verdict; `oathe verify` runs it):**');
-    for (const r of asserted) lines.push(`- [${r.task_id}] ${r.objective}`);
+    for (const r of asserted) lines.push(`- [${r.task_id}] ${r.objective}`, ...spawned(r));
     lines.push('');
   }
   if (held.length > 0) {
     lines.push('**Held:**');
-    for (const r of held) lines.push(`- [${r.task_id}] ${r.objective} (${r.principal_id})`);
+    for (const r of held) lines.push(`- [${r.task_id}] ${r.objective} (${r.principal_id})`, ...spawned(r));
   }
-  if (breaches.length > 0) {
+  if (digest.total > 0) {
     // R-PAGER: promises breached ANYWHERE on this machine — the one place a folder lens does
     // not apply, because a breach elsewhere is still this operator's to answer for.
     lines.push('', `## Breached promises (${MACHINE_SCOPE_LABEL})`, '');
-    for (const b of breaches) lines.push(`- [${b.task_id}] ${b.objective} — ${b.detail} (home: ${b.home})`);
+    for (const b of digest.rows) lines.push(`- [${b.task_id}] ${b.objective} — ${b.kind_word}: ${rowLine(b)} (home: ${b.home})`);
+    const more = pullPointer('context', digest.more);
+    if (more) lines.push(`_${more}_`);
   }
-
-  // R-QUIET: breaches-or-silence. Wording is the founder's bar (2026-08-31): PERSON
-  // words, not board words — what needs you, in two buckets. "to fix" = a verdict came
-  // back or the verifier itself failed (a person acts); "to verify" = asserted and never
-  // judged (the system drains these itself; the count is the queue, not a chore). Composed
-  // HERE and only here; the hook message and the notch bar render this string verbatim.
-  let message = null;
-  if (breaches.length > 0) {
-    const byKind = {};
-    for (const b of breaches) byKind[b.kind] = (byKind[b.kind] ?? 0) + 1;
-    const fix = (byKind.reopened ?? 0) + (byKind.stalled ?? 0);
-    const parts = [];
-    if (fix > 0) parts.push(`${fix} to fix`);
-    if (byKind.overdue) parts.push(`${byKind.overdue} to verify`);
-    if (byKind.quiet) parts.push(`${byKind.quiet} gone quiet`);
-    message = parts.join(' · ');
-  }
-  return { context: lines.join('\n'), message, sections, lens };
+  // R-QUIET: breaches-or-silence. The visible line is the digest's push — PERSON words, the
+  // count by bucket, composed once (BreachDigest.push); the hook message and the notch bar
+  // render it verbatim.
+  return { context: lines.join('\n'), message: digest.push, sections, lens };
 }
 
 const BOLD = '\x1b[1m';
@@ -102,23 +101,27 @@ const OBJECTIVE_WIDTH = 48;
  * The board as an ANSI terminal splash — the launcher's human-facing render. No markdown:
  * bold ids, aligned columns, dim detail. An empty board is just the state line.
  */
-export function renderSplash({ message, sections, workspace, breaches = [] }) {
+export function renderSplash({ digest = null, sections, workspace }) {
+  digest ??= nothingBreached();
   const { mine, open, asserted, held } = sections;
-  const all = [...mine, ...open, ...asserted, ...held, ...breaches];
+  const all = [...mine, ...open, ...asserted, ...held, ...digest.rows];
   const scope = `${DIM}${workspace ?? MACHINE_SCOPE_LABEL}${RESET}`;
-  // R-QUIET: a silent message leaves just the scope line — the board below speaks for itself.
-  const out = ['', message ? `  ${message}   ${scope}` : `  ${scope}`, ''];
+  // R-QUIET: a silent push leaves just the scope line — the board below speaks for itself.
+  const out = ['', digest.push ? `  ${digest.push}   ${scope}` : `  ${scope}`, ''];
   if (all.length === 0) return `${out.join('\n')}\n`;
 
   const idWidth = Math.max(...all.map((r) => r.task_id.length));
-  const clip = (text) => (text.length > OBJECTIVE_WIDTH ? `${text.slice(0, OBJECTIVE_WIDTH - 1)}…` : text);
   const row = (r, detail) => `    ${BOLD}${r.task_id.padEnd(idWidth)}${RESET}  `
-    + `${clip(r.objective).padEnd(OBJECTIVE_WIDTH)}  ${DIM}${detail}${RESET}`;
+    + `${clip(r.objective, OBJECTIVE_WIDTH).padEnd(OBJECTIVE_WIDTH)}  ${DIM}${detail}${RESET}`;
 
-  const section = (header, rows, detailFor) => {
+  const section = (header, rows, detailFor, tail = null) => {
     if (rows.length === 0) return;
     out.push(`  ${BOLD}${DIM}${header}${RESET}`);
-    for (const r of rows) out.push(row(r, detailFor(r)));
+    for (const r of rows) {
+      out.push(row(r, detailFor(r)));
+      if (r.children) out.push(`      ${DIM}↳ ${r.children.line}${RESET}`); // UX rule 21: one counts line
+    }
+    if (tail) out.push(`    ${DIM}${tail}${RESET}`);
     out.push('');
   };
   section('YOURS (completion not asserted)', mine, (r) => (r.last_progress
@@ -127,6 +130,7 @@ export function renderSplash({ message, sections, workspace, breaches = [] }) {
   section('OPEN', open, (r) => (r.state === 'reopened' ? 'back — incomplete, actionable' : (r.state ?? 'unclaimed')));
   section('ASSERTED', asserted, () => 'awaiting verdict');
   section('HELD', held, (r) => r.principal_id);
-  section(`BREACHED PROMISES (${MACHINE_SCOPE_LABEL})`, breaches, (b) => `${b.detail} · ${b.home}`);
+  section(`BREACHED PROMISES (${MACHINE_SCOPE_LABEL})`, digest.rows,
+    (b) => `${b.kind_word}: ${rowLine(b)} · ${b.home}`, pullPointer('splash', digest.more));
   return `${out.join('\n')}\n`;
 }

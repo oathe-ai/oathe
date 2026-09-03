@@ -1,10 +1,11 @@
 // R-PAGER: the session-start digest of BREACHED promises — condition-based, org-wide, no read
-// state. Three breach kinds, each a fact the substrate already holds: a verification overdue
+// state. Four breach kinds, each a fact the substrate already holds: a verification overdue
 // (asserted, unverified, past verify_by — cell.unverified_past_verify_by, the R2 clock leg),
-// a rejection nobody reclaimed (origin reopened, the latest claim is the rejected one), and a
-// claim gone quiet (active, no non-trace progress statement inside pagerQuietHours). Lifecycle
-// facts (a lapsed lease) are NOT breaches. The instant is injected: a pager that reads now()
-// cannot be tested at a stated instant.
+// a rejection nobody reclaimed (origin reopened, the latest claim is the rejected one), a
+// verification that stalled before a verdict (its engine or its evidence died; the claim was
+// released), and a claim gone quiet (active, no non-trace progress statement inside
+// pagerQuietHours). Lifecycle facts (a lapsed lease) are NOT breaches. The instant is
+// injected: a pager that reads now() cannot be tested at a stated instant.
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +14,8 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-import { Pager } from '../src/pager.mjs';
+import { Pager, BREACH_KINDS, breachOrder } from '../src/pager.mjs';
+import { verifierCapable } from '../src/harnesses/catalog.mjs';
 import { Verifier } from '../src/verifier.mjs';
 import { createOatheTools } from '../src/mcp/oathe-tools.mjs';
 import { Substrate } from '../src/substrate.mjs';
@@ -121,6 +123,10 @@ after(async () => {
   await verifier.close();
   await substrate.close();
   await substrate.dropDatabase();
+});
+
+test('BREACH_KINDS names every kind the pager emits, sharpest first — the one order every consumer inherits', () => {
+  assert.deepEqual(BREACH_KINDS, ['reopened', 'stalled', 'overdue', 'quiet']);
 });
 
 test('a clean substrate breaches nothing', async () => {
@@ -239,14 +245,24 @@ test('homes are shown as folders through the registry; a homeless task says so',
   assert.equal(rows.find((r) => r.task_id === 'homed-1')?.home, folder);
   assert.equal(rows.find((r) => r.task_id === 'homeless-1')?.home, 'homeless');
   assert.equal(rows.find((r) => r.task_id === 'quiet-2')?.home, WS, 'unregistered refs stay raw');
+  // The raw ref rides beside the label: a digest scopes on the ref, a person reads the folder.
+  assert.equal(rows.find((r) => r.task_id === 'homed-1')?.home_ref, workspaceRef(folder));
+  assert.equal(rows.find((r) => r.task_id === 'homeless-1')?.home_ref, null);
+  assert.equal(rows.find((r) => r.task_id === 'quiet-2')?.home_ref, WS);
 });
 
 test('ordering: SHARPEST first — rejected/stalled work needs a person; never-verified drains itself (done auto-dispatches). Oldest first within a kind', async () => {
   const rows = await pager({ at: hoursFromNow(48) }).breaches();
   const kinds = rows.map((r) => r.kind);
-  const order = ['reopened', 'stalled', 'overdue', 'quiet'];
-  assert.deepEqual(kinds, [...kinds].sort((a, b) => order.indexOf(a) - order.indexOf(b)));
+  assert.deepEqual(kinds, [...kinds].sort((a, b) => BREACH_KINDS.indexOf(a) - BREACH_KINDS.indexOf(b)));
+  assert.deepEqual(rows, [...rows].sort(breachOrder), 'the exported comparator IS the order — every consumer sorts with it');
   assert.ok(ids(rows, 'quiet').length >= 2);
+  // The one factory: the digest is the same facts under the budget (no parents yet → one
+  // row per task, in the same order), and its push is the count by bucket.
+  const digest = await pager({ at: hoursFromNow(48) }).digest();
+  assert.deepEqual(digest.groups.map((g) => g.task_id), rows.map((r) => r.task_id));
+  assert.equal(digest.total, rows.length);
+  assert.match(digest.push, /gone quiet/);
 });
 
 test("REJECTION SURFACES: the breach detail carries the verdict's words, attention rides tool responses, and the reclaim returns the recovery bundle", async () => {
@@ -288,23 +304,30 @@ test('a STALLED verification (engine died, claim released) pages with the retry 
   const minted = await tools.oathe_claim({ task_id: 'stall-me', objective: 'survive an engine outage' });
   await linkTrace('stall-me', minted.work_claim_id);
   await tools.oathe_done({ task_id: 'stall-me', proposition: 'done', evidence_ref: 'x' });
+  // Longer than any SQL clip: the engine's own words ride WHOLE (clipping is the renderer's
+  // business, not the data's — the reopened leg's ruling, applied to every kind).
+  const engineError = 'codex: usage limit reached — the plan allows 50 requests per 5 hours and the '
+    + 'window resets at 2:56 AM; the verifier lane released the claim so another engine can take it';
   const dying = new Verifier({
     substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
     provider: new StandaloneRuntimeProvider({ paths }),
-    engineRunner: async () => { const e = new Error('codex: usage limit reached'); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
+    engineRunner: async () => { const e = new Error(engineError); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
   });
   try { await assert.rejects(dying.verify({ taskId: 'stall-me' }), /usage limit/); } finally { await dying.close(); }
 
   const breaches = await new Pager({ client: substrate, identity: IDENTITY, config: scratchConfig() }).breaches();
   const stalled = breaches.find((b) => b.kind === 'stalled' && b.task_id === 'stall-me');
   assert.ok(stalled, `the stall pages: ${JSON.stringify(breaches.map((b) => [b.kind, b.task_id]))}`);
-  assert.match(stalled.detail, /usage limit/, 'the real engine error');
-  assert.match(stalled.detail, /oathe:verify|--engine/, 'and the retry gesture on another engine');
+  assert.ok(stalled.detail.includes(engineError), `the engine's whole words, never clipped in the data: ${stalled.detail}`);
+  const failed = stalled.detail.match(/engine (\S+) failed/)?.[1];
+  const others = verifierCapable().filter((e) => e !== failed);
+  assert.match(stalled.detail, new RegExp(`^retry: /oathe:verify stall-me (${others.join('|')}) — engine `),
+    'the retry LEADS and names a CONCRETE other engine — never the <another engine> placeholder; a clip never loses the act');
 
   const board = await tools.oathe_board({});
   const line = (board.attention ?? []).find((a) => a.includes('stall-me'));
   assert.ok(line, `attention carries the stall: ${JSON.stringify(board.attention)}`);
-  assert.match(line, /STALLED/);
+  assert.match(line, /^verify failed: 'stall-me'/, 'the kind word leads — the one table\'s word, never STALLED');
   assert.match(line, /\/oathe:verify stall-me/, 'the exact retry line, engine included');
 
   engineVerdict = { verdict: 'accepted', reason: 'fine on the second engine' };
@@ -314,6 +337,103 @@ test('a STALLED verification (engine died, claim released) pages with the retry 
   assert.ok(!(after.attention ?? []).some((a) => a.includes('stall-me')), 'the stall vanishes once settled');
   assert.ok(!(await new Pager({ client: substrate, identity: IDENTITY, config: scratchConfig() }).breaches())
     .some((b) => b.task_id === 'stall-me'), 'and stops paging');
+});
+
+test('an EVIDENCE-stalled verification pages WITHOUT the another-engine advice — the record is broken, not the judge', async () => {
+  const minted = await tools.oathe_claim({ task_id: 'evi-stall', objective: 'survive an unreadable record' });
+  // A trace link no store owns: projection dies in evidence-gathering, before any engine —
+  // the same stage a runtime-bound store (node:sqlite missing) dies at (2026-08-31 pileup).
+  const sessionId = crypto.randomUUID();
+  await substrate.query(
+    `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+            execution_actor, claim_principal, statement_type, subject_ref, proposition,
+            evidence_refs, epistemic_status, asserted_at)
+     VALUES ($1, 'oathe', $2, $3, $4, $5, 'progress', $6, 'trace', $7::jsonb, 'observed', now())`,
+    [crypto.randomUUID(), 'evi-stall', minted.work_claim_id, `session:${sessionId}`, OPERATOR,
+      `trace:${sessionId}`, JSON.stringify([path.join(os.tmpdir(), 'oathe-nowhere', 'rollout-that-never-was.jsonl')])]);
+  await tools.oathe_done({ task_id: 'evi-stall', proposition: 'done', evidence_ref: 'x' });
+  const dying = new Verifier({
+    substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
+    provider: new StandaloneRuntimeProvider({ paths }),
+    engineRunner: async () => ({ verdict: 'accepted', reason: 'must never run' }),
+  });
+  try { await assert.rejects(dying.verify({ taskId: 'evi-stall' }), /no trace store owns/); } finally { await dying.close(); }
+
+  const breaches = await pager().breaches();
+  const stalled = breaches.find((b) => b.kind === 'stalled' && b.task_id === 'evi-stall');
+  assert.ok(stalled, `the evidence stall still pages: ${JSON.stringify(breaches.map((b) => [b.kind, b.task_id]))}`);
+  assert.match(stalled.detail, /no trace store owns/, 'the real cause, not a banner');
+  assert.match(stalled.detail, /retry: \/oathe:verify evi-stall/, 'the retry gesture');
+  assert.ok(!/another engine/.test(stalled.detail), 'no engine-swap advice — any engine hits the same record');
+
+  const board = await tools.oathe_board({});
+  const line = (board.attention ?? []).find((a) => a.includes('evi-stall'));
+  assert.ok(line, `attention carries the evidence stall: ${JSON.stringify(board.attention)}`);
+  assert.match(line, /^verify failed: 'evi-stall'/);
+  assert.match(line, /\/oathe:verify evi-stall/, 'and names the retry');
+  assert.ok(!/another engine/.test(line), 'attention gives no engine-swap advice either');
+});
+
+test('UX rule 19: attention is THIS board\'s — a stall homed on another board never rides it (the org-wide leak, pinned dead)', async () => {
+  const WS2 = 'ws-pager00000002';
+  const elsewhere = createOatheTools({ client: substrate, identity: IDENTITY, workspace: WS2, config: scratchConfig() });
+  const minted = await elsewhere.oathe_claim({ task_id: 'stall-elsewhere', objective: 'break on another board' });
+  await linkTrace('stall-elsewhere', minted.work_claim_id);
+  await elsewhere.oathe_done({ task_id: 'stall-elsewhere', proposition: 'done', evidence_ref: 'x' });
+  const dying = new Verifier({
+    substrate, paths, workspace: WS2, config: scratchConfig(), operatorPrincipal: OPERATOR,
+    provider: new StandaloneRuntimeProvider({ paths }),
+    engineRunner: async () => { const e = new Error('outage on the other board'); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
+  });
+  try { await assert.rejects(dying.verify({ taskId: 'stall-elsewhere' }), /outage/); } finally { await dying.close(); }
+  assert.ok((await pager().breaches()).some((b) => b.kind === 'stalled' && b.task_id === 'stall-elsewhere'), 'it pages machine-wide');
+
+  const here = await tools.oathe_board({});
+  assert.ok(!(here.attention ?? []).some((a) => a.includes('stall-elsewhere')), `WS's attention is WS's: ${JSON.stringify(here.attention)}`);
+  assert.ok(Array.isArray(here.breaches) && !here.breaches.some((b) => b.task_id === 'stall-elsewhere'), 'oathe_board.breaches is this board\'s too');
+  const there = await elsewhere.oathe_board({});
+  assert.ok((there.attention ?? []).some((a) => a.startsWith("verify failed: 'stall-elsewhere'")), `and it rides WS2's: ${JSON.stringify(there.attention)}`);
+  assert.ok(there.breaches.some((b) => b.task_id === 'stall-elsewhere' && b.kind === 'stalled'));
+});
+
+test('UX rule 19: attention is the FIX bucket only — never-verified and quiet work never ride a tool response, though oathe_board.breaches carries them', async () => {
+  await substrate.query(
+    `INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan, verify_by, claim_mode, created_at)
+     VALUES ('oathe', 'overdue-att', 'founder', 'asserted, judged by nobody', 'minted_at_claim', '{"plan_status":"unknown"}'::jsonb,
+             now() - interval '1 hour', 'exclusive', now() - interval '2 hours')`);
+  const minted = await tools.oathe_claim({ task_id: 'overdue-att' });
+  await linkTrace('overdue-att', minted.work_claim_id);
+  await tools.oathe_done({ task_id: 'overdue-att', proposition: 'done', evidence_ref: 'x' });
+  await seedClaim('quiet-att', { hoursAgo: 30 });
+  const machine = await pager().breaches();
+  assert.ok(machine.some((b) => b.kind === 'overdue' && b.task_id === 'overdue-att'), 'the overdue pages');
+  assert.ok(machine.some((b) => b.kind === 'quiet' && b.task_id === 'quiet-att'), 'the quiet pages');
+
+  const board = await tools.oathe_board({});
+  assert.ok(!(board.attention ?? []).some((a) => /overdue-att|quiet-att/.test(a)), `neither rides attention: ${JSON.stringify(board.attention)}`);
+  assert.deepEqual(
+    board.breaches.filter((b) => /overdue-att|quiet-att/.test(b.task_id)).map((b) => [b.kind, b.task_id]),
+    [['overdue', 'overdue-att'], ['quiet', 'quiet-att']], 'the pull carries every kind, in breach order');
+});
+
+test('UX rule 19: attention is budgeted — a flood of rejections on this board is eight lines and one +N more naming oathe_board', async () => {
+  for (let i = 0; i < 12; i++) {
+    const id = `flood-${String(i).padStart(2, '0')}`;
+    await assertDone(id, `flood ${i}`);
+    engineVerdict = { verdict: 'rejected', reason: `flood reason ${i}` };
+    await verifier.verify({ taskId: id });
+  }
+  const board = await tools.oathe_board({});
+  const fix = board.breaches.filter((b) => b.kind === 'reopened' || b.kind === 'stalled');
+  assert.ok(fix.length >= 12, `the board's own uncapped fix rows: ${fix.length}`);
+  const lines = board.attention;
+  assert.equal(lines.length, 8 + 1, `eight lines and the pointer: ${JSON.stringify(lines)}`);
+  for (const [i, row] of fix.slice(0, 8).entries()) {
+    assert.ok(lines[i].includes(`'${row.task_id}'`), `line ${i} is the ${i}th sharpest: ${lines[i]}`);
+  }
+  assert.equal(lines.at(-1), `+${fix.length - 8} more — oathe_board lists every breach on this board`);
+  assert.ok(lines.slice(0, 8).every((l) => /^rejected: 'flood-\d\d' — rejected: flood reason \d+ — nobody has reclaimed it \(last held by founder\) — reclaim it \(oathe_claim\) for the bundle$/.test(l)),
+    `a line is the kind word, the task, the verdict, the act: ${lines[0]}`);
 });
 
 test('REDEMPTION silences: rejected → redone → ACCEPTED pages nothing, forever (the founder\'s settled-but-still-rejected glass)', async () => {

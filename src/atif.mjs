@@ -1,25 +1,19 @@
-// oathe — ATIF projection: both harnesses' raw traces, derived at read time into Harbor's
-// Agent Trajectory Interchange Format (v1.7), with oathe's claims-vs-actions layer riding the
-// spec's ONE sanctioned extension point (`extra`) as the documented `extra.oathe` convention
-// (docs/atif-oathe.md). Raw stores stay ground truth; a projector never emits an invalid
+// oathe — ATIF projection: the raw traces of both trace stores (Claude Code, Codex), derived at read time into Harbor's
+// Agent Trajectory Interchange Format (v1.7). A projector is a CONVERTER: its output is pure
+// ATIF — what a Harbor converter could also emit — with the raw-record facts ATIF has no field
+// for under the converter's one namespace, `extra.record` (docs/atif-oathe.md). oathe's
+// claims-vs-actions layer is the annotator's (src/oathe-annotator.mjs, `extra.oathe`), applied
+// over any valid trajectory. Raw stores stay ground truth; a projector never emits an invalid
 // trajectory (finalize() validates); anything unmappable is a typed refusal, never a silent
 // drop. The reference models forbid unknown fields outside `extra` — so does our validator.
 
-import { TraceContractError } from './traces.mjs';
-import { makeToolDefs } from './mcp/oathe-tools.mjs';
-
+/** What the converters emit — what the reference converters emit (Harbor codex.py, claude_code.py). */
 export const ATIF_SCHEMA_VERSION = 'ATIF-v1.7';
-export const OATHE_CONVENTION_VERSION = 1;
 
-/** Accepted by the reference models (Literal v1.0..v1.7). */
+/** Accepted inbound: the reference models' Literal v1.0..v1.8 (v1.8 added audio content parts). */
 const KNOWN_SCHEMA_VERSIONS = Object.freeze(
-  Array.from({ length: 8 }, (_, i) => `ATIF-v1.${i}`),
+  Array.from({ length: 9 }, (_, i) => `ATIF-v1.${i}`),
 );
-
-/** The oathe speech-act verbs — derived from the server's own tool defs, never retyped. */
-const OATHE_VERBS = Object.freeze(makeToolDefs().map((t) => t.name));
-
-const EXIT_CODE_PATTERN = /[Ee]xit code:?\s+(\d+)/;
 
 export class AtifError extends Error {
   constructor(code, message, details = {}) {
@@ -33,7 +27,7 @@ export class AtifError extends Error {
 // --------------------------------------------------------------------------- shared assembly
 
 /** Text of a content part list (Claude tool_result content may itself be a part array). */
-function textOf(content) {
+export function textOf(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
   return content
@@ -42,42 +36,38 @@ function textOf(content) {
     .join('\n');
 }
 
-/** The conservative observed-facts parse: only what the output text actually states. */
-function observedFacts(resultText) {
-  const match = String(resultText).match(EXIT_CODE_PATTERN);
-  return match ? { exit_code: Number(match[1]) } : null;
-}
-
-/** oathe verb name for a tool call, when the call IS an oathe speech act (MCP-prefixed). */
-function oatheVerbFor(functionName) {
-  return OATHE_VERBS.find((verb) => functionName === verb || functionName.endsWith(`__${verb}`)) ?? null;
-}
-
 /**
  * The projector family's shared trajectory assembly. Subclasses implement `map(rows, file)`
  * by driving the step/observation helpers; the base owns numbering, metrics accumulation,
- * the extra.oathe stamp, and validation-before-return.
+ * the record namespace, and validation-before-return.
  */
 export class AtifProjector {
-  constructor({ store }) {
+  /**
+   * @param {{store: object, copiedIds?: Set<string>|null}} o  copiedIds — the row ids a PARENT
+   *   already holds: a forked child begins with the parent's rows under the same ids, and a
+   *   step built entirely from them is context it inherited, not work it did
+   *   (is_copied_context — the RFC excludes such steps from SFT).
+   */
+  constructor({ store, copiedIds = null }) {
     if (!store) throw new AtifError('ATIF_STORE_REQUIRED', 'a projector needs its trace store');
     this.store = store;
     this.harness = store.harness; // the store was named by its adapter; the projector labels ATIF with the same name
+    this.copiedIds = copiedIds;
   }
 
   /** @returns {object} a VALID ATIF trajectory (validator-asserted) */
   project(file) {
     this.steps = [];
     this.agentInfo = { name: this.harness, version: null, model_name: null };
-    this.oatheRoot = {
-      oathe_convention: OATHE_CONVENTION_VERSION,
-      harness: this.harness,
-      source_path: file,
-    };
+    this.sessionId = null;
+    // Raw-record facts ATIF has no field for — the converter's one namespace (extra.record).
+    this.record = { source_path: file };
     this.subagents = [];
+    this.rowsOf = new Map(); // step → the ids of the raw rows that built it
+    this.ownerOf = new WeakMap(); // observation result → the step it sits on
     this.map(this.store.entries(file), file);
     if (this.steps.length === 0) {
-      throw new AtifError('ATIF_UNMAPPABLE',
+      throw new AtifError('ATIF_NO_STEPS',
         `${file}: no mappable steps — a trajectory with nothing in it is not evidence`, { file });
     }
     return this.#finalize(file);
@@ -88,6 +78,13 @@ export class AtifProjector {
   pushStep(step) {
     this.steps.push({ step_id: this.steps.length + 1, ...step });
     return this.steps.at(-1);
+  }
+
+  /** A raw row (by its id) landed on `step` — what decides whether the step was inherited. */
+  landed(step, rowId) {
+    if (!step || rowId === undefined || rowId === null) return;
+    if (!this.rowsOf.has(step)) this.rowsOf.set(step, new Set());
+    this.rowsOf.get(step).add(rowId);
   }
 
   /** The open agent step to attach observations/content to — or null. */
@@ -106,41 +103,72 @@ export class AtifProjector {
         + 'internally consistent and the projection will not paper over it', { file, callId });
     }
     owner.observation ??= { results: [] };
-    const text = textOf(content);
-    const result = { source_call_id: callId, content: text };
-    const observed = observedFacts(text);
-    if (observed) result.extra = { oathe: { observed } };
+    const result = { source_call_id: callId, content: textOf(content) };
     owner.observation.results.push(result);
+    this.ownerOf.set(result, owner);
     return result;
   }
 
-  /** A tool_call object with the oathe extras (files touched, speech-act marking). */
   buildToolCall({ id, name, args }) {
-    const call = { tool_call_id: id, function_name: name, arguments: args ?? {} };
-    if (typeof call.arguments?.file_path === 'string') {
-      call.extra = { oathe: { files: [call.arguments.file_path] } };
-    }
-    return call;
-  }
-
-  /** Mark a step's oathe speech acts (claim/statement/done/…) from its tool calls. */
-  markClaimEvents(step) {
-    const events = (step.tool_calls ?? [])
-      .map((call) => {
-        const verb = oatheVerbFor(call.function_name);
-        return verb ? { verb, task_id: call.arguments?.task_id } : null;
-      })
-      .filter(Boolean);
-    if (events.length > 0) {
-      step.extra = { ...(step.extra ?? {}), oathe: { ...(step.extra?.oathe ?? {}), claim_events: events } };
-    }
+    return { tool_call_id: id, function_name: name, arguments: args ?? {} };
   }
 
   addSubagent(trajectory) {
     this.subagents.push(trajectory);
   }
 
+  /**
+   * The ref to a delegated child sits on the observation result of the call that delegated
+   * (the reference converters' placement — Harbor qwen_code.py): found on the step owning
+   * `callId`, or created there without content when the call never got an output row.
+   * Refuses when nobody owns the call — a ref pointing from nowhere is not evidence.
+   */
+  attachRef(callId, ref, { file }) {
+    const owner = [...this.steps].reverse()
+      .find((s) => s.tool_calls?.some((c) => c.tool_call_id === callId));
+    if (!owner) {
+      throw new AtifError('ATIF_UNMAPPABLE',
+        `${file}: subagent ref for call '${callId}' has no owning tool call`, { file, callId });
+    }
+    owner.observation ??= { results: [] };
+    let result = owner.observation.results.find((r) => r.source_call_id === callId);
+    if (!result) {
+      result = { source_call_id: callId };
+      owner.observation.results.push(result);
+    }
+    result.subagent_trajectory_ref = [...(result.subagent_trajectory_ref ?? []), ref];
+    return result;
+  }
+
+  /** Accumulate per-turn token deltas onto a step — never overwrite what a turn already cost. */
+  addMetrics(step, { prompt_tokens = 0, completion_tokens = 0, cached_tokens = 0 }) {
+    const prior = step.metrics ?? { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0 };
+    step.metrics = {
+      ...prior,
+      prompt_tokens: prior.prompt_tokens + prompt_tokens,
+      completion_tokens: prior.completion_tokens + completion_tokens,
+      cached_tokens: prior.cached_tokens + cached_tokens,
+    };
+  }
+
+  /**
+   * A row type outside the harness's declared roster: quarantine VISIBLY — counted here,
+   * announced in the evidence view, DRIFT in the census lane. Additions tolerate visibly;
+   * only missing EXPECTED shapes refuse (founder ruling 2026-08-31).
+   */
+  noteUnrecognized(key) {
+    this.record.unrecognized_rows ??= {};
+    this.record.unrecognized_rows[key] = (this.record.unrecognized_rows[key] ?? 0) + 1;
+  }
+
   #finalize(file) {
+    if (this.copiedIds) {
+      // Inherited context: a step every one of whose rows the parent already holds.
+      for (const step of this.steps) {
+        const rows = this.rowsOf.get(step);
+        if (rows && rows.size > 0 && [...rows].every((id) => this.copiedIds.has(id))) step.is_copied_context = true;
+      }
+    }
     const totals = { total_prompt_tokens: 0, total_completion_tokens: 0, total_cached_tokens: 0, total_steps: this.steps.length };
     for (const step of this.steps) {
       if (!step.metrics) continue;
@@ -148,13 +176,21 @@ export class AtifProjector {
       totals.total_completion_tokens += step.metrics.completion_tokens ?? 0;
       totals.total_cached_tokens += step.metrics.cached_tokens ?? 0;
     }
+    // A run that delegates is not under-counted (the reference converters' fold — Harbor
+    // qwen_code.py): each child's totals already hold its own children's, so the direct
+    // children's totals fold into the root's. total_steps stays this trajectory's own.
+    for (const child of this.subagents) {
+      totals.total_prompt_tokens += child.final_metrics?.total_prompt_tokens ?? 0;
+      totals.total_completion_tokens += child.final_metrics?.total_completion_tokens ?? 0;
+      totals.total_cached_tokens += child.final_metrics?.total_cached_tokens ?? 0;
+    }
     const trajectory = {
       schema_version: ATIF_SCHEMA_VERSION,
-      session_id: this.oatheRoot.session_id ?? null,
+      session_id: this.sessionId,
       agent: this.agentInfo,
       steps: this.steps,
       final_metrics: totals,
-      extra: { oathe: this.oatheRoot },
+      extra: { record: this.record },
       ...(this.subagents.length > 0 ? { subagent_trajectories: this.subagents } : {}),
     };
     new AtifValidator().assert(trajectory, { file });
@@ -164,211 +200,13 @@ export class AtifProjector {
 
 // --------------------------------------------------------------------------- Claude
 
-const CLAUDE_NOISE_TYPES = new Set([
-  'last-prompt', 'mode', 'permission-mode', 'atis-latch', 'bridge-session', 'attachment',
-  'queue-operation', 'file-history-snapshot', 'ai-title',
-]);
-
-export class ClaudeAtifProjector extends AtifProjector {
-  map(rows, file) {
-    let lastMessageId = null;
-    this.turnBroken = false;
-    const filesTouched = new Set();
-    for (const row of rows) {
-      if (row.type === 'ai-title') {
-        this.oatheRoot.session_title = row.aiTitle;
-        continue;
-      }
-      if (row.type === 'file-history-snapshot') {
-        for (const touched of Object.keys(row.snapshot?.trackedFileBackups ?? {})) filesTouched.add(touched);
-        continue;
-      }
-      if (CLAUDE_NOISE_TYPES.has(row.type)) continue;
-      if (row.sessionId && !this.oatheRoot.session_id) this.oatheRoot.session_id = row.sessionId;
-      if (row.version && !this.agentInfo.version) this.agentInfo.version = row.version;
-
-      if (row.type === 'assistant') {
-        this.#mapAssistant(row, lastMessageId);
-        lastMessageId = row.message?.id ?? null;
-      } else if (row.type === 'user') {
-        this.#mapUser(row, file);
-      } else if (row.type === 'system') {
-        this.pushStep({ source: 'system', message: textOf(row.message?.content ?? row.content ?? '') });
-      }
-    }
-    if (filesTouched.size > 0) this.oatheRoot.files_touched = [...filesTouched];
-
-    for (const sub of this.store.subagentsFor(file)) {
-      const child = new ClaudeAtifProjector({ store: this.store }).project(sub.path);
-      child.trajectory_id = sub.agent_id;
-      if (sub.meta) child.extra.oathe.subagent_meta = sub.meta;
-      this.addSubagent(child);
-    }
-  }
-
-  #mapAssistant(row, lastMessageId) {
-    const parts = Array.isArray(row.message?.content) ? row.message.content : [];
-    const texts = parts.filter((p) => p.type === 'text').map((p) => p.text);
-    const thinking = parts.filter((p) => p.type === 'thinking').map((p) => p.thinking);
-    const calls = parts.filter((p) => p.type === 'tool_use')
-      .map((p) => this.buildToolCall({ id: p.id, name: p.name, args: p.input }));
-    if (row.message?.model && !this.agentInfo.model_name) this.agentInfo.model_name = row.message.model;
-
-    // Consecutive assistant rows are one TURN (streamed content blocks): merge into the open
-    // agent step — but any intervening user row (a tool result included) ENDS the turn.
-    // Usage repeats per API response id, so it is added once per message id.
-    let step = this.turnBroken ? null : this.currentAgentStep();
-    this.turnBroken = false;
-    if (!step) {
-      step = this.pushStep({ source: 'agent', message: '' });
-      if (row.timestamp) step.timestamp = row.timestamp;
-    }
-    if (texts.length > 0) step.message = [step.message, ...texts].filter((t) => t !== '').join('\n');
-    if (thinking.length > 0) {
-      step.reasoning_content = [step.reasoning_content, ...thinking].filter(Boolean).join('\n');
-    }
-    if (calls.length > 0) step.tool_calls = [...(step.tool_calls ?? []), ...calls];
-
-    const usage = row.message?.usage;
-    const messageId = row.message?.id ?? null;
-    // Dedupe usage only when an API response id actually REPEATS — absent ids never match.
-    if (usage && (messageId === null || messageId !== lastMessageId)) {
-      const cached = usage.cache_read_input_tokens ?? 0;
-      const creation = usage.cache_creation_input_tokens ?? 0;
-      const prior = step.metrics ?? { prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0 };
-      step.metrics = {
-        prompt_tokens: prior.prompt_tokens + (usage.input_tokens ?? 0) + cached + creation,
-        completion_tokens: prior.completion_tokens + (usage.output_tokens ?? 0),
-        cached_tokens: prior.cached_tokens + cached,
-        ...(creation > 0 ? { extra: { cache_creation_input_tokens: creation } } : {}),
-      };
-    }
-    this.markClaimEvents(step);
-  }
-
-  #mapUser(row, file) {
-    this.turnBroken = true;
-    const content = row.message?.content;
-    if (Array.isArray(content)) {
-      const results = content.filter((p) => p.type === 'tool_result');
-      const texts = content.filter((p) => p.type === 'text').map((p) => p.text);
-      for (const result of results) this.attachResult(result.tool_use_id, result.content, { file });
-      if (texts.length > 0) this.pushStep({ source: 'user', message: texts.join('\n') });
-    } else {
-      this.pushStep({ source: 'user', message: textOf(content) });
-    }
-  }
-}
+// ClaudeAtifProjector lives in src/harnesses/claude-transcript.mjs — Claude format knowledge is
+// the adapter's (R-HARNESS-TOUCHPOINTS); this module stays harness-agnostic assembly.
 
 // --------------------------------------------------------------------------- Codex
 
-export class CodexAtifProjector extends AtifProjector {
-  map(rows, file) {
-    const head = rows[0];
-    if (head?.type !== 'session_meta') {
-      throw new AtifError('ATIF_UNMAPPABLE',
-        `${file}: first rollout line is '${head?.type}', expected session_meta`, { file });
-    }
-    const meta = head.payload ?? {};
-    this.oatheRoot.session_id = meta.id ?? meta.session_id;
-    this.agentInfo.version = meta.cli_version ?? null;
-    const modelName = meta.model ?? meta.model_provider;
-    if (!modelName) {
-      throw new AtifError('ATIF_UNMAPPABLE',
-        `${file}: session_meta names neither model nor model_provider — the agent identity `
-        + 'cannot be stated without being invented', { file });
-    }
-    this.agentInfo.model_name = modelName;
-
-    for (const row of rows.slice(1)) {
-      if (row.type === 'response_item') this.#mapResponseItem(row.payload ?? {}, file);
-      else if (row.type === 'event_msg' && row.payload?.type === 'token_count') {
-        const step = this.currentAgentStep() ?? this.steps.at(-1);
-        if (step && step.source === 'agent') {
-          step.metrics = {
-            prompt_tokens: row.payload.input_tokens ?? 0,
-            completion_tokens: row.payload.output_tokens ?? 0,
-            cached_tokens: row.payload.cached_tokens ?? 0,
-          };
-        }
-      }
-    }
-
-    for (const child of this.#children()) this.addSubagent(child);
-  }
-
-  #children() {
-    const projected = [];
-    let children = [];
-    try {
-      children = this.store.childThreads(this.oatheRoot.session_id);
-    } catch (e) {
-      if (e instanceof TraceContractError && e.code === 'TRACE_CODEX_STATE_ABSENT') return projected;
-      throw e;
-    }
-    for (const child of children) {
-      if (!child.rollout_path) {
-        throw new AtifError('ATIF_UNMAPPABLE',
-          `codex child thread ${child.thread_id} has no rollout path — a fan-out member cannot `
-          + 'be silently dropped from the evidence', { child });
-      }
-      const projectedChild = new CodexAtifProjector({ store: this.store }).project(child.rollout_path);
-      projectedChild.trajectory_id = child.thread_id;
-      projected.push(projectedChild);
-    }
-    return projected;
-  }
-
-  #agentStep() {
-    return this.currentAgentStep() ?? this.pushStep({ source: 'agent', message: '' });
-  }
-
-  #mapResponseItem(payload, file) {
-    switch (payload.type) {
-      case 'message':
-      case 'agent_message': {
-        const text = textOf(payload.content);
-        if (payload.role === 'user') {
-          this.pushStep({ source: 'user', message: text });
-        } else {
-          const step = this.#agentStep();
-          step.message = [step.message, text].filter((t) => t !== '').join('\n');
-        }
-        break;
-      }
-      case 'reasoning': {
-        const step = this.#agentStep();
-        const text = textOf(payload.content ?? payload.summary);
-        if (text) step.reasoning_content = [step.reasoning_content, text].filter(Boolean).join('\n');
-        break;
-      }
-      case 'function_call':
-      case 'local_shell_call':
-      case 'custom_tool_call': {
-        const step = this.#agentStep();
-        let args = payload.arguments ?? payload.action ?? {};
-        if (typeof args === 'string') {
-          try {
-            args = JSON.parse(args);
-          } catch {
-            throw new AtifError('ATIF_UNMAPPABLE',
-              `${file}: tool call '${payload.call_id}' carries arguments that are not JSON`, { file });
-          }
-        }
-        step.tool_calls = [...(step.tool_calls ?? []),
-          this.buildToolCall({ id: payload.call_id, name: payload.name ?? payload.type, args })];
-        this.markClaimEvents(step);
-        break;
-      }
-      case 'function_call_output':
-      case 'custom_tool_call_output':
-        this.attachResult(payload.call_id, payload.output ?? payload.content, { file });
-        break;
-      default:
-        break; // compaction/additional_tools/… — context machinery, not evidence steps
-    }
-  }
-}
+// CodexAtifProjector lives in src/harnesses/codex-rollout.mjs — codex format knowledge is
+// the adapter's (R-HARNESS-TOUCHPOINTS); this module stays harness-agnostic assembly.
 
 // --------------------------------------------------------------------------- factory
 
@@ -379,9 +217,9 @@ export class CodexAtifProjector extends AtifProjector {
 const FOCUS_CLOSERS = new Set(['oathe_done', 'oathe_yield']);
 
 /**
- * Claim-focused intervals of a trajectory (ruling R3 §5.4): a session becomes
+ * Claim-focused intervals of an ANNOTATED trajectory (ruling R3 §5.4): a session becomes
  * attributable to a task only from the step where it ACTS on that task through an oathe
- * speech act (claim, pickup, statement, done, yield — the projector's claim_events), and
+ * speech act (claim, pickup, statement, done, yield — the annotator's claim_events), and
  * stops being attributable when the act names a different task (a switch), when done/yield
  * closes the work, or when the session ends. Steps before the first act — planning, board
  * reading, repository discussion — belong to no interval and are context, not evidence.
@@ -409,99 +247,66 @@ export function claimIntervals(trajectory) {
 }
 
 /**
- * The trajectory reduced to the steps attributable to ONE task — what a verifier may treat
- * as that task's execution evidence. When the trajectory carries no interval for the task
- * (a pre-interval trace, or CLI-only work), the WHOLE trajectory is returned: whole-session
- * evidence is then the only honest option and slicing to nothing would fabricate absence.
+ * The trajectory reduced to what is attributable to ONE task — what a verifier may treat as
+ * that task's execution evidence. Steps: interval-scoped; no interval for the task means the
+ * WHOLE step record stays (a pre-interval trace, or CLI-only work — slicing to nothing would
+ * fabricate absence). Children: partitioned by their OWN claim intervals — a child naming
+ * the task is kept (recursively sliced), a child positively naming only OTHER tasks is never
+ * this task's evidence (the 22-sibling dilution, 2026-08-31), and a child naming nothing is
+ * kept only while no sibling positively names the task. A slice that changed anything
+ * renumbers step_ids (validator-safe) and announces itself in extra.oathe.sliced; an
+ * untouched trajectory is returned as-is, unmarked.
  */
 export function sliceForTask(trajectory, taskId) {
   const mine = claimIntervals(trajectory).filter((i) => i.task_id === taskId);
-  if (mine.length === 0) return trajectory;
-  const keep = new Set();
-  for (const { start_index, end_index } of mine) {
-    for (let i = start_index; i <= end_index; i++) keep.add(i);
+  const children = trajectory.subagent_trajectories ?? [];
+  let keptChildren = children;
+  if (children.length > 0) {
+    const judged = children.map((child) => {
+      const tasks = new Set(claimIntervals(child).map((i) => i.task_id));
+      return { child, names: tasks.has(taskId), othersOnly: tasks.size > 0 && !tasks.has(taskId) };
+    });
+    const anyNames = judged.some((j) => j.names);
+    keptChildren = judged
+      .filter((j) => j.names || (!j.othersOnly && !anyNames))
+      .map((j) => (j.names ? sliceForTask(j.child, taskId) : j.child));
   }
-  return { ...trajectory, steps: trajectory.steps.filter((_, i) => keep.has(i)) };
+  if (mine.length === 0 && keptChildren.length === children.length) return trajectory;
+
+  const keepIndex = new Set();
+  for (const { start_index, end_index } of mine) {
+    for (let i = start_index; i <= end_index; i++) keepIndex.add(i);
+  }
+  const keptIndices = mine.length > 0
+    ? trajectory.steps.map((_, i) => i).filter((i) => keepIndex.has(i))
+    : trajectory.steps.map((_, i) => i);
+  const sliced = {
+    ...trajectory,
+    steps: keptIndices.map((i, at) => ({ ...trajectory.steps[i], step_id: at + 1 })),
+    extra: {
+      ...(trajectory.extra ?? {}),
+      oathe: {
+        ...(trajectory.extra?.oathe ?? {}),
+        sliced: {
+          task_id: taskId,
+          original_step_ids: keptIndices.map((i) => trajectory.steps[i].step_id ?? i + 1),
+          subagents_elided: children.length - keptChildren.length,
+        },
+      },
+    },
+  };
+  if (children.length > 0) {
+    if (keptChildren.length > 0) sliced.subagent_trajectories = keptChildren;
+    else delete sliced.subagent_trajectories;
+  }
+  return sliced;
 }
 
 // --------------------------------------------------------------------------- evidence view
 
-const CLIP = { message: 300, args: 140, result: 200, user: 200 };
-const SUBAGENT_BUDGET_SHARE = 0.3;
-
-function clip(text, max) {
-  const flat = String(text).replaceAll('\n', ' ⏎ ');
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
-
-/** One step → its aligned lines: SAID (the claims), CLAIM (speech acts), DID (actions), GOT (outcomes). */
-function stepLines(step) {
-  const lines = [];
-  if (step.source === 'user') return [`USER: ${clip(step.message, CLIP.user)}`];
-  if (step.source === 'system') return [`SYSTEM: ${clip(step.message, CLIP.user)}`];
-  if (step.message) lines.push(`SAID: ${clip(step.message, CLIP.message)}`);
-  for (const event of step.extra?.oathe?.claim_events ?? []) {
-    lines.push(`CLAIM(${event.verb}${event.task_id ? ` ${event.task_id}` : ''})`);
-  }
-  for (const call of step.tool_calls ?? []) {
-    lines.push(`DID: ${call.function_name}(${clip(JSON.stringify(call.arguments), CLIP.args)})`);
-  }
-  for (const result of step.observation?.results ?? []) {
-    const exit = result.extra?.oathe?.observed?.exit_code;
-    lines.push(`GOT${exit !== undefined ? ` [exit ${exit}]` : ''}: ${clip(result.content, CLIP.result)}`);
-  }
-  return lines;
-}
-
-function plural(n, word) {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
-
-/**
- * The deterministic human/engine-facing rendering of a trajectory: aligned SAID/DID/GOT per
- * step under a character budget. Truncation is TAIL-PRIORITIZED (the most recent steps
- * survive whole) and ANNOUNCED — an elision the reader cannot see is evidence silently lost.
- */
-export function renderEvidenceView(trajectory, { budget }) {
-  const oathe = trajectory.extra?.oathe ?? {};
-  const header = [
-    `TRACE ${trajectory.session_id} (${oathe.harness ?? trajectory.agent?.name}`
-      + `${oathe.session_title ? ` — "${oathe.session_title}"` : ''})`,
-    ...(oathe.files_touched?.length ? [`files touched: ${oathe.files_touched.join(', ')}`] : []),
-  ];
-  const subagents = trajectory.subagent_trajectories ?? [];
-  const mainBudget = subagents.length > 0 ? Math.floor(budget * (1 - SUBAGENT_BUDGET_SHARE)) : budget;
-
-  const blocks = trajectory.steps.map((step) => stepLines(step).map((l) => `  ${l}`).join('\n'));
-  const kept = [];
-  let spent = 0;
-  for (let at = blocks.length - 1; at >= 0; at -= 1) {
-    if (spent + blocks[at].length > mainBudget && kept.length > 0) break;
-    kept.unshift(at);
-    spent += blocks[at].length;
-    if (spent > mainBudget) break;
-  }
-  const elidedSteps = trajectory.steps.slice(0, kept[0] ?? 0);
-  const body = [];
-  if (elidedSteps.length > 0) {
-    const toolCalls = elidedSteps.reduce((n, s) => n + (s.tool_calls?.length ?? 0), 0);
-    const claims = elidedSteps.reduce((n, s) => n + (s.extra?.oathe?.claim_events?.length ?? 0), 0);
-    body.push(`  [${plural(elidedSteps.length, 'earlier step')} elided: `
-      + `${plural(toolCalls, 'tool call')}, ${plural(claims, 'claim')}]`);
-  }
-  for (const at of kept) body.push(blocks[at]);
-
-  const out = [...header, ...body];
-  if (subagents.length > 0) {
-    const each = Math.floor((budget * SUBAGENT_BUDGET_SHARE) / subagents.length);
-    for (const child of subagents) {
-      const meta = child.extra?.oathe?.subagent_meta;
-      out.push(`SUBAGENT ${child.trajectory_id}${meta?.agentType ? ` (${meta.agentType})` : ''}`);
-      out.push(renderEvidenceView(child, { budget: each }));
-    }
-  }
-  return out.join('\n');
-}
+// The rendering lives in src/evidence.mjs (EvidenceRenderer — the one budget-true
+// implementation); the export stays here for its consumers' stable import path.
+export { renderEvidenceView } from './evidence.mjs';
 
 // --------------------------------------------------------------------------- validator
 
@@ -516,6 +321,9 @@ const KNOWN_FIELDS = Object.freeze({
   tool_call: ['tool_call_id', 'function_name', 'arguments', 'extra'],
   observation: ['results', 'extra'],
   observation_result: ['source_call_id', 'content', 'subagent_trajectory_ref', 'extra'],
+  // The reference SubagentTrajectoryRef: resolvable by trajectory_id (embedded) or
+  // trajectory_path (external); session_id is informational, never a key; extra forbidden.
+  subagent_trajectory_ref: ['trajectory_id', 'trajectory_path', 'session_id', 'extra'],
   metrics: ['prompt_tokens', 'completion_tokens', 'cached_tokens', 'cost_usd',
     'prompt_token_ids', 'completion_token_ids', 'logprobs', 'extra'],
   final_metrics: ['total_prompt_tokens', 'total_completion_tokens', 'total_cached_tokens',
@@ -567,7 +375,10 @@ export class AtifValidator {
     this.#knownFields(t.agent, 'agent', `${where}.agent`);
     if (!t.agent.name) this.#fail(`${where}.agent: name required`);
     if (!Array.isArray(t.steps) || t.steps.length === 0) this.#fail(`${where}: steps must be a non-empty array`);
-    t.steps.forEach((step, at) => this.#step(step, at, `${where}.steps[${at}]`));
+    // The ids a ref can resolve against — the embedded children's — are known before the steps
+    // are read, so a dangling trajectory_id is refused where it sits.
+    const embedded = new Set((t.subagent_trajectories ?? []).map((child) => child?.trajectory_id).filter(Boolean));
+    t.steps.forEach((step, at) => this.#step(step, at, `${where}.steps[${at}]`, embedded));
     if (t.final_metrics) this.#knownFields(t.final_metrics, 'final_metrics', `${where}.final_metrics`);
     if (t.subagent_trajectories !== undefined) {
       const ids = new Set();
@@ -584,7 +395,7 @@ export class AtifValidator {
     }
   }
 
-  #step(step, at, where) {
+  #step(step, at, where, embedded) {
     this.#knownFields(step, 'step', where);
     if (step.step_id !== at + 1) {
       this.#fail(`${where}: step_id ${step.step_id} breaks the sequential-from-1 rule (expected ${at + 1})`);
@@ -617,8 +428,31 @@ export class AtifValidator {
           this.#fail(`${where}.observation.results[${ri}]: source_call_id '${result.source_call_id}' `
             + 'matches no tool call on its step');
         }
+        if (result.subagent_trajectory_ref !== undefined && result.subagent_trajectory_ref !== null) {
+          this.#refs(result.subagent_trajectory_ref, `${where}.observation.results[${ri}].subagent_trajectory_ref`, embedded);
+        }
       }
     }
     if (step.metrics !== undefined) this.#knownFields(step.metrics, 'metrics', `${where}.metrics`);
+  }
+
+  /**
+   * A result's subagent refs (RFC 0001, v1.7): an ARRAY of SubagentTrajectoryRef — each
+   * resolvable by trajectory_id (which must name an embedded child — the RFC's resolution
+   * rule, held here though the reference model checks only the one-of) or by
+   * trajectory_path (an external file, taken on trust); session_id rides informationally.
+   */
+  #refs(refs, where, embedded) {
+    if (!Array.isArray(refs)) this.#fail(`${where}: subagent_trajectory_ref must be an array of refs`);
+    for (const [at, ref] of refs.entries()) {
+      if (ref === null || typeof ref !== 'object') this.#fail(`${where}[${at}]: not an object`);
+      this.#knownFields(ref, 'subagent_trajectory_ref', `${where}[${at}]`);
+      if (!ref.trajectory_id && !ref.trajectory_path) {
+        this.#fail(`${where}[${at}]: a ref must be resolvable — set trajectory_id (embedded) or trajectory_path (external); session_id alone is not a key`);
+      }
+      if (ref.trajectory_id && !embedded.has(ref.trajectory_id)) {
+        this.#fail(`${where}[${at}]: trajectory_id '${ref.trajectory_id}' names no embedded subagent trajectory`);
+      }
+    }
   }
 }

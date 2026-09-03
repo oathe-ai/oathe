@@ -67,6 +67,9 @@ export async function activateWorkspace({
   // The lock spans the whole read-modify-write over the shared manifest: concurrent hooks and
   // servers activate at once, and save() alone cannot prevent a lost update.
   await withFileLock(manifest.manifestPath, async () => {
+    // The file, not the snapshot (B4): this manifest object may have been loaded when the
+    // server's context was built, days before — read what is on disk now, then add to THAT.
+    manifest.refresh();
     for (const file of targets) {
       const target = path.join(cwd, file);
       const { changed } = writeFence({ manifest, file: target, version, body: fenceBody(workspace), scope: 'project' });

@@ -79,7 +79,7 @@ for (const harness of ['claude', 'codex', 'cursor']) {
 test('a CLI that stops writing what it wrote before FAILS LOUD, naming the check and the row', async () => {
   const sb = sandbox({ scratchDb: `oathe_ic_broken_${process.pid}` });
   dbs.push(sb.env.OATHE_DB);
-  // The next codex release stops writing the mcp_servers stanza its `codex mcp add` used to write.
+  // The next codex release stops writing the mcp_servers stanza `codex mcp add` writes today.
   const exec = {
     calls: [],
     run(cmd, args) {

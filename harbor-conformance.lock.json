@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "harbor": {
+    "version": "0.22.0",
+    "python": "3.12.0"
+  },
+  "entrypoint": {
+    "agent_factory": "harbor.agents.factory:AgentFactory",
+    "agent_name": "harbor.models.agent.name:AgentName",
+    "agent_context": "harbor.models.agent.context:AgentContext",
+    "create": "create_agent_from_name",
+    "post_run": "populate_context_post_run",
+    "output": "trajectory.json"
+  },
+  "baseline": {
+    "claude/2026-09-01-metadata-noise": [],
+    "claude/2026-09-01-subagent-fanout": [
+      "refs: ours 2 theirs 0",
+      "results ours-only: (no call)",
+      "steps: ours \"uaasssasss\" theirs \"uaaua\""
+    ],
+    "claude/2026-09-01-tool-pair-claim": [],
+    "claude/2026-09-02-task-notification": [
+      "refs: ours 4 theirs 0",
+      "results ours-only: (no call)",
+      "steps: ours \"aaasss\" theirs \"aaau\""
+    ],
+    "codex/2026-09-01-exec-wrapped-oathe-claim": [
+      "steps: ours \"sssuuaaaaaaaaaa\" theirs \"sssuaaaaaaaaaa\"",
+      "tool_calls ours-only: exec_command:call_1, exec_command:call_2, exec_command:call_3, mcp__oathe__oathe_claim:call_5, exec_command:call_6, exec_command:call_10",
+      "tool_calls theirs-only: exec:call_1, exec:call_2, exec:call_3, exec:call_5, exec:call_6, exec:call_10"
+    ],
+    "codex/2026-09-01-legacy-function-call": [
+      "results ours-only: exec-00000000-0000-7000-8000-000000000007",
+      "tool_calls ours-only: collaboration__spawn_agent:call_1, collaboration__spawn_agent:call_2, collaboration__spawn_agent:call_3, web__run:call_4, web.search:exec-00000000-0000-7000-8000-000000000007, exec_command:call_5, exec_command:call_6, exec_command:call_7, exec_command:call_8, exec_command:call_9, exec_command:call_10, exec_command:call_11",
+      "tool_calls theirs-only: spawn_agent:call_1, spawn_agent:call_2, spawn_agent:call_3, exec:call_4, exec:call_5, exec:call_6, exec:call_7, exec:call_8, exec:call_9, exec:call_10, exec:call_11"
+    ],
+    "codex/2026-09-01-nested-token-count": [],
+    "codex/2026-09-01-plain-exec-command": [],
+    "codex/2026-09-01-spawn-fanout": [
+      "delegated_steps: ours 15 theirs 0",
+      "final_metrics.total_cached_tokens: ours 587008 theirs 307968",
+      "final_metrics.total_completion_tokens: ours 4455 theirs 2227",
+      "final_metrics.total_prompt_tokens: ours 669241 theirs 354496",
+      "tool_calls ours-only: exec_command:call_1, exec_command:call_2, exec_command:call_3, exec_command:call_5, mcp__oathe__oathe_claim:call_8",
+      "tool_calls theirs-only: exec:call_1, exec:call_2, exec:call_3, exec:call_5, exec:call_8"
+    ],
+    "codex/2026-09-02-fork-parent-child": [
+      "delegated_steps: ours 21 theirs 0",
+      "final_metrics.total_cached_tokens: ours 3548416 theirs 2494976",
+      "final_metrics.total_completion_tokens: ours 7679 theirs 2325",
+      "final_metrics.total_prompt_tokens: ours 3825782 theirs 2710881",
+      "llm_call_count: ours [1,1,1,1,1,1,1,1,1,1,1,1,1,1,null] theirs [1,1,1,1,1,1,1,1,1,1,1,1,1,1]",
+      "refs: ours 2 theirs 0",
+      "results ours-only: exec-00000000-0000-7000-8000-000000000017, (no call)",
+      "steps: ours \"susuuaaaaaaaaaaaaaasas\" theirs \"susuuaaaaaaaaaaaaaa\"",
+      "tool_calls ours-only: collaboration__spawn_agent:call_1, collaboration__spawn_agent:call_2, collaboration__spawn_agent:call_3, web__run:call_4, web.search:exec-00000000-0000-7000-8000-000000000017, exec_command:call_5, exec_command:call_6, exec_command:call_7, exec_command:call_8, exec_command:call_9, exec_command:call_10, exec_command:call_11, exec_command:call_12, exec_command:call_13, exec_command:call_14",
+      "tool_calls theirs-only: spawn_agent:call_1, spawn_agent:call_2, spawn_agent:call_3, exec:call_4, exec:call_5, exec:call_6, exec:call_7, exec:call_8, exec:call_9, exec:call_10, exec:call_11, exec:call_12, exec:call_13, exec:call_14"
+    ]
+  },
+  "pinned_at": "2026-09-02T00:38:20.060Z"
+}

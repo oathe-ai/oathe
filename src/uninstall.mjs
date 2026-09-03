@@ -38,7 +38,10 @@ export async function runUninstall({ env = process.env, exec, purgeDb = false } 
     // The notch LaunchAgent: booted out and removed exactly as recorded (src/notch.mjs).
     const { unwireNotch } = await import('./notch.mjs');
     actions.push(...unwireNotch({ manifest, ...(exec ? { exec } : {}) }));
-    manifest.save();
+    // Same rule as init (B4): rows that landed while the undo CLIs ran are kept, this run's
+    // removals hold, and the save happens under the lock against the file as it is now.
+    const { withFileLock } = await import('./fslock.mjs');
+    await withFileLock(manifest.manifestPath, async () => { manifest.refresh({ merge: true }); manifest.save(); });
 
     let databaseDropped = false;
     if (purgeDb) {

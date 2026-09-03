@@ -144,7 +144,11 @@ export async function runInit({
     for (const action of wireNotch({ home: ctx.home, manifest, config: ctx.config, version, packageRoot: ctx.paths.packageRoot, ...(exec ? { exec } : {}) })) {
       actions.push({ harness: 'notch', ...action });
     }
-    manifest.save();
+    // This run took as long as its CLI calls did; a hook or a server may have saved a row in
+    // the meantime. Under the lock, merge what landed on disk, then record this run — never a
+    // snapshot over a living file (B4, 2026-09-03).
+    const { withFileLock } = await import('./fslock.mjs');
+    await withFileLock(manifest.manifestPath, async () => { manifest.refresh({ merge: true }); manifest.save(); });
 
     return {
       plan,

@@ -20,10 +20,18 @@ export class ConfigError extends Error {
 
 const ENGINES = verifierCapable();
 
+/** The OS user — the principal's one default, named here and nowhere else (D0-PREVIEW:
+ *  "principal from OATHE_PRINCIPAL or the OS user"). os.userInfo() refuses in a container
+ *  whose uid has no passwd entry; USER is the next truth and 'operator' the last word — the
+ *  fallback three consumers each hardcoded before 2026-09-03, now in this one place. */
+function osUser() {
+  try { return os.userInfo().username; } catch { return process.env.USER || 'operator'; }
+}
+
 /** Every key: default, env var, validator. Adding a tunable means adding a row HERE. */
 const KEYS = Object.freeze({
   org: { default: 'oathe', env: 'OATHE_ORG', check: nonEmptyString },
-  principal: { default: null, env: 'OATHE_PRINCIPAL', check: nullOrString },
+  principal: { default: osUser(), env: 'OATHE_PRINCIPAL', check: nonEmptyString },
   department: { default: 'operator', env: 'OATHE_DEPARTMENT', check: nonEmptyString },
   db: { default: 'oathe_local', env: 'OATHE_DB', check: nonEmptyString },
   // Standard-first: honor libpq's PGHOST when set; otherwise the platform's conventional
@@ -43,6 +51,10 @@ const KEYS = Object.freeze({
   defaultAgent: { default: null, env: 'OATHE_DEFAULT_AGENT', check: nullOrOneOf(launchable()) },
   verifierPrincipal: { default: 'oathe-verifier', env: 'OATHE_VERIFIER_PRINCIPAL', check: nonEmptyString },
   verifierEvidenceBudget: { default: 24000, env: 'OATHE_VERIFIER_EVIDENCE_BUDGET', check: positiveInt },
+  // The trace census sweep window (doctor and the trace-census lane share these): how many
+  // days back and at most how many records per engine — the cost knobs for busy stores.
+  traceCensusDays: { default: 3, env: 'OATHE_TRACE_CENSUS_DAYS', check: positiveInt },
+  traceCensusMaxFiles: { default: 40, env: 'OATHE_TRACE_CENSUS_MAX_FILES', check: positiveInt },
   runtimeProvider: { default: 'auto', env: 'OATHE_RUNTIME_PROVIDER', check: oneOf(['auto', 'oathe', 'standalone']) },
   // Activation (registry row + context-file fences) on first use in a workspace: the off
   // switch for machines that want register-only sessions.
@@ -53,8 +65,8 @@ const KEYS = Object.freeze({
   // R-PAGER: an active claim with no non-trace progress statement inside this many hours is
   // a breached promise (paged at session start). Lifecycle facts like a lapsed lease are not.
   pagerQuietHours: { default: 24, env: 'OATHE_PAGER_QUIET_HOURS', check: positiveInt },
-  // The notch app: the machine opts in by naming its binary — init then owns the
-  // LaunchAgent (src/notch.mjs). D1 packaging will default this to a bundled binary.
+  // The notch app: null is the app the package carries (notch/Oathe Notch.app, built at
+  // prepack); a path overrides it for development. init owns the LaunchAgent (src/notch.mjs).
   notchApp: { default: null, env: 'OATHE_NOTCH_APP', check: nullOrString },
   // What "in motion" means on the glass: a claim whose last word (statement, or the claim
   // itself) is younger than this earns a row; idle-held work stays in `oathe ls`.

@@ -13,7 +13,8 @@ import { OatheConfig } from '../config.mjs';
 import { WorkspaceResolver } from '../workspace-resolver.mjs';
 import { harnessForClient } from '../harnesses/catalog.mjs';
 import { resolveSpeaker } from '../speaker.mjs';
-import { homeOf } from '../paths.mjs';
+import { buildPaths, homeOf } from '../paths.mjs';
+import { packageVersion } from '../context.mjs';
 
 export class McpConnection {
   /**
@@ -32,6 +33,7 @@ export class McpConnection {
     this.factory = toolContextFactory ?? defaultToolContextFactory({ env });
     this.cwd = cwd;
     this.home = home;
+    this.version = packageVersion(buildPaths(env)); // the package's own file — no environment to poison
     this.client = { capabilities: {}, info: null };
     this.pending = new Map();
     this.requestSeq = 0;
@@ -80,7 +82,7 @@ export class McpConnection {
       await this.#invalidate();
       return;
     }
-    const out = await dispatch(msg, { tools: this.served });
+    const out = await dispatch(msg, { tools: this.served, version: this.version });
     if (out) this.#write(out);
   }
 
@@ -155,7 +157,6 @@ export class McpConnection {
  *  activation seam (src/activation.mjs) — the resolution's `synthetic` fact rides into both
  *  the tools (board scope) and the seam (no registration, no fences). */
 export function defaultToolContextFactory({ env }) {
-  let speaker = null; // observed once per server process — our own ancestry never changes
   return async ({ resolution, client }) => {
     const [
       { Substrate }, { buildPaths }, { OatheConfig }, { WorkspaceRegistry }, { InstallManifest },
@@ -169,7 +170,7 @@ export function defaultToolContextFactory({ env }) {
     const substrate = new Substrate({ database: config.get('db'), paths, env, config });
     const identity = {
       orgId: config.get('org'),
-      principalId: config.get('principal') || env.USER || 'operator',
+      principalId: config.get('principal'),
       department: config.get('department'),
     };
     const activation = new ActivationSeam({
@@ -191,9 +192,10 @@ export function defaultToolContextFactory({ env }) {
       workspace: resolution.ref,
       synthetic: resolution.synthetic,
       activation,
-      // The SPEAKER primitive — resolved ONCE from our own ancestry + the device session
-      // registry (the walk outranks the client's self-declared name); required plumbing.
-      speaker: (speaker ??= resolveSpeaker({ clientName: client?.info?.name, sessionsPath: paths.sessionsPath })),
+      // The SPEAKER primitive — resolved FRESH per context build: our own ancestry never
+      // changes, but the device session registry does (a /clear, a rotation), and a stale
+      // memo would stamp the first session's id on every later act (found 2026-09-01).
+      speaker: resolveSpeaker({ clientName: client?.info?.name, sessionsPath: paths.sessionsPath }),
 
       // Verification over MCP DISPATCHES — the engine never runs inside the server (a run is
       // minutes; the server must keep answering). ONE seam, every surface (verifierSeam).

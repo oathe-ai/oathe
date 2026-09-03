@@ -7,9 +7,8 @@
 // lands behind `oathe-runtime/seam`, which must export
 //   buildSuccessor({ substrate, identity, paths }) →
 //     { pickup({ task_id, work_claim_id }) → object, close() → void }
-// The runtime-env synthesis and compiler wiring that previously lived here move into that
-// package (they are its concern, not the interface's); this file only delegates or refuses
-// TYPED and LOUD.
+// The runtime-env synthesis and compiler wiring are that package's concern, not the
+// interface's; this file only delegates or refuses TYPED and LOUD.
 
 import { RuntimeError } from './runtime/provider.mjs';
 

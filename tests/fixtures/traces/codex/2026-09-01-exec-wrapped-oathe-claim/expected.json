@@ -1,0 +1,443 @@
+{
+  "_source": "sanitized from a real codex record by scripts/derive-trace-fixtures.mjs — review this diff before it lands",
+  "record": ".codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-00000000-0000-7000-8000-000000000001.jsonl",
+  "trajectory": {
+    "schema_version": "ATIF-v1.7",
+    "session_id": "00000000-0000-7000-8000-000000000001",
+    "agent": {
+      "name": "codex",
+      "version": "0.150.0",
+      "model_name": "gpt-5.6-sol"
+    },
+    "steps": [
+      {
+        "step_id": 1,
+        "source": "system",
+        "message": "redacted 999c4c04 (len 16705)\nredacted 4fc169b4 (len 22168)\nredacted e8f55d5b (len 4424)\nredacted b4536c3d (len 646)\nredacted 81d37acb (len 1014)"
+      },
+      {
+        "step_id": 2,
+        "source": "system",
+        "message": "redacted af4940bc (len 2237)"
+      },
+      {
+        "step_id": 3,
+        "source": "system",
+        "message": "redacted 6ded806e (len 271)"
+      },
+      {
+        "step_id": 4,
+        "source": "user",
+        "message": "redacted bc708464 (len 3205)\nredacted 0491c725 (len 1080)\nredacted 2f1eb476 (len 929)"
+      },
+      {
+        "step_id": 5,
+        "source": "user",
+        "message": "Message Type: NEW_TASK\nTask name: /root/agent-1\nSender: /root\nPayload:\nredacted e3b0c442 (len 0)\n[payload encrypted]",
+        "timestamp": "2026-09-01T01:13:47.054Z",
+        "extra": {
+          "record": {
+            "inbound": {
+              "author": "/root",
+              "recipient": "/root/agent-1",
+              "message_type": "NEW_TASK"
+            }
+          }
+        }
+      },
+      {
+        "step_id": 6,
+        "source": "agent",
+        "message": "redacted 32192b02 (len 210)",
+        "timestamp": "2026-09-01T01:13:53.566Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_1",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-1c8f5574",
+              "workdir": "/Users/dev/app",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 20000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_1",
+              "content": "redacted 8b110006 (len 47)\nredacted 5152ff50 (len 109)",
+              "extra": {
+                "record": {
+                  "exit_code": 1
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 24951,
+          "completion_tokens": 365,
+          "cached_tokens": 23296
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 7,
+        "source": "agent",
+        "message": "redacted 252add72 (len 158)",
+        "timestamp": "2026-09-01T01:13:57.777Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_2",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-94f5bef9",
+              "workdir": "/Users/dev/app",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 2000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_2",
+              "content": "redacted 8b110006 (len 47)\nredacted ff508b10 (len 83)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 25376,
+          "completion_tokens": 163,
+          "cached_tokens": 23296
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 8,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T01:14:02.284Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_3",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-f2cc4206",
+              "workdir": "/Users/dev/app",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 30000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_3",
+              "content": "redacted 8b110006 (len 47)\nredacted 358ac399 (len 2005)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 25592,
+          "completion_tokens": 93,
+          "cached_tokens": 24320
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 9,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T01:14:06.481Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_4",
+            "function_name": "exec",
+            "arguments": {
+              "input": "/* redacted exec source 4bc8cf2e */ "
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_4",
+              "content": "redacted b5f7a7aa (len 47)\nredacted 36bc05a1 (len 2259)"
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 26176,
+          "completion_tokens": 75,
+          "cached_tokens": 25344
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 10,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T01:14:09.895Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_5",
+            "function_name": "mcp__oathe__oathe_claim",
+            "arguments": {
+              "task_id": "draft-061-05",
+              "objective": "redacted-fed6f585"
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_5",
+              "content": "redacted 9a0a7f9b (len 47)\nredacted 07e70bf7 (len 1429)"
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 26874,
+          "completion_tokens": 111,
+          "cached_tokens": 25344
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 11,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T01:14:19.310Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_6",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-062aa57d",
+              "workdir": "/Users/dev/app",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 2000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_6",
+              "content": "redacted 8b110006 (len 47)\nredacted 3f6c34c4 (len 174)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 27439,
+          "completion_tokens": 203,
+          "cached_tokens": 26368
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 12,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T01:14:26.344Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_7",
+            "function_name": "exec",
+            "arguments": {
+              "input": "/* redacted exec source ac48d2ed */ tools.exec_command(/* redacted */); tools.exec_command(/* redacted */); tools.exec_command(/* redacted */); tools.exec_command(/* redacted */);"
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_7",
+              "content": "redacted 53dc0937 (len 47)\nredacted baea81d7 (len 39794)",
+              "extra": {
+                "record": {
+                  "executions": [
+                    {
+                      "command": "redacted-61c713e6",
+                      "exit_code": 0
+                    },
+                    {
+                      "command": "redacted-6364001a",
+                      "exit_code": 0
+                    },
+                    {
+                      "command": "redacted-0b8e1c4b",
+                      "exit_code": 0
+                    },
+                    {
+                      "command": "redacted-c3877b30",
+                      "exit_code": 0
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 27717,
+          "completion_tokens": 290,
+          "cached_tokens": 26368
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 13,
+        "source": "agent",
+        "message": "redacted 44dd2a3d (len 170)",
+        "timestamp": "2026-09-01T01:14:30.140Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_8",
+            "function_name": "exec",
+            "arguments": {
+              "input": "/* redacted exec source 8f7a41f1 */ tools.exec_command(/* redacted */); tools.exec_command(/* redacted */);"
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_8",
+              "content": "redacted 53dc0937 (len 47)\nredacted 8f6468fa (len 16426)\nredacted c750769e (len 9185)",
+              "extra": {
+                "record": {
+                  "executions": [
+                    {
+                      "command": "redacted-86f49d48",
+                      "exit_code": 0
+                    },
+                    {
+                      "command": "redacted-29aacf7d",
+                      "exit_code": 0
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 37262,
+          "completion_tokens": 269,
+          "cached_tokens": 24320
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 14,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T01:14:39.390Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_9",
+            "function_name": "exec",
+            "arguments": {
+              "input": "/* redacted exec source f0c60c8b */ tools.exec_command(/* redacted */); tools.exec_command(/* redacted */);"
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_9",
+              "content": "redacted 8b110006 (len 47)\nredacted ca46ee85 (len 9500)\nredacted 3f63fc45 (len 14049)",
+              "extra": {
+                "record": {
+                  "executions": [
+                    {
+                      "command": "redacted-6316ba32",
+                      "exit_code": 0
+                    },
+                    {
+                      "command": "redacted-12732e35",
+                      "exit_code": 0
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 43905,
+          "completion_tokens": 185,
+          "cached_tokens": 36608
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 15,
+        "source": "agent",
+        "message": "redacted 5b018893 (len 253)",
+        "timestamp": "2026-09-01T01:14:48.906Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_10",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-f16c37e8",
+              "workdir": "/Users/dev/app",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 30000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_10",
+              "content": "redacted 8b110006 (len 47)\nredacted 6ab9952b (len 83)",
+              "extra": {
+                "record": {
+                  "exit_code": 1
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 49453,
+          "completion_tokens": 474,
+          "cached_tokens": 43776
+        },
+        "llm_call_count": 1
+      }
+    ],
+    "final_metrics": {
+      "total_prompt_tokens": 314745,
+      "total_completion_tokens": 2228,
+      "total_cached_tokens": 279040,
+      "total_steps": 15
+    },
+    "extra": {
+      "record": {
+        "source_path": "<home>/.codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-00000000-0000-7000-8000-000000000001.jsonl",
+        "step_boundary": "token_count"
+      }
+    }
+  }
+}

@@ -61,9 +61,9 @@ test('calling a tool the server does not have is a typed error', async () => {
   assert.match(out.result.content[0].text, /unknown_tool/);
 });
 
-// The launch gate is GONE (founder decision, one-click cross-harness): resolution is the gate.
-// OATHE_LAUNCHED_HARNESS remains a custody marker only — nothing reads it for tool access.
-test('withLaunchGate no longer exists — resolution replaced the launch gate', () => {
+// Resolution is the gate (founder decision, one-click cross-harness): OATHE_LAUNCHED_HARNESS
+// is a custody marker only — nothing reads it for tool access.
+test('there is no withLaunchGate export — resolution is the gate', () => {
   assert.equal(serverModule.withLaunchGate, undefined);
 });
 
@@ -171,6 +171,23 @@ test('oathe_board renders only this workspace unless all is asked', async () => 
   assert.ok(all.board.some((r) => r.task_id === 'elsewhere'));
 });
 
+test('UX rule 19: attention is read per call, only where it is served — attention:false runs no breach read; a clean board carries no attention key', async () => {
+  const seen = [];
+  const spy = { query: async (sql, params) => { seen.push(sql); return substrate.query(sql, params); } };
+  const identity = { orgId: 'oathe', principalId: 'founder', department: 'founder' };
+  const readOnly = createOatheTools({ client: spy, identity, workspace: 'ws-attn000000000', config: scratchConfig(), attention: false });
+  const composed = await readOnly.oathe_board({});
+  assert.ok(!('attention' in composed) && !('attention_error' in composed) && !('breaches' in composed), 'no breach channel on a read-only composition');
+  assert.ok(seen.every((sql) => !/unverified_past_verify_by/.test(sql)), 'no pager query ran (the overdue leg is the pager\'s alone)');
+
+  const served = createOatheTools({ client: spy, identity, workspace: 'ws-attn000000000', config: scratchConfig() });
+  const clean = await served.oathe_board({});
+  assert.ok(!('attention' in clean), 'nothing to fix on this board — no key, not an empty list');
+  assert.deepEqual(clean.breaches, [], 'the pull is present and empty');
+  assert.throws(() => createOatheTools({ client: spy, identity, workspace: 'ws-attn000000000' }),
+    (e) => e.code === 'OATHE_ATTENTION_NEEDS_CONFIG', 'a served surface without config is a typed refusal, never a per-call attention_error');
+});
+
 test('the board row carries last_word_at — the pager\'s own last-word definition, the claim counting as the first word', async () => {
   await tools.oathe_claim({ task_id: 'word-task', objective: 'when did anyone last speak' });
   const { sections } = await tools.oathe_board({});
@@ -230,6 +247,9 @@ test('a SERVING tool surface without its speaker is a typed refusal — the prim
 
 test('attribution rides the speech act — a claim leaves its trace-link statement IMMEDIATELY, idempotently, disclosed', async () => {
   const seam = { register: async () => ({}), activate: async () => ({}) };
+  // A transcript that EXISTS: a link names a file a verifier can read, or it is not written.
+  const transcript = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-attr-')), 'attr.jsonl');
+  fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', uuid: 'u1', sessionId: 'sess-attr-1', message: { role: 'user', content: 'work' } })}\n`);
   const wired = createOatheTools({
     client: substrate,
     identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' },
@@ -239,16 +259,36 @@ test('attribution rides the speech act — a claim leaves its trace-link stateme
     speaker: {
       surface: 'claude',
       app: { bundle: '/Applications/iTerm.app', pid: 4242 },
-      session: { sessionId: 'sess-attr-1', transcriptPath: '/tmp/attr.jsonl', harness: 'claude' },
+      session: { sessionId: 'sess-attr-1', transcriptPath: transcript, harness: 'claude' },
     },
   });
   const out = await wired.oathe_claim({ task_id: 'attr-task', objective: 'attributed at the act, not at turn end' });
   assert.deepEqual(out.spoken_from, { surface: 'claude', app: '/Applications/iTerm.app', session: 'sess-attr-1' },
     'the act discloses who spoke it');
+  assert.ok(!('trace_link' in out), 'a link that landed needs no disclosure');
   const links = () => substrate.query(
     "SELECT evidence_refs FROM cell.agent_statement WHERE task_id = 'attr-task' AND subject_ref = 'trace:sess-attr-1'");
   assert.equal((await links()).rows.length, 1, 'the trace-link exists the moment the claim lands — no turn-end wait');
-  assert.deepEqual((await links()).rows[0].evidence_refs, ['/tmp/attr.jsonl']);
+  assert.deepEqual((await links()).rows[0].evidence_refs, [transcript]);
+  // A transcript the harness named but never wrote (a resumed session before its first turn
+  // end) is NOT linked as evidence — a ghost link would kill verification at the evidence
+  // stage (TRACE_UNREADABLE, live 2026-09-01); the miss is disclosed on the act, and the
+  // turn-end heartbeat links the real file.
+  const ghostWired = createOatheTools({
+    client: substrate,
+    identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' },
+    workspace: WS,
+    config: scratchConfig(),
+    activation: seam,
+    speaker: { surface: 'claude', app: null, session: { sessionId: 'sess-ghost', transcriptPath: path.join(os.tmpdir(), 'oathe-never', 'ghost.jsonl'), harness: 'claude' } },
+  });
+  const ghosted = await ghostWired.oathe_claim({ task_id: 'attr-ghost-task', objective: 'spoken before the transcript exists' });
+  assert.equal(ghosted.claimed, true, 'the act stands');
+  assert.equal(ghosted.trace_link?.linked, false);
+  assert.match(ghosted.trace_link?.why, /not on disk/);
+  const ghostLinks = await substrate.query("SELECT 1 FROM cell.agent_statement WHERE task_id = 'attr-ghost-task' AND subject_ref = 'trace:sess-ghost'");
+  assert.equal(ghostLinks.rows.length, 0, 'no ghost link');
+  await ghostWired.oathe_yield({ task_id: 'attr-ghost-task', note: 'fixture done' });
   await wired.oathe_statement({ task_id: 'attr-task', proposition: 'progress mid-turn' });
   assert.equal((await links()).rows.length, 1, 'a second write is idempotent — one link per claim × session');
   // A cursor-shaped session (no transcript store) still attributes — evidence is honestly empty.
@@ -368,6 +408,26 @@ test('oathe_yield without an active claim is a typed refusal', async () => {
   await assert.rejects(
     () => tools.oathe_yield({ task_id: 'task-x', note: 'again' }),
     (e) => e.code === 'OATHE_NO_ACTIVE_CLAIM');
+});
+
+test('oathe_yield without a note is a typed refusal BEFORE the substrate — the cause is owed, and the refusal names it', async () => {
+  // The schema says `required: ['task_id', 'note']`, but the server enforces no schema: a client
+  // that ignores it used to reach plpgsql and get FC141 ("a declared cause writing a basis") — a
+  // sentence about yield bases, not about the missing note. Fail loud, in the tool's own words,
+  // so the model that called it knows why (founder's word, 2026-09-03).
+  await tools.oathe_claim({ task_id: 'yield-noteless', objective: 'a claim that tries to leave without a word' });
+  for (const args of [{ task_id: 'yield-noteless' }, { task_id: 'yield-noteless', note: '   ' }, { task_id: 'yield-noteless', note: 7 }]) {
+    await assert.rejects(() => tools.oathe_yield(args), (e) => {
+      assert.equal(e.code, 'OATHE_YIELD_NOTE_REQUIRED');
+      assert.match(e.message, /note/, 'names what is missing');
+      assert.match(e.message, /refus/, 'the trailer classifier reads refusals by their own word');
+      return true;
+    });
+  }
+  const { rows } = await substrate.query(
+    "SELECT state FROM cell.work_claim WHERE task_id = 'yield-noteless' ORDER BY claimed_at DESC LIMIT 1");
+  assert.equal(rows[0].state, 'active', 'a refused yield leaves the claim exactly where it was');
+  await tools.oathe_yield({ task_id: 'yield-noteless', note: 'fixture done' });
 });
 
 test('oathe_pickup delegates to the successor seam and returns its compiled frame', async () => {
@@ -619,7 +679,7 @@ test('an unclaimed verify: task appears ONLY on its parent\'s home board (and on
   await home.oathe_done({ task_id: 'verified-here', proposition: 'finished', evidence_ref: 'commit:v' });
   assert.ok((await boardTaskIds(home)).includes('verify:verified-here'), 'the verification lives where the work lives');
   assert.ok(!(await boardTaskIds(toolsFor(WS2))).includes('verify:verified-here'),
-    'no longer visible on every board just because it is unclaimed');
+    'not visible on every board just because it is unclaimed');
   assert.ok((await boardTaskIds(toolsFor(WS2), { all: true })).includes('verify:verified-here'));
 });
 
@@ -663,4 +723,38 @@ test('the lease stamp is unambiguous UTC on every surface', async () => {
   const mine = board2.board.find((r) => r.task_id === 'lease-stamp');
   assert.match(mine.lease_until, /Z$/, `the lease stamp carries its zone: ${mine.lease_until}`);
   await tools.oathe_yield({ task_id: 'lease-stamp', note: 'fixture done' });
+});
+
+test('attribution rides EACH act: after the /clear hook registers a new session under the same process, the next act carries it and links its transcript', async () => {
+  const { resolveSpeaker } = await import('../src/speaker.mjs');
+  const { SessionRegistry } = await import('../src/sessions.mjs');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-tools-speaker-')));
+  const sessionsPath = path.join(dir, 'sessions.json');
+  const tA = path.join(dir, 'A.jsonl'); fs.writeFileSync(tA, '');
+  const tB = path.join(dir, 'B.jsonl'); fs.writeFileSync(tB, '');
+  const facts = (transcriptPath) => () => ({
+    ancestry: [{ pid: 200, exec: '/usr/local/bin/claude' }, { pid: 1, exec: '/sbin/launchd' }],
+    app: { bundle: '/Applications/iTerm.app', pid: 100 }, transcriptPath, workspace: WS,
+  });
+  let t = 0;
+  const registry = new SessionRegistry({ sessionsPath, clock: () => new Date(1_800_000_000_000 + (t++) * 1000).toISOString() });
+  await registry.ensure({ sessionId: 'sess-act-A', pid: 200, facts: facts(tA) });
+  const ps = { run: () => ({ status: 0, stdout: '  300  200 /usr/local/bin/node\n  200  100 /usr/local/bin/claude\n  100    1 /Applications/iTerm.app/Contents/MacOS/iTerm2\n    1    0 /sbin/launchd\n', stderr: '' }) };
+  const perAct = createOatheTools({
+    client: substrate,
+    identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' },
+    workspace: WS,
+    config: scratchConfig(),
+    activation: { register: async () => ({}), activate: async () => ({}) },
+    speaker: resolveSpeaker({ pid: 300, sessionsPath, platform: 'darwin', exec: ps }),
+  });
+  const claim = await perAct.oathe_claim({ task_id: 'act-task', objective: 'attribution per act' });
+  assert.equal(claim.spoken_from.session, 'sess-act-A');
+  await registry.ensure({ sessionId: 'sess-act-B', pid: 200, facts: facts(tB) }); // what /clear's SessionStart writes
+  const note = await perAct.oathe_statement({ task_id: 'act-task', proposition: 'spoken after the clear' });
+  assert.equal(note.spoken_from.session, 'sess-act-B', 'the act after the clear is attributed to the new session');
+  const { rows } = await substrate.query(
+    "SELECT s.subject_ref FROM cell.agent_statement s JOIN cell.work_claim c ON c.work_claim_id = s.work_claim_id WHERE c.task_id = 'act-task' AND s.subject_ref LIKE 'trace:%' ORDER BY s.asserted_at");
+  assert.deepEqual(rows.map((r) => r.subject_ref), ['trace:sess-act-A', 'trace:sess-act-B'], 'both transcripts are linked to the one claim');
+  await perAct.oathe_yield({ task_id: 'act-task', note: 'fixture done' });
 });

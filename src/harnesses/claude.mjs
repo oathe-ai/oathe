@@ -8,6 +8,14 @@ import path from 'node:path';
 
 import { Harness, HarnessOnboardError } from './harness.mjs';
 import { cwdDialect } from './dialects.mjs';
+import { CLAUDE_ROSTER, ORIGIN_KINDS, claudeKindOf } from './claude-roster.mjs';
+import { makeFidelity } from './fidelity.mjs';
+import { ClaudeTraceStore } from '../traces.mjs';
+
+/** The raw tool_use parts of a transcript — the fidelity extractors' one reading of actions. */
+const claudeToolUses = (entries) => entries
+  .filter((r) => r.type === 'assistant' && Array.isArray(r.message?.content))
+  .flatMap((r) => r.message.content.filter((p) => p.type === 'tool_use'));
 import { JsonEntries } from '../blocks.mjs';
 import { sha256Hex } from '../manifest.mjs';
 
@@ -38,10 +46,35 @@ export class ClaudeHarness extends Harness {
     extract: (stdout) => ClaudeHarness.extractJsonResult(stdout),
   });
   static traces = Object.freeze({
-    store: async ({ home }) => new (await import('../traces.mjs')).ClaudeTraceStore({ home, harness: this.harnessName }),
+    store: ({ home } = {}) => new ClaudeTraceStore({ home, harness: this.harnessName }),
     newest: (store) => store.newestTranscript(),
-    projector: async ({ store }) => new (await import('../atif.mjs')).ClaudeAtifProjector({ store }),
+    projector: async ({ store }) => new (await import('./claude-transcript.mjs')).ClaudeAtifProjector({ store }),
     ownsPath: (file) => String(file).includes(`${path.sep}.claude${path.sep}`),
+    roster: CLAUDE_ROSTER,
+    kindOf: claudeKindOf,
+    recent: (store, { days, maxFiles }) => store.recentTranscripts({ days, maxFiles }),
+    // Harbor's converter for this harness (AgentName 'claude-code') reads a trial's transcripts
+    // from <logs_dir>/sessions/projects/<slug>/ — the mirror of ~/.claude/projects (harbor 0.22.0,
+    // measured 2026-09-01); a session's subagents/ dir rides along beside its file.
+    harbor: Object.freeze({ agent: 'claude-code', sessions: Object.freeze({ home: '.claude/projects', logs: 'sessions/projects' }) }),
+    fidelity: makeFidelity({
+      rawCalls: (entries) => claudeToolUses(entries).map((p) => ({
+        id: p.id,
+        hasSource: p.input != null && Object.keys(p.input).length > 0,
+      })),
+      hasRawTokens: (entries) => entries.some((r) => r.type === 'assistant' && r.message?.usage),
+      hasOatheActs: async (entries) => {
+        const { oatheVerbFor } = await import('../oathe-annotator.mjs');
+        return claudeToolUses(entries).some((p) => oatheVerbFor(p.name) !== null);
+      },
+      childIds: (entries, trajectory, { store, file }) => store.subagentsFor(file).map((s) => s.agent_id),
+      rawItems: () => [], // one source per action on this harness — nothing to cross-check
+      // The harness's own user rows (a task-notification, a peer's message) — never the agent's words.
+      inboundTexts: (entries) => entries
+        .filter((r) => r.type === 'user' && ORIGIN_KINDS[r.origin?.kind] === 'system')
+        .map((r) => (typeof r.message?.content === 'string' ? r.message.content
+          : (r.message?.content ?? []).map((p) => p?.text ?? '').join('\n'))),
+    }),
   });
   static docs = Object.freeze([
     'claude-code/mcp', 'claude-code/plugins', 'claude-code/plugins-reference', 'claude-code/hooks',

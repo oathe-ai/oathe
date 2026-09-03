@@ -16,7 +16,12 @@ import crypto from 'node:crypto';
 import { standardPlan, verificationTaskId, verificationObjective, isVerificationTask } from '../plans.mjs';
 import { verifierCapable } from '../harnesses/catalog.mjs';
 import { ContractRef, HomeBoard } from '../home.mjs';
-import { amendSubjectRef, isEngineFailureSql, isTraceSubjectSql, latestVerdictSql, latestProgressSql, latestTracePathSql, linkTrace } from '../statements.mjs';
+import {
+  amendSubjectRef, isTraceSubjectSql, latestVerdictSql, latestProgressSql, latestTracePathSql, linkTrace,
+  spawnParentSql, spawnParentFor, linkSpawn,
+} from '../statements.mjs';
+import { Pager } from '../pager.mjs';
+import { KINDS, clipDetail, pullPointer } from '../breach-digest.mjs';
 import { WIRE_KINDS, LINKABLE, emit, restoredReceipt } from '../wire.mjs';
 
 export const PROTOCOL_VERSION = '2025-06-18';
@@ -46,12 +51,17 @@ export function makeToolDefs() {
       description:
         'Claim a task on the cell board (minting it if new — with plan_status honestly "unknown", '
         + 'never a fabricated plan). A claim is a speech act: it takes responsibility, it does not '
-        + 'do the work. A second claimant is refused by the substrate. Args: {task_id, objective}.',
+        + 'do the work. A second claimant is refused by the substrate. Args: {task_id, objective, parent?}.',
       inputSchema: {
         type: 'object',
         properties: {
           task_id: { type: 'string', description: 'the task to claim' },
           objective: { type: 'string', description: 'what done means, in one line (required to mint a new task)' },
+          parent: {
+            type: ['string', 'null'],
+            description: 'omit: recorded as spawned under the claim this session already holds (its root); '
+              + 'an id: that claim, which you must hold; null: standalone work',
+          },
         },
         required: ['task_id'],
       },
@@ -175,54 +185,33 @@ export function createOatheTools({
   // wire and stamp attribution) refuses construction without it. Internal read-only
   // compositions (board render, the verifier's own seat) build no wrapper and carry none.
   speaker = null,
+  // ATTENTION (UX rule 19) is served on every tool response; a read-only composition (the
+  // board renderer, which carries its own digest) passes attention:false and reads no breach.
+  attention = true,
 }) {
   const { orgId, principalId, department } = identity;
   const homeBoard = new HomeBoard({ client, orgId });
-  // ATTENTION: rejected-and-unreclaimed tasks on THIS board — the verdict's words, computed
-  // per call (stateless, repeats while true, vanishes on reclaim). Rides every tool response
-  // so a background rejection reaches the session at its next act; the pager covers new
-  // sessions. One ms-query per call.
+  // The breaches are the pager's conditions read per call — stateless: a line repeats while
+  // its condition holds and vanishes when it clears — under the ONE digest (src/breach-
+  // digest.mjs): scoped to this board (a synthetic surface sees the machine), grouped,
+  // ordered, budgeted. Attention words the fix bucket for the model's response channel —
+  // rejected and verify-failed work, the one thing a session can act on now — so a background
+  // rejection reaches it at its next act; the SessionStart hook covers new sessions.
+  if (attention && !config) {
+    throw new OatheToolError('OATHE_ATTENTION_NEEDS_CONFIG',
+      'attention reads the pager, whose thresholds come from config — pass config, or attention:false for a read-only composition');
+  }
+  const pager = attention ? new Pager({ client, identity, config }) : null;
+  const breachesFor = async (machine) => (await pager.digest()).scoped(machine ? null : workspace);
   const attentionLines = async () => {
-    const { rows } = await client.query(
-      `SELECT t.task_id, left(v.verdict, 140) AS verdict
-         FROM cell.task t
-         JOIN LATERAL (SELECT c.principal_id, c.claimed_at FROM cell.work_claim c
-                        WHERE c.org_id = t.org_id AND c.task_id = t.task_id
-                        ORDER BY c.claimed_at DESC LIMIT 1) w ON true
-         LEFT JOIN LATERAL (${latestVerdictSql({ task: 't' })}) v ON true
-        WHERE t.org_id = $1 AND t.origin = 'reopened' AND ${HomeBoard.homeSql('t')} = $2
-          AND w.claimed_at < (SELECT max(vr.recorded_at) FROM cell.verification vr
-                               WHERE vr.org_id = t.org_id AND vr.task_id = t.task_id AND vr.result = 'rejected')
-        ORDER BY w.claimed_at`,
-      [orgId, workspace]);
-    const rejectedLines = rows.map((r) => `verification of '${r.task_id}' ${r.verdict ?? 'was rejected'} — reclaim it (oathe_claim) to see the bundle and pick the work back up`);
-    // Stalled verifications: the engine died before a verdict and the run RELEASED its claim.
-    // The retry is one line, on another engine — the verifier is just another harness.
-    const { rows: stalled } = await client.query(
-      `SELECT t.task_id, s.proposition
-         FROM cell.task t
-         JOIN LATERAL (
-              SELECT st.proposition, st.asserted_at FROM cell.agent_statement st
-               WHERE st.org_id = t.org_id AND st.task_id = t.task_id
-                 AND ${isEngineFailureSql('st.evidence_refs')}
-               ORDER BY st.asserted_at DESC LIMIT 1
-         ) s ON true
-        WHERE t.org_id = $1 AND t.task_id LIKE 'verify:%'
-          AND NOT EXISTS (SELECT 1 FROM cell.work_claim c
-                           WHERE c.org_id = t.org_id AND c.task_id = t.task_id
-                             AND (c.state = 'active' OR c.settled_at IS NOT NULL))
-          AND s.asserted_at > coalesce((SELECT max(c2.claimed_at) FROM cell.work_claim c2
-                                         WHERE c2.org_id = t.org_id AND c2.task_id = t.task_id
-                                           AND c2.settled_at IS NOT NULL), 'epoch')`,
-      [orgId]);
-    const { verifierCapable } = await import('../harnesses/catalog.mjs');
-    const stalledLines = stalled.map((r) => {
-      const parent = r.task_id.slice('verify:'.length);
-      const failed = r.proposition.match(/^engine (\S+) failed/)?.[1];
-      const others = verifierCapable().filter((e) => e !== failed);
-      return `verification of '${parent}' STALLED — ${r.proposition.slice(0, 160)}; retry on another engine: /oathe:verify ${parent} ${others[0] ?? ''}`.trim();
-    });
-    return [...rejectedLines, ...stalledLines];
+    const fix = (await breachesFor(synthetic)).filter((row) => KINDS[row.kind].bucket === 'fix');
+    const lines = fix.rows.map((row) => (row.group
+      ? `spawned under '${row.task_id}': ${row.kind_word} — the children and their verdicts are in `
+        + 'oathe_board.breaches; reclaim each (oathe_claim <child>), retry a failed verify with /oathe:verify <child>'
+      : `${row.kind_word}: '${row.task_id}' — ${clipDetail(row.detail)}`
+        + (row.kind === 'reopened' ? ' — reclaim it (oathe_claim) for the bundle' : '')));
+    const more = pullPointer('attention', fix.more);
+    return more ? [...lines, more] : lines;
   };
   const leaseHours = config?.get('leaseHours') ?? 4;
   const verifyByHours = config?.get('verifyByHours') ?? 24;
@@ -363,9 +352,11 @@ export function createOatheTools({
       // task, not a history lesson — statements carry the history).
       const { rows } = await client.query(
         `SELECT task_id, objective, origin, state, principal_id, contract_ref, home, settled_at,
-                lease_until, last_progress, last_progress_at, last_word_at, trace_path, trace_session_id, rejected_after FROM (
+                lease_until, last_progress, last_progress_at, last_word_at, trace_path, trace_session_id, rejected_after,
+                parent, parent_objective FROM (
            SELECT DISTINCT ON (t.task_id)
                   t.task_id, t.objective, t.created_at, t.origin, w.state, w.principal_id, w.contract_ref,
+                  sp.parent_task_id AS parent, sp.parent_objective,
                   EXISTS (SELECT 1 FROM cell.verification v
                            WHERE v.org_id = t.org_id AND v.task_id = t.task_id
                              AND v.result = 'rejected' AND v.recorded_at > w.claimed_at) AS rejected_after,
@@ -380,26 +371,35 @@ export function createOatheTools({
              FROM cell.task t LEFT JOIN cell.work_claim w USING (org_id, task_id)
              LEFT JOIN LATERAL (${latestProgressSql({ task: 't', claim: 'w' })}) p ON true
              LEFT JOIN LATERAL (${latestTracePathSql({ task: 't' })}) tr ON true
+             LEFT JOIN LATERAL (${spawnParentSql({ task: 't' })}) sp ON true
             WHERE t.org_id = $1
             ORDER BY t.task_id, w.claimed_at DESC NULLS LAST
          ) latest WHERE true ${filter} ORDER BY created_at DESC`,
         params);
+      // Lineage (UX rule 21): a child never surfaces top-level while its parent is in view —
+      // it is counted on the parent's row. A child whose parent is off the board (settled,
+      // or homed elsewhere) stands on its own.
+      const inView = new Set(rows.filter((r) => !r.settled_at).map((r) => r.task_id));
+      const childrenOf = new Map();
+      for (const row of rows) {
+        if (row.parent && inView.has(row.parent)) childrenOf.set(row.parent, [...(childrenOf.get(row.parent) ?? []), row]);
+      }
       // ONE classification, consumed by every render: active-yours / active-theirs /
       // asserted-awaiting-verdict / open. Asserted is NOT open — it awaits verification.
       const sections = { mine: [], open: [], asserted: [], held: [] };
       for (const row of rows) {
         if (row.settled_at) continue; // settled: the obligation is CLOSED — off the board
-        if (row.state === 'active') sections[row.principal_id === principalId ? 'mine' : 'held'].push(row);
-        // The discriminator is a REJECTION AFTER the latest claim: with one, the task is back
-        // on the board (R8); without one, origin='reopened' is stale history and the truth is
-        // asserted-awaiting-verification (a no-verdict engine failure must not read as
-        // reopened — live, 2026-08-30).
-        else if (row.state === 'completion_asserted' && !row.rejected_after) sections.asserted.push(row);
-        else if (row.origin === 'reopened') sections.open.push({ ...row, state: 'reopened' }); // R8: back on the board
-        else if (row.state === 'completion_asserted') sections.asserted.push(row);
-        else sections.open.push(row);
+        if (row.parent && inView.has(row.parent)) continue;
+        const [bucket, entry] = classify(row, principalId);
+        const kids = childrenOf.get(row.task_id);
+        sections[bucket].push(kids ? { ...entry, children: childrenSummary(kids, principalId) } : entry);
       }
-      return { workspace: full ? null : workspace, board: rows, sections };
+      // The pull (UX rule 19): every breach on this board — every kind, grouped, ordered,
+      // uncapped — where a `+N more` sends the model.
+      return {
+        workspace: full ? null : workspace, board: rows, sections,
+        ...(pager ? { breaches: (await breachesFor(full)).groups } : {}),
+      };
     },
 
     async oathe_statement({ task_id, proposition, evidence_ref }) {
@@ -419,6 +419,14 @@ export function createOatheTools({
     },
 
     async oathe_yield({ task_id, note }) {
+      // The schema requires `note`, but the server enforces no schema (tools/call hands the
+      // arguments straight here): a client that ignores `required` must still hear WHY in the
+      // tool's own words — not FC141's sentence about yield bases from plpgsql (2026-09-03).
+      if (typeof note !== 'string' || note.trim() === '') {
+        throw new OatheToolError('OATHE_YIELD_NOTE_REQUIRED',
+          `yield refused — '${task_id}' cannot go back on the board without its cause: pass note `
+          + '(why you are stopping, for whoever picks it up)', { task_id });
+      }
       const workClaimId = await activeClaim(task_id);
       await client.query(
         'SELECT cell.oathe_yield_operator($1::uuid, $2, now(), $3::uuid)',
@@ -496,7 +504,7 @@ export function createOatheTools({
     async oathe_done({ task_id, proposition, evidence_ref }) {
       // ONE transaction, claim row locked FIRST (the same discipline as oathe_amend): the
       // amend-vs-done race is decided by the lock, "the version in force at assertion" is
-      // exact, and the old crash hole (statement without terminal) is closed.
+      // exact, and a completion statement never lands without its terminal.
       const workClaimId = await activeClaim(task_id);
       const statementId = crypto.randomUUID();
       await inTransaction(client, async (tx) => {
@@ -610,17 +618,18 @@ export function createOatheTools({
 
   // Attention rides EVERY response, activation or not: the act succeeded — a failing
   // attention read is reported beside it (attention_error), never converted into a tool error.
-  const withAttention = Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args) => {
-    const out = await fn(args);
-    try {
-      const lines = await attentionLines();
-      if (lines.length > 0) out.attention = lines;
-    } catch (e) {
-      out.attention_error = `the attention read failed: ${String(e?.message ?? e).slice(0, 160)}`;
-    }
-    return out;
-  }]));
-  toolMap = withAttention;
+  if (pager) {
+    toolMap = Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args) => {
+      const out = await fn(args);
+      try {
+        const lines = await attentionLines();
+        if (lines.length > 0) out.attention = lines;
+      } catch (e) {
+        out.attention_error = `the attention read failed: ${String(e?.message ?? e).slice(0, 160)}`;
+      }
+      return out;
+    }]));
+  }
 
   if (!activation) return toolMap;
   if (!speaker) {
@@ -635,10 +644,25 @@ export function createOatheTools({
   // (linkTrace — a failure throws typed; retries are idempotent), the wire nudges the glass,
   // and the result discloses who spoke. Reads stamp and emit nothing.
   return Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args) => {
+    // Lineage is decided BEFORE a claim lands (a refused parent leaves nothing behind) and
+    // recorded right after it, on the parent's claim — the `spawn:<child>` observation.
+    const spawn = name === 'oathe_claim'
+      ? await spawnParentFor({ client, identity, session: speaker.session, taskId: args.task_id, parent: args.parent })
+      : null;
     const out = await fn(args);
     if (WIRE_KINDS[name]) {
       if (speaker.session && args?.task_id && LINKABLE.has(name)) {
-        await linkTrace({ client, identity, taskId: args.task_id, session: speaker.session });
+        const link = await linkTrace({ client, identity, taskId: args.task_id, session: speaker.session });
+        if (link.why) out.trace_link = link; // a link that waits is disclosed, never assumed
+      }
+      if (name === 'oathe_claim') {
+        if (spawn) {
+          await linkSpawn({
+            client, identity, parent: spawn.parent, childTaskId: args.task_id,
+            actor: speaker.session ? `session:${speaker.session.sessionId}` : actor,
+          });
+        }
+        out.lineage = spawn;
       }
       // The trust boundary is the blocking boundary (ruling 2026-08-31): on your own
       // machine, done OWES its verdict and waits for it — the seam dispatches the detached
@@ -666,6 +690,41 @@ export function createOatheTools({
     else await activation.register(name);
     return out;
   }]));
+}
+
+/**
+ * The board's ONE classification of an unsettled row: [bucket, row]. The discriminator is a
+ * REJECTION AFTER the latest claim: with one, the task is back on the board (R8); without
+ * one, origin='reopened' is stale history and the truth is asserted-awaiting-verification (a
+ * no-verdict engine failure must not read as reopened — live, 2026-08-30).
+ */
+function classify(row, principalId) {
+  if (row.state === 'active') return [row.principal_id === principalId ? 'mine' : 'held', row];
+  if (row.state === 'completion_asserted' && !row.rejected_after) return ['asserted', row];
+  if (row.origin === 'reopened') return ['open', { ...row, state: 'reopened' }]; // R8: back on the board
+  if (row.state === 'completion_asserted') return ['asserted', row];
+  return ['open', row];
+}
+
+/** A spawned child's one word on its parent's row, in the order the line speaks them. */
+const CHILD_WORDS = ['active', 'asserted', 'reopened', 'open', 'settled'];
+function childWord(row, principalId) {
+  if (row.settled_at) return 'settled';
+  const [bucket, entry] = classify(row, principalId);
+  if (bucket === 'mine' || bucket === 'held') return 'active';
+  if (bucket === 'asserted') return 'asserted';
+  return entry.state === 'reopened' ? 'reopened' : 'open';
+}
+
+/** `spawned 3 — 2 active · 1 settled`: the parent's counts line, zero counts omitted. */
+function childrenSummary(kids, principalId) {
+  const by = {};
+  for (const kid of kids) {
+    const word = childWord(kid, principalId);
+    by[word] = (by[word] ?? 0) + 1;
+  }
+  const parts = CHILD_WORDS.filter((word) => by[word]).map((word) => `${by[word]} ${word}`);
+  return { n: kids.length, by, line: `spawned ${kids.length} — ${parts.join(' · ')}` };
 }
 
 /**
@@ -713,8 +772,8 @@ export async function handleToolCall(params, tools) {
  * Lazily-served tools: the same tool NAMES, each call routed through `loader` so the real
  * context (workspace resolution, config, substrate) is built on FIRST USE, once, never at
  * process startup. A loader refusal (e.g. OATHE_WORKSPACE_UNRESOLVED) surfaces per call as
- * that call's typed error — the server itself never dies for it. The old launch gate lived
- * here; resolution replaced it (the marker env var remains custody-only).
+ * that call's typed error — the server itself never dies for it. Resolution is the gate; the
+ * launched-harness env var is custody-only.
  */
 export function lazyTools(loader, { names = makeToolDefs().map((t) => t.name) } = {}) {
   // No memo here: deduplication (and invalidation) is the LOADER's job — one cache, one owner.
@@ -724,8 +783,9 @@ export function lazyTools(loader, { names = makeToolDefs().map((t) => t.name) } 
   }]));
 }
 
-/** The pure JSON-RPC dispatcher — a response object, or null for a notification. */
-export async function dispatch(msg, { tools }) {
+/** The pure JSON-RPC dispatcher — a response object, or null for a notification. `version`
+ *  is the package version the server names at initialize (the connection reads it once). */
+export async function dispatch(msg, { tools, version }) {
   const { id, method, params } = msg || {};
   const isNotification = id === undefined || id === null;
   if (method === 'notifications/initialized' || method === 'initialized') return null;
@@ -735,7 +795,7 @@ export async function dispatch(msg, { tools }) {
         return {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: {} },
-          serverInfo: { name: SERVER_NAME, version: '0.1.0' },
+          serverInfo: { name: SERVER_NAME, version },
         };
       case 'tools/list':
         return { tools: makeToolDefs() };

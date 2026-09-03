@@ -115,9 +115,9 @@ export class Substrate {
   }
 
   // The transaction gate: BEGIN..COMMIT spans hold it, every outside query waits at it.
-  // One shared connection + concurrent MCP tool calls used to interleave an acknowledged
-  // write into an open transaction (swallowed by its ROLLBACK) — the review's sharpest
-  // finding. The gate makes that impossible; a transaction's own queries ride `tx`.
+  // Without it, concurrent MCP tool calls on the one shared connection interleave an
+  // acknowledged write into an open transaction, where its ROLLBACK swallows the write.
+  // The gate makes that impossible; a transaction's own queries ride `tx`.
   #txnGate = Promise.resolve();
 
   async query(sql, params) {

@@ -10,6 +10,7 @@ import { PassThrough } from 'node:stream';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 import { McpConnection } from '../src/mcp/connection.mjs';
 
@@ -56,6 +57,8 @@ test('initialize and tools/list answer with NO context build — even under a po
   send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
   const init = await waitFor((m) => m.id === 1);
   assert.equal(init.result.serverInfo.name, 'oathe-tools');
+  assert.equal(init.result.serverInfo.version, createRequire(import.meta.url)('../package.json').version,
+    'the server names the package version it runs — never a literal that drifts from package.json');
   const list = await waitFor((m) => m.id === 2);
   assert.ok(list.result.tools.length >= 7);
   assert.equal(built, 0, 'the context is built on tools/call, never at startup');

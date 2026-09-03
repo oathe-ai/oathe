@@ -148,9 +148,16 @@ export class SessionRegistry {
   byAncestry(ancestry) {
     const { sessions } = this.load();
     for (const { pid } of ancestry) {
+      // Several rows can share a pid (a resume, a session rotation under one process) —
+      // attribution follows the FRESHEST row, never JSON insertion order.
+      let best = null;
       for (const [sessionId, row] of Object.entries(sessions)) {
-        if (row.pid === pid) return { sessionId, row };
+        if (row.pid !== pid) continue;
+        if (!best || String(row.last_seen_at ?? '') > String(best.row.last_seen_at ?? '')) {
+          best = { sessionId, row };
+        }
       }
+      if (best) return best;
     }
     return null;
   }

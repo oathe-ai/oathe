@@ -56,7 +56,7 @@ export class SessionHost {
     await this.tickInFlight;
   }
 
-  /** The observed clean exit: stop renewing AND say so on every claim this session held. */
+  /** The observed clean exit: halt the watch AND say so on every claim this session held. */
   async stop({ exitCode }) {
     this.#halt();
     await this.tickInFlight;

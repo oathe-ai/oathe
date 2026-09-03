@@ -1,0 +1,47 @@
+{
+  "_source": "sanitized from a real claude record by scripts/derive-trace-fixtures.mjs — review this diff before it lands",
+  "record": ".claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001.jsonl",
+  "trajectory": {
+    "schema_version": "ATIF-v1.7",
+    "session_id": "00000000-0000-7000-8000-000000000001",
+    "agent": {
+      "name": "claude",
+      "version": "2.1.251",
+      "model_name": "claude-fable-5"
+    },
+    "steps": [
+      {
+        "step_id": 1,
+        "source": "user",
+        "message": "redacted afe1d2b6 (len 173)"
+      },
+      {
+        "step_id": 2,
+        "source": "agent",
+        "message": "redacted 9e049de1 (len 385)",
+        "timestamp": "2026-08-29T23:54:03.404Z",
+        "reasoning_content": "redacted e3b0c442 (len 0)",
+        "metrics": {
+          "prompt_tokens": 37955,
+          "completion_tokens": 320,
+          "cached_tokens": 10125,
+          "extra": {
+            "cache_creation_input_tokens": 27828
+          }
+        },
+        "llm_call_count": 1
+      }
+    ],
+    "final_metrics": {
+      "total_prompt_tokens": 37955,
+      "total_completion_tokens": 320,
+      "total_cached_tokens": 10125,
+      "total_steps": 2
+    },
+    "extra": {
+      "record": {
+        "source_path": "<home>/.claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001.jsonl"
+      }
+    }
+  }
+}

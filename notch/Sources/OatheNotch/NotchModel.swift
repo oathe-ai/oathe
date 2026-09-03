@@ -12,9 +12,11 @@ enum NotchState { case rest, open }
 
 struct WorkRow: Identifiable {
     let id: String        // the task
+    let objective: String? // what is owed — the card's first line
     let holder: String    // the surface speaking on the claim, else who holds it
     let age: String       // since the last word — the motion signal
     let amber: Bool       // deviant state (reopened) only
+    let childrenLine: String? // the claim's spawned work, counted by the board
     let progress: String? // the last recorded word, for the expanded row
     let homePath: String? // where the work lives — the copy-only fallback
     let resume: Resume?   // the package-owned resumption continue executes
@@ -82,17 +84,24 @@ final class NotchModel: ObservableObject {
             .filter { !breachIds.contains($0.task_id) }
             .map { row in
                 WorkRow(id: row.task_id,
+                        objective: row.objective,
                         // The surface speaking on the claim carries the information; the person
                         // is the constant. Live session identity outranks the wire's word.
                         holder: row.session?.surface ?? row.surface ?? row.holder ?? "open",
                         age: Self.age(from: row.last_word_at),
                         amber: row.state == "reopened",
+                        childrenLine: row.children_line,
                         progress: row.last_progress,
                         homePath: row.home_path,
                         resume: row.resume)
             }
         return frame.breaches.map(SheetEntry.breach) + work.map(SheetEntry.work)
     }
+
+    /// The sheet's budget (UX rule 20): the first rowCap entries — what a person can act on
+    /// now — and one count for everything past them, the feed's own `more` included.
+    var visibleEntries: [SheetEntry] { Array(entries.prefix(Metrics.rowCap)) }
+    var overflow: Int { (frame?.more ?? 0) + max(0, entries.count - Metrics.rowCap) }
 
     var mineCount: Int { frame?.sections.mine.count ?? 0 } // the hover peek: how much you hold
 
@@ -119,7 +128,7 @@ final class NotchModel: ObservableObject {
         if let notice = frame.notice { lastNotice = notice }
         defaultAgent = frame.default_agent
         self.frame = frame
-        if let open = expandedId, !entries.contains(where: { $0.id == open }) { expandedId = nil }
+        if let open = expandedId, !visibleEntries.contains(where: { $0.id == open }) { expandedId = nil }
         // The one-time welcome rides the frame like everything else — the frame is the only
         // truth, and the feed already consumed the marker, so a replay needs a new plant.
         // Its arrival announces like any event: the existing pulse, sage — a receipt.

@@ -117,7 +117,7 @@ test('oathe codex opens with the ANSI splash — no markdown, no pause off-TTY',
   const all = printed.join('');
   // R-QUIET: no state line to push on a clean board — the splash is the dim scope line only.
   assert.match(all, /\x1b\[2mws-[0-9a-f]{12}\x1b\[0m/, 'the scope line leads');
-  assert.doesNotMatch(all, /\u{1F37A}|\u{1F389}|\u{1F512}/u, 'the old celebration states are gone');
+  assert.doesNotMatch(all, /\u{1F37A}|\u{1F389}|\u{1F512}/u, 'no celebration state renders');
   assert.doesNotMatch(all, /##|\*\*/, 'no markdown syntax in the splash');
 });
 

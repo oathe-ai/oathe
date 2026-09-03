@@ -29,9 +29,8 @@ export class CursorHarness extends Harness {
   static harnessName = 'cursor';
   static displayName = 'Cursor';
   static covers = 'CLI/Desktop App';
-  static bin = 'cursor-agent';
-  // The installer ships both names (verified 2026-08-29); either on PATH is the CLI.
-  static cliBins = Object.freeze(['cursor-agent', 'cursor']);
+  // The CLI is `agent` — cursor/cli-installation.md verifies an install with `agent --version`.
+  static bin = 'agent';
   static clientNames = Object.freeze(['cursor']);
   static contextFiles = Object.freeze(['AGENTS.md']);
   static projectDirEnvVar = 'CURSOR_PROJECT_DIR';
@@ -40,21 +39,24 @@ export class CursorHarness extends Harness {
   static hooks = Object.freeze({ dialect: workspaceRootsDialect });
   // The missing primitive, restored (founder ruling 2026-08-30: all harnesses on the same
   // primitives, each with its own adapter): cursor launches its interactive CLI agent.
-  static launch = Object.freeze({ splash: true, bin: 'cursor-agent' });
-  // The IDE's spawned children live inside Cursor.app (helper bundles); the CLI is cliBins.
+  static launch = Object.freeze({ splash: true, bin: 'agent' });
+  // The IDE's spawned children live inside Cursor.app (helper bundles). The CLI's process is
+  // named by whichever path launched it: `agent`, or `cursor-agent` — the versioned executable
+  // the `agent` symlink points to, and the installer's legacy symlink (measured 2026-09-02).
+  static cliExecutables = Object.freeze(['agent', 'cursor-agent']);
   static surfaces = Object.freeze({
     ownsExec: (exec) => exec.includes(`${path.sep}Cursor.app${path.sep}`)
-      || CursorHarness.cliBins.includes(path.basename(exec)),
+      || CursorHarness.cliExecutables.includes(path.basename(exec)),
     name: () => 'cursor',
   });
   // cursor/cli-installation.md:10 (pinned 2026-08-29).
-  static install = Object.freeze({ installer: 'curl https://cursor.com/install -fsS | bash', bin: 'cursor-agent', versionArgs: ['--version'] });
+  static install = Object.freeze({ installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'] });
   // Headless: `agent -p --output-format json` → {type:"result", result} (cursor/cli-output-format.md);
   // CI auth CURSOR_API_KEY (cursor/cli-authentication.md:24-37, cli-github-actions.md:17). A fresh
   // project dir is untrusted — the CLI refuses to run there without --trust (observed live 2026-08-29).
   static headless = Object.freeze({
     auth: ['CURSOR_API_KEY'],
-    command: (prompt, model = null) => ['cursor-agent', ['-p', prompt, '--trust', '--output-format', 'json', ...(model ? ['--model', model] : [])]],
+    command: (prompt, model = null) => ['agent', ['-p', prompt, '--trust', '--output-format', 'json', ...(model ? ['--model', model] : [])]],
     extract: (stdout) => CursorHarness.extractJsonResult(stdout),
   });
   static traces = null; // Cursor keeps no session store we read; its hook payload carries transcript_path: null

@@ -120,7 +120,7 @@ export function ownerOfTracePath(file) {
 
 /**
  * The NEAREST adapter-owned process in an ancestry chain — the harness the chain speaks
- * for. Harnesses interpose helpers between themselves and their children (cursor-agent
+ * for. Harnesses interpose helpers between themselves and their children (Cursor's agent CLI
  * runs hooks through a /bin/zsh; MCP servers are node), so ownership is never decided by
  * the chain's head alone. -1 when nobody in the chain is a harness. ONE implementation:
  * surface naming, speaker resolution, and hook registration all ask here.
@@ -159,6 +159,17 @@ export async function projectorFor(file, { home } = {}) {
   const { traces } = byName(owner);
   const store = await traces.store({ home });
   return traces.projector({ store });
+}
+
+/**
+ * The file a session's rows actually live in, asked of the store that owns the reported
+ * path — each store knows how its harness rotates ids and where it keeps writing (see the
+ * stores' transcriptFor). A path no store owns, or none at all, is returned as reported.
+ */
+export function transcriptFor({ sessionId, reportedPath, home } = {}) {
+  const owner = ownerOfTracePath(reportedPath ?? '');
+  if (owner === null) return reportedPath ?? null;
+  return byName(owner).traces.store({ home }).transcriptFor({ sessionId, reportedPath });
 }
 
 /** Instantiate every adapter whose wiring exists — the init/uninstall roster. */

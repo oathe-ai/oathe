@@ -14,7 +14,7 @@ import { census, detectOnlySurfaces } from '../src/harnesses/catalog.mjs';
 import { OatheConfig } from '../src/config.mjs';
 
 /** A machine: which config homes exist and which CLIs are on PATH — nothing from the real PATH. */
-function machine({ homes = ['.claude', '.codex', '.cursor'], bins = ['claude', 'codex', 'cursor-agent'] } = {}) {
+function machine({ homes = ['.claude', '.codex', '.cursor'], bins = ['claude', 'codex', 'agent'] } = {}) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-setup-')));
   for (const d of homes) fs.mkdirSync(path.join(home, d), { recursive: true });
   fs.mkdirSync(path.join(home, 'bin'));
@@ -33,7 +33,7 @@ async function planFor({ home, env }, { fallbackVerifier = 'claude', wiredNow = 
 }
 
 test('SetupPlan.from: one step per wiring adapter, writes from describe(), not-installed steps already answered, verifier candidates need the CLI, surfaces detected only', async () => {
-  const m = machine({ homes: ['.claude', '.cursor'], bins: ['claude', 'cursor-agent'] }); // no Codex at all
+  const m = machine({ homes: ['.claude', '.cursor'], bins: ['claude', 'agent'] }); // no Codex at all
   const { plan, adapters } = await planFor(m);
   assert.deepEqual(plan.steps.map((s) => s.name), adapters.map((a) => a.name));
   for (const step of plan.steps) {
@@ -59,7 +59,7 @@ test('SetupPlan.from: one step per wiring adapter, writes from describe(), not-i
 });
 
 test('narrow(--harness): unknown names refuse (OATHE_INIT_HARNESS_UNKNOWN), a named harness that is not here refuses (OATHE_INIT_HARNESS_ABSENT) — nothing is silently dropped', async () => {
-  const m = machine({ homes: ['.claude', '.cursor'], bins: ['claude', 'cursor-agent'] });
+  const m = machine({ homes: ['.claude', '.cursor'], bins: ['claude', 'agent'] });
   const { plan } = await planFor(m);
   assert.throws(() => plan.narrow(['vscode']), (e) => e instanceof OatheInitError && e.code === 'OATHE_INIT_HARNESS_UNKNOWN' && /vscode/.test(e.message));
   assert.throws(() => plan.narrow(['cowork']), (e) => e.code === 'OATHE_INIT_HARNESS_UNKNOWN', 'a detect-only surface is not something init wires');
@@ -90,7 +90,7 @@ test('applyDefaults: every installed harness yes, the verifier its default, the 
 });
 
 test('outcomes: the plan plus what landed — a wired step lists the files its actions touched, a skipped step says why, no machine tokens', async () => {
-  const m = machine({ homes: ['.claude', '.cursor'], bins: ['claude', 'cursor-agent'] });
+  const m = machine({ homes: ['.claude', '.cursor'], bins: ['claude', 'agent'] });
   const { plan } = await planFor(m);
   plan.narrow(['cursor']);
   plan.applyDefaults('harness-filter');
@@ -143,7 +143,7 @@ test('ONE screen: every detected harness pre-selected with its presence and writ
   assert.match(text, /~\/\.claude\/settings\.json/, "the highlighted row's writes appear below it");
   assert.match(text, /↑↓ move · space toggle · enter install/);
   assert.match(text, /oathe init — reversible \(oathe uninstall\)/, 'the opening is one short line');
-  assert.ok(!/recorded and reversible|machine setup/.test(text), 'the long opening sentence is gone');
+  assert.ok(!/recorded and reversible|machine setup/.test(text), 'no long opening sentence');
   assert.match(text, /verifier.*\(•\) claude.*\( \) codex.*\( \) cursor/, 'the verifier is a radio row with the default marked');
   assert.match(text, /default agent.*\(•\) claude.*\( \) codex.*\( \) cursor/, 'ALL harnesses ride the same primitive — the agent radio lists every installed one');
   assert.ok(text.indexOf('default agent') < text.indexOf('verifier'), 'the agent question comes ABOVE the verifier (founder ruling)');
@@ -196,7 +196,7 @@ test('a chunk of several keys is taken key by key — a pasted sequence works', 
 });
 
 test('a harness that is not here, a --harness-decided step, and a detect-only surface are dim fixed rows — never toggleable', async () => {
-  const m = machine({ homes: ['.claude', '.cursor'], bins: ['claude', 'cursor-agent'] });
+  const m = machine({ homes: ['.claude', '.cursor'], bins: ['claude', 'agent'] });
   const { plan } = await planFor(m);
   const tty = await askWithKeys(plan, [KEY.down, KEY.space, KEY.enter]); // down lands on cursor (codex is not a row you can reach)
   const text = tty.shown();
