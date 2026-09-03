@@ -41,6 +41,8 @@ not a fabricated goodbye.
     oathe doctor                  # verify every managed surface against the manifest
     oathe status                  # the substrate half of doctor
     oathe version                 # the package version on PATH
+    oathe update [--yes]          # the upgrade as one verb: npm i -g @oathe/oathe@latest through
+                                  # this node's own npm, then init through the new bin
     oathe uninstall [--purge-db]  # remove exactly what init recorded; the database stays
 
 There is **no resume verb** (founder ruling 2026-08-24): opening a session presents the board
@@ -54,9 +56,11 @@ harness, and the agent inspects the actual workspace and carries on.
 
 ## Upgrading
 
-    npm i -g @oathe/oathe@latest && oathe init
+    oathe update
 
-That is the whole upgrade. Node ≥ 22.13 is the floor: `npm install` refuses below it with
+That is the whole upgrade — it runs `npm i -g @oathe/oathe@latest && oathe init` for you,
+through the npm that sits beside the node running oathe (never another node's), then `init`
+through the freshly installed bin under npm's global prefix. The two commands still work by hand. Node ≥ 22.13 is the floor: `npm install` refuses below it with
 `ERROR_NODE_VERSION` and the upgrade command, and so does the bin (Codex's thread index
 needs `node:sqlite`). Hooks and the MCP server run the `oathe` bin on PATH, so the new
 code is live the moment npm replaces it; `oathe init` is idempotent and re-materializes the

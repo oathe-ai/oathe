@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { isTraceSubjectSql } from '../src/statements.mjs';
 import { byName, launchable, verifierCapable } from '../src/harnesses/catalog.mjs';
 
-const VERBS = ['init', ...launchable(), 'claim', 'ls', 'note', 'amend', 'done', 'verify', 'trace', 'notch', 'yield', 'config', 'doctor', 'uninstall', 'status', 'version', 'hook', 'mcp'];
+const VERBS = ['init', ...launchable(), 'claim', 'ls', 'note', 'amend', 'done', 'verify', 'trace', 'notch', 'yield', 'config', 'doctor', 'uninstall', 'status', 'version', 'update', 'hook', 'mcp'];
 
 const USAGE = `usage: oathe <verb> [args]
 
@@ -26,7 +26,8 @@ ${launchable().map((name) => `  ${name.padEnd(6)} [--hermetic] [args…]  ${byNa
   yield <task-id> <note>       yield: the task goes back on the board, unowned
   doctor [--surface]           verify every managed surface (--surface: the resolution report only)
   status                       the substrate half of doctor
-  version                      the package version (upgrade: npm i -g @oathe/oathe@latest && oathe init)
+  version                      the package version on PATH
+  update [--yes] [--harness a,b]  the upgrade as one verb: npm i -g @oathe/oathe@latest through this node's npm, then init through the new bin
   config <key> [value] [--global]  read or write a config key (workspace scope by default)
   uninstall [--purge-db]       remove exactly what init recorded (the database stays put)
   hook <name> · mcp            internal: the plugin's hook/server entry points (bin-addressed)
@@ -538,6 +539,21 @@ const handlers = {
     const [{ buildPaths }, { packageVersion }] = await Promise.all([import('../src/paths.mjs'), import('../src/context.mjs')]);
     process.stdout.write(`${packageVersion(buildPaths(process.env))}\n`);
     summary('version', 'ok');
+  },
+
+  async update(argv) {
+    const { values } = parseFlags('update', {
+      args: argv, options: { yes: { type: 'boolean', default: false }, harness: { type: 'string' } }, allowPositionals: false,
+    });
+    const [{ runUpdate }, { buildPaths }] = await Promise.all([import('../src/update.mjs'), import('../src/paths.mjs')]);
+    const initArgs = [...(values.yes ? ['--yes'] : []), ...(values.harness ? ['--harness', values.harness] : [])];
+    const out = runUpdate({ packageRoot: buildPaths(process.env).packageRoot, args: initArgs });
+    if (out.initStatus !== 0) {
+      const e = new Error(`update installed ${out.after} but the new bin's init exited ${out.initStatus} — read its output above and run \`oathe init\` again`);
+      e.code = 'OATHE_UPDATE_INIT_FAILED';
+      throw e;
+    }
+    summary('update', 'ok');
   },
 
   async doctor(argv) {
