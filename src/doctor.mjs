@@ -54,9 +54,10 @@ function verifyJsonArrayRow(row) {
 const RUNTIME_BOUND_CODES = new Set(['TRACE_CODEX_SQLITE_UNSUPPORTED']);
 
 /**
- * The trace-contract status for a failed projection: a runtime bound (node:sqlite missing on
- * Node < 22.5 — the store never got to read the record) is RUNTIME; anything else is format
- * DRIFT. Both stay loud; the drift lanes need them told apart.
+ * The trace-contract status for a failed projection: a runtime bound (node:sqlite is
+ * unflagged only from Node 22.13.0 / 23.4.0 — below that the store never got to read the
+ * record) is RUNTIME; anything else is format DRIFT. Both stay loud; the drift lanes need
+ * them told apart.
  */
 export function traceStatusOf(error) {
   return RUNTIME_BOUND_CODES.has(error?.code) ? 'RUNTIME' : 'DRIFT';
@@ -136,7 +137,7 @@ export async function runDoctor({ env = process.env } = {}) {
     // reports DRIFT loudly. An absent store is a distinct, visible status — never a silent skip.
     // Store, newest-record lookup, and projector are each engine adapter's own facts.
     const { byName, traceStores } = await import('./harnesses/catalog.mjs');
-    const { AtifValidator } = await import('./atif.mjs');
+    const { projectAnnotated } = await import('./oathe-annotator.mjs');
     const home = ctx.home;
     const traces = {};
     for (const name of traceStores()) {
@@ -147,11 +148,32 @@ export async function runDoctor({ env = process.env } = {}) {
         traces[name] = { status: 'store-absent', newest: null, detail: 'no session records found' };
         continue;
       }
-      // Full projection + validation — the deepest read the verifier itself performs.
+      // The full read the verifier itself performs (converter, validated; then the annotator)
+      // — then the census sweep over the recent window: an undeclared row type or a fidelity
+      // failure is DRIFT the day it appears on this machine, not the day a verify mis-judges.
       try {
-        const projector = await capability.projector({ store });
-        new AtifValidator().assert(projector.project(newest), { file: newest });
-        traces[name] = { status: 'ok', newest, detail: null };
+        await projectAnnotated(newest, { home });
+        const { censusOf, fidelityOf } = await import('./trace-census.mjs');
+        const files = capability.recent(store, {
+          days: ctx.config.get('traceCensusDays'), maxFiles: ctx.config.get('traceCensusMaxFiles'),
+        });
+        const census = censusOf({ store, roster: capability.roster, kindOf: capability.kindOf, files });
+        const fidelity = await fidelityOf({
+          store, project: (file) => projectAnnotated(file, { home }), fidelity: capability.fidelity, files, traceStatus: traceStatusOf,
+        });
+        const failures = [
+          ...census.undeclared.map((u) => `undeclared ${u.channel}.${u.type} ×${u.count} (first: ${u.example})`),
+          ...fidelity.projectionErrors.filter((p) => p.status === 'DRIFT').map((p) => `${p.file}: ${p.detail}`),
+          ...fidelity.probes.flatMap((p) => p.failed.map((f) => `${p.probe}: ${f.file}: ${f.detail}`)),
+        ];
+        const runtime = fidelity.projectionErrors.find((p) => p.status === 'RUNTIME');
+        traces[name] = {
+          status: runtime ? 'RUNTIME' : failures.length > 0 ? 'DRIFT' : 'ok',
+          newest,
+          census: { swept: census.swept, undeclared: census.undeclared.length,
+            fidelity_failures: fidelity.probes.reduce((n, p) => n + p.failed.length, 0) },
+          detail: runtime ? runtime.detail : failures[0] ?? null,
+        };
       } catch (e) {
         traces[name] = { status: traceStatusOf(e), newest, detail: String(e?.message || e) };
       }

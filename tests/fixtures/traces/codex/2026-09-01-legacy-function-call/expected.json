@@ -1,0 +1,492 @@
+{
+  "_source": "sanitized from a real codex record by scripts/derive-trace-fixtures.mjs — review this diff before it lands",
+  "record": ".codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-00000000-0000-7000-8000-000000000001.jsonl",
+  "trajectory": {
+    "schema_version": "ATIF-v1.7",
+    "session_id": "00000000-0000-7000-8000-000000000001",
+    "agent": {
+      "name": "codex",
+      "version": "0.150.0-alpha.12.2",
+      "model_name": "gpt-5.6-sol"
+    },
+    "steps": [
+      {
+        "step_id": 1,
+        "source": "system",
+        "message": "redacted 48cab96c (len 4553)"
+      },
+      {
+        "step_id": 2,
+        "source": "user",
+        "message": "redacted 27be81e2 (len 1682)"
+      },
+      {
+        "step_id": 3,
+        "source": "system",
+        "message": "redacted 97019a87 (len 348)"
+      },
+      {
+        "step_id": 4,
+        "source": "user",
+        "message": "redacted 3b828199 (len 245)"
+      },
+      {
+        "step_id": 5,
+        "source": "user",
+        "message": "redacted 3921954e (len 184)"
+      },
+      {
+        "step_id": 6,
+        "source": "agent",
+        "message": "redacted 1a4c14e9 (len 291)",
+        "timestamp": "2026-09-01T03:28:04.655Z",
+        "reasoning_content": "redacted 13b4fe9d (len 37)\nredacted 888d56ac (len 34)",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_1",
+            "function_name": "collaboration__spawn_agent",
+            "arguments": {
+              "task_name": "redacted-597b1969",
+              "fork_turns": "redacted-5ef5ef03",
+              "message": "redacted-9be98149"
+            },
+            "extra": {
+              "record": {
+                "agent_thread_id": "00000000-0000-7000-8000-000000000004",
+                "agent_path": "/root/agent-1"
+              }
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_1",
+              "content": "redacted bf811a0b (len 39)"
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 175967,
+          "completion_tokens": 348,
+          "cached_tokens": 18176
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 7,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:28:12.268Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_2",
+            "function_name": "collaboration__spawn_agent",
+            "arguments": {
+              "task_name": "redacted-1d6dc60d",
+              "fork_turns": "redacted-5ef5ef03",
+              "message": "redacted-03b94b25"
+            },
+            "extra": {
+              "record": {
+                "agent_thread_id": "00000000-0000-7000-8000-000000000005",
+                "agent_path": "/root/agent-2"
+              }
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_2",
+              "content": "redacted 352db785 (len 38)"
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 176338,
+          "completion_tokens": 112,
+          "cached_tokens": 174848
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 8,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:28:16.321Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_3",
+            "function_name": "collaboration__spawn_agent",
+            "arguments": {
+              "task_name": "redacted-25bef3fb",
+              "fork_turns": "redacted-5ef5ef03",
+              "message": "redacted-a8aa5820"
+            },
+            "extra": {
+              "record": {
+                "agent_thread_id": "00000000-0000-7000-8000-000000000006",
+                "agent_path": "/root/agent-3"
+              }
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_3",
+              "content": "redacted 36c00063 (len 39)"
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 176473,
+          "completion_tokens": 92,
+          "cached_tokens": 175872
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 9,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:28:19.762Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_4",
+            "function_name": "web__run",
+            "arguments": {
+              "search_query": [
+                {
+                  "q": "site:omnigent.ai Omnigent AI"
+                },
+                {
+                  "q": "Omnigent GitHub"
+                },
+                {
+                  "q": "site:github.com omnigent ai agents"
+                },
+                {
+                  "q": "site:docs.omnigent.ai Omnigent"
+                }
+              ],
+              "response_length": "redacted-fc66f021"
+            }
+          },
+          {
+            "tool_call_id": "exec-00000000-0000-7000-8000-000000000007",
+            "function_name": "web.search",
+            "arguments": {
+              "query": "redacted 5aeef740 (len 32)",
+              "action": {
+                "type": "search"
+              }
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "exec-00000000-0000-7000-8000-000000000007",
+              "content": "[{\"title\":\"redacted 07f5c41f (len 17)\",\"url\":\"https://redacted.invalid/6cfc626d\"},{\"title\":\"redacted 27dd4ead (len 60)\",\"url\":\"https://redacted.invalid/ba1d8e59\"},{\"title\":\"redacted ed03f4c9 (len 14)\",\"url\":\"https://redacted.invalid/b3ee8ffe\"},{\"title\":\"redacted 9aeda0de (len 216)\",\"url\":\"https://redacted.invalid/4ff9cac2\"},{\"title\":\"redacted 91a85fe2 (len 72)\",\"url\":\"https://redacted.invalid/2f2a1418\"},{\"title\":\"redacted bd13555e (len 40)\",\"url\":\"https://redacted.invalid/4fbee512\"},{\"title\":\"redacted ea3bf58a (len 58)\",\"url\":\"https://redacted.invalid/72b7045a\"},{\"title\":\"redacted f3ddd975 (len 19)\",\"url\":\"https://redacted.invalid/87763033\"},{\"title\":\"redacted 7c323e79 (len 19)\",\"url\":\"https://redacted.invalid/cb1c467a\"},{\"title\":\"redacted c5dea756 (len 18)\",\"url\":\"https://redacted.invalid/2690d60e\"},{\"title\":\"redacted 7ad337c2 (len 33)\",\"url\":\"https://redacted.invalid/5bea31f6\"},{\"title\":\"redacted 2d24b40b (len 38)\",\"url\":\"https://redacted.invalid/b9b130f9\"},{\"title\":\"redacted 1dda210c (len 97)\",\"url\":\"https://redacted.invalid/b9adce22\"},{\"title\":\"redacted 2df52fe9 (len 90)\",\"url\":\"https://redacted.invalid/554c81e7\"},{\"title\":\"redacted 1ac21c68 (len 127)\",\"url\":\"https://redacted.invalid/e533387a\"},{\"title\":\"redacted a8818e37 (len 125)\",\"url\":\"https://redacted.invalid/19c65a47\"},{\"title\":\"redacted 06e48982 (len 28)\",\"url\":\"https://redacted.invalid/213c6a5b\"},{\"title\":\"redacted 79ec0d14 (len 127)\",\"url\":\"https://redacted.invalid/9de7985b\"},{\"title\":\"redacted 496125fb (len 114)\",\"url\":\"https://redacted.invalid/20d2749e\"},{\"title\":\"redacted 27dd4ead (len 60)\",\"url\":\"https://redacted.invalid/e477a592\"},{\"title\":\"redacted 9dab8789 (len 67)\",\"url\":\"https://redacted.invalid/c07b9de9\"},{\"title\":\"redacted 09e16c43 (len 17)\",\"url\":\"https://redacted.invalid/e69686b8\"},{\"title\":\"redacted 3d5cb72a (len 19)\",\"url\":\"https://redacted.invalid/989f515e\"},{\"title\":\"redacted 74537f4f (len 74)\",\"url\":\"https://redacted.invalid/a2da45e6\"},{\"title\":\"redacted 98d0891e (len 59)\",\"url\":\"https://redacted.invalid/7f3844fd\"}]"
+            },
+            {
+              "source_call_id": "call_4",
+              "content": "redacted 4af556b8 (len 47)\nredacted 995cd046 (len 31864)"
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 176587,
+          "completion_tokens": 94,
+          "cached_tokens": 175872
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 10,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:28:25.303Z",
+        "reasoning_content": "redacted b5508fed (len 45)",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_5",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-24160e16",
+              "workdir": "/Users/dev/app",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 2000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_5",
+              "content": "redacted 8b110006 (len 47)\nredacted e9fd1d6a (len 36)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 184562,
+          "completion_tokens": 230,
+          "cached_tokens": 175872
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 11,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:28:31.510Z",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_6",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-9b9a847a",
+              "workdir": "/Users/dev/app",
+              "yield_time_ms": 30000,
+              "max_output_tokens": 4000,
+              "sandbox_permissions": "redacted-57daa3cd",
+              "justification": "redacted-c63747eb",
+              "prefix_rule": [
+                "git",
+                "clone"
+              ]
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_6",
+              "content": "redacted e6131874 (len 47)\nredacted 18063789 (len 63)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 184828,
+          "completion_tokens": 154,
+          "cached_tokens": 184064
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 12,
+        "source": "agent",
+        "message": "redacted 7f9b5af2 (len 454)",
+        "timestamp": "2026-09-01T03:28:43.898Z",
+        "reasoning_content": "redacted abfd720e (len 49)",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_7",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-e0c7225d",
+              "workdir": "/private/tmp/omnigent-review.6iU9JP/omnigent",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 16000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_7",
+              "content": "redacted 8b110006 (len 47)\nredacted 9e537ccf (len 6740)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 185026,
+          "completion_tokens": 263,
+          "cached_tokens": 184064
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 13,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:28:51.034Z",
+        "reasoning_content": "redacted 9e9538c9 (len 41)",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_8",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-6ca2e6ce",
+              "workdir": "/private/tmp/omnigent-review.6iU9JP/omnigent",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 30000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_8",
+              "content": "redacted 8b110006 (len 47)\nredacted aec66bdc (len 25457)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 187191,
+          "completion_tokens": 126,
+          "cached_tokens": 184064
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 14,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:28:54.792Z",
+        "reasoning_content": "redacted dabddfbf (len 54)",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_9",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-c59dd9e7",
+              "workdir": "/private/tmp/omnigent-review.6iU9JP/omnigent",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 30000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_9",
+              "content": "redacted 8b110006 (len 47)\nredacted 0a3aa76a (len 34558)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 194403,
+          "completion_tokens": 167,
+          "cached_tokens": 186112
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 15,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:29:00.522Z",
+        "reasoning_content": "redacted c32b6435 (len 48)",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_10",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-56d5cef3",
+              "workdir": "/private/tmp/omnigent-review.6iU9JP/omnigent",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 30000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_10",
+              "content": "redacted 8b110006 (len 47)\nredacted 21d5dd1d (len 40002)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 203170,
+          "completion_tokens": 163,
+          "cached_tokens": 193280
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 16,
+        "source": "agent",
+        "message": "",
+        "timestamp": "2026-09-01T03:29:05.937Z",
+        "reasoning_content": "redacted 3babf80d (len 50)",
+        "tool_calls": [
+          {
+            "tool_call_id": "call_11",
+            "function_name": "exec_command",
+            "arguments": {
+              "cmd": "redacted-0b93929f",
+              "workdir": "/private/tmp/omnigent-review.6iU9JP/omnigent",
+              "yield_time_ms": 10000,
+              "max_output_tokens": 12000
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "call_11",
+              "content": "redacted 8b110006 (len 47)\nredacted 7419da60 (len 777)",
+              "extra": {
+                "record": {
+                  "exit_code": 0
+                }
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "prompt_tokens": 212758,
+          "completion_tokens": 126,
+          "cached_tokens": 202496
+        },
+        "llm_call_count": 1
+      }
+    ],
+    "final_metrics": {
+      "total_prompt_tokens": 2057303,
+      "total_completion_tokens": 1875,
+      "total_cached_tokens": 1854720,
+      "total_steps": 16
+    },
+    "extra": {
+      "record": {
+        "source_path": "<home>/.codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-00000000-0000-7000-8000-000000000001.jsonl",
+        "step_boundary": "token_count"
+      }
+    }
+  }
+}

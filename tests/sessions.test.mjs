@@ -143,6 +143,17 @@ test('byAncestry finds the session whose pid appears in a chain — nearest ance
     'a chain with no registered pid resolves to nothing — never a guess');
 });
 
+test('byAncestry breaks a same-pid tie by the FRESHEST row — a resumed session under the same process wins over its predecessor', async () => {
+  const sessionsPath = scratch();
+  const reg = new SessionRegistry({ sessionsPath });
+  await ensureRow(reg, { sessionId: 'sess-old' });
+  await new Promise((resolve) => { setTimeout(resolve, 5); }); // distinct last_seen_at instants
+  await ensureRow(reg, { sessionId: 'sess-new' });
+  const hit = reg.byAncestry([{ pid: process.pid, exec: 'claude' }]);
+  assert.equal(hit?.sessionId, 'sess-new',
+    'two rows on one pid (resume, rotation) — attribution follows the freshest, never insertion order');
+});
+
 test('a malformed sessions file refuses loudly with OATHE_SESSIONS_MALFORMED naming the file', () => {
   const sessionsPath = scratch();
   fs.writeFileSync(sessionsPath, 'not json{');

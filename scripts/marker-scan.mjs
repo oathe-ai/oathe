@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 const F = ['fir', 'ia'].join('');
 const FY = ['fir', 'iya'].join('');
 const SM = ['sh', 'ez'].join('') + '.' + ['ma', 'lik'].join(''); // assembled so no fragment of the name appears as a literal
+const SMB = ['sh', 'ez'].join('') + ['ma', 'lik'].join(''); // the bare (home-directory) form of the same name
 export const MARKER_PATTERNS = Object.freeze([
   new RegExp(F, 'i'),
   new RegExp(FY, 'i'),
@@ -27,9 +28,16 @@ export const MARKER_PATTERNS = Object.freeze([
   /\.superpowers/,
   /Claude-Session:/,
   new RegExp(SM.replace('.', '\\.'), 'i'),
+  new RegExp(SMB, 'i'),
+  // Any real user's home-directory path (2026-09-03: 655 build intermediates naming one were
+  // caught only by the launch-side scan). The sanitizer's synthetic users — /Users/dev,
+  // /Users/x, /Users/someone — are exempt by name: the derive gate scans every fixture with this list.
+  /\/Users\/(?!(?:dev|x|someone)\/)[A-Za-z0-9._-]+\//,
 ]);
 
-const SKIP_DIR_NAMES = Object.freeze(['node_modules', '.git']);
+// .build is SwiftPM's intermediates dir (notch/.build): gitignored, never tree content, and every
+// Mac build writes the toolchain's home-relative paths into it — skipped like node_modules.
+const SKIP_DIR_NAMES = Object.freeze(['node_modules', '.git', '.build']);
 
 function fail(message) {
   process.stderr.write(`marker-scan: ${message}\n`);

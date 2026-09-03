@@ -136,7 +136,7 @@ test('the SessionStart hook renders the board for the workspace with a live clai
 
 // ------------------------------------------------ the desktop-surface bug, pinned end-to-end
 
-test('THE ORIGINAL REPRO: an unexpanded ${CLAUDE_PROJECT_DIR} no longer kills the server — the ladder resolves', async () => {
+test('THE ORIGINAL REPRO: an unexpanded ${CLAUDE_PROJECT_DIR} does not kill the server — the ladder resolves', async () => {
   // The exact env the Claude desktop surface delivered: the literal template, never expanded.
   // The old server realpath'd it at startup and died with ENOENT before answering anything.
   const mcp = mcpSession({ OATHE_WORKSPACE_DIR: '${CLAUDE_PROJECT_DIR}' });
@@ -211,4 +211,30 @@ test('doctor is clean over the whole install, then uninstall byte-restores every
   // init CREATED ~/.cursor/mcp.json in this sandbox (absent before); once our entry is gone
   // nothing of substance remains, so uninstall removes the file itself — not a husk.
   assert.ok(!fs.existsSync(path.join(sb.home, '.cursor/mcp.json')), 'the file init created is gone with uninstall');
+});
+
+test('the real stdio server speaks as the session the hook registered LAST — a /clear needs no context rebuild', { skip: process.platform !== 'darwin' && 'the ancestry walk reads ps on darwin' }, async () => {
+  const { SessionRegistry } = await import('../src/sessions.mjs');
+  const sessionsPath = path.join(sb.env.OATHE_HOME, 'sessions.json');
+  const tA = path.join(sb.home, 'clear-A.jsonl'); fs.writeFileSync(tA, '');
+  const tB = path.join(sb.home, 'clear-B.jsonl'); fs.writeFileSync(tB, '');
+  // The server's parent is THIS process: register it as the harness session, as SessionStart does.
+  const facts = (transcriptPath) => () => ({ ancestry: [{ pid: process.pid, exec: '/usr/local/bin/claude' }], app: null, transcriptPath, workspace: 'ws-abcdef123456' });
+  let t = 0;
+  const registry = new SessionRegistry({ sessionsPath, clock: () => new Date(1_800_000_000_000 + (t++) * 1000).toISOString() });
+  await registry.ensure({ sessionId: 'sess-clear-A', pid: process.pid, facts: facts(tA) });
+  const mcp = mcpSession();
+  try {
+    await mcp.request('initialize', {});
+    const claim = await mcp.call('oathe_claim', { task_id: 'clear-task', objective: 'survive a /clear' });
+    assert.equal(claim.isError, false, JSON.stringify(claim.body));
+    assert.equal(claim.body.spoken_from.session, 'sess-clear-A');
+    await registry.ensure({ sessionId: 'sess-clear-B', pid: process.pid, facts: facts(tB) }); // the /clear hook, between two calls
+    const note = await mcp.call('oathe_statement', { task_id: 'clear-task', proposition: 'after the clear' });
+    assert.equal(note.isError, false, JSON.stringify(note.body));
+    assert.equal(note.body.spoken_from.session, 'sess-clear-B', 'no roots change, no config change — the act still speaks as the new session');
+    await mcp.call('oathe_yield', { task_id: 'clear-task', note: 'fixture done' });
+  } finally {
+    mcp.close();
+  }
 });

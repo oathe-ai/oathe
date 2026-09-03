@@ -1,8 +1,8 @@
-// oathe — the launched-session contract. The plugin installs at USER scope, so its hooks and
-// MCP server reach every session on the machine; only a session started by `oathe <harness>`
-// has opted into the board. The launcher stamps that opt-in into the caged child's environment,
-// and everything plugin-side asks ONE predicate before touching the substrate. Named once here:
-// the launcher writes the block, the hooks and the server read it.
+// oathe — the launched-session env block. The launcher hands the caged child the oathe wiring
+// plus OATHE_LAUNCHED_HARNESS, the custody marker naming which harness `oathe <harness>`
+// launched — a marker and nothing more: hooks fire in every session, and tool access is gated
+// by workspace resolution (src/workspace-resolver.mjs), never by who spawned the session.
+// Named once here: the launcher writes the block.
 
 export const LAUNCHED_HARNESS_ENV = 'OATHE_LAUNCHED_HARNESS';
 

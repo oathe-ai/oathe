@@ -11,8 +11,9 @@ machine can verify). Passing an engine is how you retry a STALLED verification o
 different engine after an outage (e.g. a usage limit): the failed run already released its
 claim and recorded the failure, so the retry claims cleanly.
 
-Call `oathe_verify` with `{task_id, engine?}`. It returns immediately — verification runs
-in a detached background process. Report to the user exactly what the response says: the
-verdict lands on the board; a rejection reopens the task with the reason recorded on the
-verify-task's completion statement; the engine log path is in the response. Do not wait or
-poll unless the user asks.
+Call `oathe_verify` with `{task_id, engine?}`. The engine runs as a detached process and
+the call waits for its verdict, then returns it: the verdict and its reason, whether the
+task settled or came back reopened, and the engine log path. Report to the user exactly
+what the response says — a rejection's reason is the verifier's own words, recorded on the
+verify-task's completion statement; a run that died before a verdict says so and names the
+retry. Nothing to poll: the answer is in the response.

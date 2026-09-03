@@ -19,7 +19,7 @@ test('the public package declares no private dependencies and no private paths',
   assert.equal(pkg.license, 'Apache-2.0');
   assert.ok(Array.isArray(pkg.files) && pkg.files.includes('src/'));
   const lock = fs.readFileSync(path.join(paths.packageRoot, 'package-lock.json'), 'utf8');
-  assert.ok(!lock.includes(['/Users/fir', 'iya'].join('')), 'no machine paths in committed metadata');
+  assert.ok(!lock.includes('/Users/'), 'no machine paths in committed metadata — any home directory, not one former user');
 });
 
 test('LICENSE is the Apache-2.0 text, on record for the oathe authors', () => {

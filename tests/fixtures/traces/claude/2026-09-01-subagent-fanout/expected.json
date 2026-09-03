@@ -1,0 +1,547 @@
+{
+  "_source": "sanitized from a real claude record by scripts/derive-trace-fixtures.mjs — review this diff before it lands",
+  "record": ".claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001.jsonl",
+  "trajectory": {
+    "schema_version": "ATIF-v1.7",
+    "session_id": "00000000-0000-7000-8000-000000000001",
+    "agent": {
+      "name": "claude",
+      "version": "2.1.234",
+      "model_name": "claude-fable-5"
+    },
+    "steps": [
+      {
+        "step_id": 1,
+        "source": "user",
+        "message": "redacted 18ef41f9 (len 228)"
+      },
+      {
+        "step_id": 2,
+        "source": "agent",
+        "message": "redacted a0624a94 (len 173)",
+        "timestamp": "2026-08-21T22:12:19.468Z",
+        "reasoning_content": "redacted e3b0c442 (len 0)",
+        "metrics": {
+          "prompt_tokens": 52123,
+          "completion_tokens": 1359,
+          "cached_tokens": 24446,
+          "extra": {
+            "cache_creation_input_tokens": 27675
+          }
+        },
+        "llm_call_count": 1,
+        "tool_calls": [
+          {
+            "tool_call_id": "toolu_1",
+            "function_name": "Agent",
+            "arguments": {
+              "description": "redacted-83ed50d5",
+              "subagent_type": "redacted-dbdb86a0",
+              "prompt": "redacted-01c68951"
+            }
+          }
+        ],
+        "observation": {
+          "results": [
+            {
+              "source_call_id": "toolu_1",
+              "content": "redacted fd7db1cf (len 1064)",
+              "subagent_trajectory_ref": [
+                {
+                  "trajectory_id": "id13",
+                  "extra": {
+                    "agent_type": "claude-code-guide"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "step_id": 3,
+        "source": "agent",
+        "message": "redacted 8cb3e14c (len 217)",
+        "timestamp": "2026-08-21T22:12:30.758Z",
+        "metrics": {
+          "prompt_tokens": 53879,
+          "completion_tokens": 67,
+          "cached_tokens": 52121,
+          "extra": {
+            "cache_creation_input_tokens": 1756
+          }
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 4,
+        "source": "system",
+        "message": ""
+      },
+      {
+        "step_id": 5,
+        "source": "system",
+        "message": ""
+      },
+      {
+        "step_id": 6,
+        "source": "system",
+        "message": "[inbound task-notification id13]",
+        "timestamp": "2026-08-21T22:14:09.634Z",
+        "llm_call_count": 0,
+        "extra": {
+          "record": {
+            "inbound": {
+              "kind": "task-notification",
+              "task_id": "id13",
+              "tool_use_id": "toolu_1"
+            }
+          }
+        },
+        "observation": {
+          "results": [
+            {
+              "content": "<task-notification>\n<task-id>id13</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<output-file>redacted 5da002f2 (len 123)</output-file>\n<status>completed</status>\n<summary>redacted 68edcce0 (len 42)</summary>\n<note>redacted 6c1f6549 (len 196)</note>\n<result>redacted 65e1c03d (len 4147)</result>\n<usage>redacted 57985c8c (len 97)</usage>\n</task-notification>",
+              "subagent_trajectory_ref": [
+                {
+                  "trajectory_id": "id13"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "step_id": 7,
+        "source": "agent",
+        "message": "redacted bcd1b1d1 (len 2291)",
+        "timestamp": "2026-08-21T22:14:12.203Z",
+        "reasoning_content": "redacted e3b0c442 (len 0)",
+        "metrics": {
+          "prompt_tokens": 55957,
+          "completion_tokens": 811,
+          "cached_tokens": 53877,
+          "extra": {
+            "cache_creation_input_tokens": 2078
+          }
+        },
+        "llm_call_count": 1
+      },
+      {
+        "step_id": 8,
+        "source": "system",
+        "message": ""
+      },
+      {
+        "step_id": 9,
+        "source": "system",
+        "message": ""
+      },
+      {
+        "step_id": 10,
+        "source": "system",
+        "message": "redacted dd621357 (len 248)"
+      }
+    ],
+    "final_metrics": {
+      "total_prompt_tokens": 564842,
+      "total_completion_tokens": 5442,
+      "total_cached_tokens": 486539,
+      "total_steps": 10
+    },
+    "extra": {
+      "record": {
+        "source_path": "<home>/.claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001.jsonl",
+        "session_title": "Fixture title"
+      }
+    },
+    "subagent_trajectories": [
+      {
+        "schema_version": "ATIF-v1.7",
+        "session_id": "00000000-0000-7000-8000-000000000001",
+        "agent": {
+          "name": "claude",
+          "version": "2.1.234",
+          "model_name": "claude-haiku-4-5-20251001"
+        },
+        "steps": [
+          {
+            "step_id": 1,
+            "source": "user",
+            "message": "redacted 01c68951 (len 1325)"
+          },
+          {
+            "step_id": 2,
+            "source": "agent",
+            "message": "redacted e396ad7e (len 111)",
+            "timestamp": "2026-08-21T22:12:30.800Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 24649,
+              "completion_tokens": 281,
+              "cached_tokens": 0,
+              "extra": {
+                "cache_creation_input_tokens": 24639
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_2",
+                "function_name": "WebFetch",
+                "arguments": {
+                  "url": "redacted-4e2e9550",
+                  "prompt": "redacted-8fb6692a"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_2",
+                  "content": "redacted 316deef6 (len 1154)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 3,
+            "source": "agent",
+            "message": "",
+            "timestamp": "2026-08-21T22:12:38.711Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 26334,
+              "completion_tokens": 139,
+              "cached_tokens": 24639,
+              "extra": {
+                "cache_creation_input_tokens": 1687
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_3",
+                "function_name": "WebFetch",
+                "arguments": {
+                  "url": "redacted-142873e1",
+                  "prompt": "redacted-722e7f8e"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_3",
+                  "content": "redacted 61211a24 (len 979)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 4,
+            "source": "agent",
+            "message": "",
+            "timestamp": "2026-08-21T22:12:46.182Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 26730,
+              "completion_tokens": 158,
+              "cached_tokens": 26326,
+              "extra": {
+                "cache_creation_input_tokens": 396
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_4",
+                "function_name": "WebFetch",
+                "arguments": {
+                  "url": "redacted-e0348475",
+                  "prompt": "redacted-f99ad81b"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_4",
+                  "content": "redacted 8ee3af6f (len 33980)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 5,
+            "source": "agent",
+            "message": "redacted 8732f445 (len 89)",
+            "timestamp": "2026-08-21T22:12:49.233Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 34789,
+              "completion_tokens": 226,
+              "cached_tokens": 26722,
+              "extra": {
+                "cache_creation_input_tokens": 8059
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_5",
+                "function_name": "WebFetch",
+                "arguments": {
+                  "url": "redacted-52bac89a",
+                  "prompt": "redacted-20aa1db7"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_5",
+                  "content": "redacted 462043e4 (len 1704)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 6,
+            "source": "agent",
+            "message": "",
+            "timestamp": "2026-08-21T22:12:58.955Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 35450,
+              "completion_tokens": 134,
+              "cached_tokens": 34781,
+              "extra": {
+                "cache_creation_input_tokens": 661
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_6",
+                "function_name": "WebSearch",
+                "arguments": {
+                  "query": "redacted-e65ca867"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_6",
+                  "content": "redacted 3c91e025 (len 2731)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 7,
+            "source": "agent",
+            "message": "",
+            "timestamp": "2026-08-21T22:13:10.143Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 36322,
+              "completion_tokens": 117,
+              "cached_tokens": 35442,
+              "extra": {
+                "cache_creation_input_tokens": 872
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_7",
+                "function_name": "WebSearch",
+                "arguments": {
+                  "query": "redacted-cdc525a6"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_7",
+                  "content": "redacted 49894231 (len 3079)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 8,
+            "source": "agent",
+            "message": "redacted 36c0c06a (len 132)",
+            "timestamp": "2026-08-21T22:13:21.444Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 37299,
+              "completion_tokens": 201,
+              "cached_tokens": 36314,
+              "extra": {
+                "cache_creation_input_tokens": 977
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_8",
+                "function_name": "WebFetch",
+                "arguments": {
+                  "url": "redacted-a6541e0e",
+                  "prompt": "redacted-cb5385c9"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_8",
+                  "content": "redacted 26b3e59c (len 29571)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 9,
+            "source": "agent",
+            "message": "",
+            "timestamp": "2026-08-21T22:13:27.631Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 43911,
+              "completion_tokens": 350,
+              "cached_tokens": 37291,
+              "extra": {
+                "cache_creation_input_tokens": 6612
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_9",
+                "function_name": "WebFetch",
+                "arguments": {
+                  "url": "redacted-da37764e",
+                  "prompt": "redacted-f55335cb"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_9",
+                  "content": "redacted 6c9cbb50 (len 2146)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 10,
+            "source": "agent",
+            "message": "",
+            "timestamp": "2026-08-21T22:13:30.312Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 44932,
+              "completion_tokens": 106,
+              "cached_tokens": 43903,
+              "extra": {
+                "cache_creation_input_tokens": 1021
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_10",
+                "function_name": "WebSearch",
+                "arguments": {
+                  "query": "redacted-9ffdcda6"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_10",
+                  "content": "redacted 6f25b2f2 (len 2668)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 11,
+            "source": "agent",
+            "message": "",
+            "timestamp": "2026-08-21T22:13:40.224Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 45761,
+              "completion_tokens": 110,
+              "cached_tokens": 44924,
+              "extra": {
+                "cache_creation_input_tokens": 829
+              }
+            },
+            "llm_call_count": 1,
+            "tool_calls": [
+              {
+                "tool_call_id": "toolu_11",
+                "function_name": "WebSearch",
+                "arguments": {
+                  "query": "redacted-0d2c973a"
+                }
+              }
+            ],
+            "observation": {
+              "results": [
+                {
+                  "source_call_id": "toolu_11",
+                  "content": "redacted 677d06d8 (len 3246)"
+                }
+              ]
+            }
+          },
+          {
+            "step_id": 12,
+            "source": "agent",
+            "message": "redacted cfa96c1d (len 4135)",
+            "timestamp": "2026-08-21T22:13:55.402Z",
+            "reasoning_content": "redacted e3b0c442 (len 0)",
+            "metrics": {
+              "prompt_tokens": 46706,
+              "completion_tokens": 1383,
+              "cached_tokens": 45753,
+              "extra": {
+                "cache_creation_input_tokens": 945
+              }
+            },
+            "llm_call_count": 1
+          }
+        ],
+        "final_metrics": {
+          "total_prompt_tokens": 402883,
+          "total_completion_tokens": 3205,
+          "total_cached_tokens": 356095,
+          "total_steps": 12
+        },
+        "extra": {
+          "record": {
+            "source_path": "<home>/.claude/projects/-Users-dev-app/00000000-0000-7000-8000-000000000001/subagents/agent-id13.jsonl",
+            "subagent_meta": {
+              "agentType": "claude-code-guide",
+              "description": "redacted",
+              "toolUseId": "toolu_1",
+              "spawnDepth": 1
+            }
+          }
+        },
+        "trajectory_id": "id13"
+      }
+    ]
+  }
+}

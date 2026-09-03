@@ -58,11 +58,17 @@ struct NotchView: View {
         // same transaction, and the sliver's center never moves.
         .padding(.top, sideRestPad)
         // ORDER IS LOAD-BEARING: when both values change in one transaction, the INNER
-        // .animation(value:) wins for the subtree. State inner, hover outer, so a mixed
-        // beat (the welcome folding into its wings-out pose) rides the state clock whole,
-        // while a lone wing flip rides the wing clock below. Swapping these re-blends the
-        // clocks (caught live, 2026-08-31).
+        // .animation(value:) wins for the subtree. State innermost, row, then hover, so a
+        // mixed beat (the sheet closing over an open card; the welcome folding into its
+        // wings-out pose) rides the state clock whole, while a lone row fold or wing flip
+        // rides its own clock below. Swapping these re-blends the clocks (caught live,
+        // 2026-08-31).
         .animation(stateAnimation, value: stateKey)
+        // The row clock, direction-aware like the wing clock's: a card unfolding arrives on
+        // the sheet's own spring; a card folding is the flat, quick exit — a shrink must
+        // never bounce (founder, 2026-09-02: the fold rode the open spring and spazzed).
+        .animation(reduceMotion ? nil : (model.expandedId != nil ? Motion.open : Motion.detail),
+                   value: model.expandedId)
         // ONE wing clock, direction-aware: the ternary reads wingsOut at the instant it
         // changes, so flying OUT is snappy (hover, a verdict's glyph) and settling HOME is
         // the same unhurried drain for all three causes — hover leaving, a pulse ending,
@@ -92,9 +98,11 @@ struct NotchView: View {
     }
 
     // .animation(value:) needs Equatable; NotchState is, but derive one key so a state
-    // change, an expansion change, and the welcome's phases all animate under the state clock.
+    // change and the welcome's phases animate under the state clock. The row fold has its
+    // own direction-aware clock above — expandedId lives THERE, not here (a fold keyed into
+    // this clock rode the open spring and bounced).
     private var stateKey: String {
-        "\(model.state)-\(model.expandedId ?? "")-\(welcome.active)"
+        "\(model.state)-\(welcome.active)"
     }
 
     private var dockAlignment: Alignment {
@@ -284,17 +292,32 @@ struct NotchView: View {
                     .foregroundStyle(Glass.muted)
                     .padding(.horizontal, 16).padding(.top, 1).padding(.bottom, 7)
             }
-            ForEach(Array(model.entries.enumerated()), id: \.element.id) { index, entry in
+            ForEach(Array(model.visibleEntries.enumerated()), id: \.element.id) { index, entry in
                 row(for: entry)
                     .padding(.horizontal, 16).padding(.vertical, 7)
                     .contentShape(Rectangle())
                     .onTapGesture { model.toggle(entry.id) }
                 if model.expandedId == entry.id {
+                    // The card arrives with the unfold (the transaction's own spring); on
+                    // the way out it fades on textSwap's clock, done a beat before the fold
+                    // closes — the rows never slide up through half-faded words.
                     detail(for: entry)
+                        .transition(.asymmetric(
+                            insertion: .opacity,
+                            removal: .opacity.animation(reduceMotion ? nil : Motion.textSwap)))
                 }
-                if index < model.entries.count - 1 {
+                if index < model.visibleEntries.count - 1 || model.overflow > 0 {
                     Divider().overlay(Glass.hairline).padding(.horizontal, 10)
                 }
+            }
+            // The budget's edge (UX rule 20): everything past the sheet's rows is one count —
+            // the feed's own `more` plus the work rows the cap left out. No action: the
+            // board is the pull, and the glass never points at a CLI.
+            if model.overflow > 0 {
+                Text("+\(model.overflow) more")
+                    .font(rounded(10.5, .medium))
+                    .foregroundStyle(Glass.muted)
+                    .padding(.horizontal, 16).padding(.vertical, 7)
             }
         }
         .padding(.bottom, 10)
@@ -303,10 +326,12 @@ struct NotchView: View {
     @ViewBuilder private func row(for entry: SheetEntry) -> some View {
         switch entry {
         case .breach(let breach):
+            // The kind word and the act word are the frame's (Node's one table) — the glass
+            // composes no sentence.
             rowLine(title: breach.task_id, tone: Glass.amber,
-                    meta: "\(kindWord(breach.kind)) · \(NotchModel.age(from: breach.at))",
+                    meta: "\(breach.kind_word) · \(NotchModel.age(from: breach.at))",
                     actFor: breach.act?.kind == "spawn-terminal" ? breach.task_id : nil,
-                    actWord: actWord(breach)) { model.breachAct(breach) }
+                    actWord: breach.act?.word ?? "") { model.breachAct(breach) }
         case .work(let row):
             rowLine(title: row.id, tone: row.amber ? Glass.amber : Glass.ink,
                     meta: "\(row.holder) · \(row.age)", actFor: nil, actWord: "") {}
@@ -328,34 +353,49 @@ struct NotchView: View {
         }
     }
 
+    /// The expanded row is the TASK CARD (founder, 2026-09-01) — one anatomy for a breach and
+    /// a claim, in plain words, top to bottom: what is owed, where it stands (the children
+    /// line when the claim spawned), the last word (the progress, or the verdict's own
+    /// sentence — whole; the glass never clips data), where it lives, and the one act. A
+    /// breach's act already sits on its row; a claim's continues here.
     @ViewBuilder private func detail(for entry: SheetEntry) -> some View {
         switch entry {
         case .breach(let breach):
-            // The WHY, whole — the verdict's or failure's own words from the frame,
-            // rendered verbatim (composed package-side; the glass never clips data).
-            Text(breach.detail)
-                .font(rounded(10.5)).foregroundStyle(Glass.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, 16).padding(.trailing, 16).padding(.bottom, 8)
+            card(objective: breach.objective, standing: nil, lastWord: breach.detail, home: breach.home, act: nil)
         case .work(let row):
-            VStack(alignment: .leading, spacing: 5) {
-                if let progress = row.progress {
-                    Text(progress).font(rounded(10.5)).foregroundStyle(Glass.muted).lineLimit(3)
-                }
-                HStack(spacing: 10) {
-                    Text(tilde(row.homePath))
-                        .font(rounded(10)).foregroundStyle(Glass.muted).lineLimit(1)
-                    Spacer(minLength: 12)
-                    Button(model.flashTask == row.id ? model.flashWord : "continue ↗") {
-                        model.continueAct(row)
-                    }
-                    .buttonStyle(.plain)
-                    .font(rounded(10.5, .medium))
-                    .foregroundStyle(model.flashTask == row.id ? Glass.sage : Glass.ink)
+            card(objective: row.objective, standing: row.childrenLine, lastWord: row.progress, home: row.homePath,
+                 act: row.resume.map { resume in (word: model.flashTask == row.id ? model.flashWord : resume.word,
+                                                 run: { model.continueAct(row) },
+                                                 flashing: model.flashTask == row.id) })
+        }
+    }
+
+    private func card(objective: String?, standing: String?, lastWord: String?, home: String?,
+                      act: (word: String, run: () -> Void, flashing: Bool)?) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let objective {
+                Text(objective).font(rounded(10.5, .medium)).foregroundStyle(Glass.ink).lineLimit(2)
+            }
+            if let standing {
+                Text(standing).font(rounded(10.5)).foregroundStyle(Glass.muted).lineLimit(1)
+            }
+            if let lastWord {
+                Text(lastWord).font(rounded(10.5)).foregroundStyle(Glass.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 10) {
+                Text(tilde(home))
+                    .font(rounded(10)).foregroundStyle(Glass.muted).lineLimit(1)
+                Spacer(minLength: 12)
+                if let act {
+                    Button(act.word, action: act.run)
+                        .buttonStyle(.plain)
+                        .font(rounded(10.5, .medium))
+                        .foregroundStyle(act.flashing ? Glass.sage : Glass.ink)
                 }
             }
-            .padding(.leading, 16).padding(.trailing, 16).padding(.bottom, 8)
         }
+        .padding(.leading, 16).padding(.trailing, 16).padding(.bottom, 8)
     }
 
     @ViewBuilder private var menu: some View {
@@ -371,26 +411,6 @@ struct NotchView: View {
         }
         Button("Reset Position") { model.onResetSeat?() }
         Button("Quit Oathe Notch") { NSApp.terminate(nil) }
-    }
-
-    // Plain kind words + the one act that can change each truth (ruling 2026-08-31):
-    // never-judged → verify; engine-died → retry; judged-rejected → continue into the work.
-    private func kindWord(_ kind: String) -> String {
-        switch kind {
-        case "overdue": "never verified"
-        case "reopened": "rejected"
-        case "stalled": "verify failed"
-        case "quiet": "quiet"
-        default: kind
-        }
-    }
-
-    private func actWord(_ breach: Breach) -> String {
-        switch breach.kind {
-        case "overdue": "verify ↗"
-        case "stalled": "retry ↗"
-        default: "continue ↗"
-        }
     }
 
     private func tilde(_ path: String?) -> String {

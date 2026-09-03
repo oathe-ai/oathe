@@ -10,6 +10,14 @@ import path from 'node:path';
 
 import { Harness, HarnessOnboardError } from './harness.mjs';
 import { cwdDialect } from './dialects.mjs';
+import { CODEX_ROLLOUT_ROSTER, CODEX_CALL_TYPES, CORRELATABLE_ITEMS, CODEX_ROOT_AGENT_PATH, codexKindOf } from './codex-roster.mjs';
+import { makeFidelity } from './fidelity.mjs';
+import { CodexTraceStore } from '../traces.mjs';
+
+/** The raw call payloads of a rollout — the fidelity extractors' one reading of actions. */
+const codexRawCalls = (entries) => entries
+  .filter((r) => r.type === 'response_item' && CODEX_CALL_TYPES.has(r.payload?.type))
+  .map((r) => r.payload);
 import { sha256Hex } from '../manifest.mjs';
 
 // The id Codex knows the plugin by (plugin@marketplace) — the registrations install it and
@@ -63,10 +71,72 @@ export class CodexHarness extends Harness {
     extract: (stdout) => stdout,
   });
   static traces = Object.freeze({
-    store: async ({ home }) => new (await import('../traces.mjs')).CodexTraceStore({ home, harness: this.harnessName }),
+    store: ({ home } = {}) => new CodexTraceStore({ home, harness: this.harnessName }),
     newest: (store) => store.newestRollout(),
-    projector: async ({ store }) => new (await import('../atif.mjs')).CodexAtifProjector({ store }),
+    projector: async ({ store }) => new (await import('./codex-rollout.mjs')).CodexAtifProjector({ store }),
     ownsPath: (file) => String(file).includes(`${path.sep}.codex${path.sep}`),
+    roster: CODEX_ROLLOUT_ROSTER,
+    kindOf: codexKindOf,
+    recent: (store, { days, maxFiles }) => store.recentRollouts({ days, maxFiles }),
+    // Harbor's converter for this harness (AgentName 'codex') reads a trial's rollouts from
+    // <logs_dir>/sessions — the mirror of ~/.codex/sessions (harbor 0.22.0, measured 2026-09-01).
+    harbor: Object.freeze({ agent: 'codex', sessions: Object.freeze({ home: '.codex/sessions', logs: 'sessions' }) }),
+    fidelity: makeFidelity({
+      // hasSource judges what the raw record actually ARGUES: a legitimately empty argument
+      // set (list_agents "{}" — and a single inner tools.x({}) call in exec source) projects
+      // empty faithfully; only a record that carries content demands the projection carry it.
+      rawCalls: async (entries) => {
+        const { ExecCallReader } = await import('./codex-rollout.mjs');
+        const reader = new ExecCallReader();
+        const hasContent = (v) => {
+          if (v == null) return false;
+          if (typeof v === 'string') return !['', '{}', '[]', 'null'].includes(v.trim());
+          return typeof v === 'object' ? Object.keys(v).length > 0 : Boolean(v);
+        };
+        return codexRawCalls(entries).map((p) => {
+          if (p.type === 'custom_tool_call' && typeof p.input === 'string' && p.input.trim() !== '') {
+            const inner = reader.read(p.input);
+            const single = inner.length === 1 && inner[0].args !== null ? inner[0] : null;
+            const argful = single
+              ? (typeof single.args === 'object' ? Object.keys(single.args).length > 0 : true)
+              : true; // multi-call or unparseable source projects as {input: raw} — never empty
+            return { id: p.call_id, hasSource: argful };
+          }
+          return { id: p.call_id, hasSource: hasContent(p.arguments) || hasContent(p.action) };
+        });
+      },
+      // Usage the record actually CARRIES: a token_count with info: null (a documented vendor
+      // state) owes the projection nothing.
+      hasRawTokens: (entries) => entries.some((r) => r.type === 'event_msg' && r.payload?.type === 'token_count' && r.payload.info?.last_token_usage),
+      // Applicability is a REAL act, not chatter: only an inner tools.<oathe verb>(...) call
+      // (or a composed function_call name) counts — a grep ABOUT oathe_claim is not a claim.
+      hasOatheActs: async (entries) => {
+        const [{ ExecCallReader }, { oatheVerbFor }] = await Promise.all([
+          import('./codex-rollout.mjs'), import('../oathe-annotator.mjs')]);
+        const reader = new ExecCallReader();
+        return codexRawCalls(entries).some((p) => {
+          if (p.type === 'custom_tool_call' && typeof p.input === 'string') {
+            return reader.read(p.input).some((call) => oatheVerbFor(call.tool) !== null);
+          }
+          if (!p.name) return false;
+          const composed = p.namespace ? `${p.namespace}__${String(p.name).replace(/^_/, '')}` : p.name;
+          return oatheVerbFor(composed) !== null;
+        });
+      },
+      childIds: (entries, trajectory, { store }) => store.childThreads(trajectory.session_id).map((c) => c.thread_id),
+      // The items that complete a call — the second source the cross-source probe checks.
+      rawItems: (entries) => entries
+        .filter((r) => r.type === 'event_msg' && r.payload?.type === 'item_completed' && CORRELATABLE_ITEMS.has(r.payload.item?.type))
+        .map((r) => ({ type: r.payload.item.type, id: r.payload.item.id })),
+      // Messages addressed TO this thread on the inter-agent bus (self = the spawn's agent
+      // path, else the root) — never this agent's own words.
+      inboundTexts: (entries) => {
+        const self = entries[0]?.payload?.source?.subagent?.thread_spawn?.agent_path ?? CODEX_ROOT_AGENT_PATH;
+        return entries
+          .filter((r) => r.type === 'response_item' && r.payload?.type === 'agent_message' && r.payload.recipient === self)
+          .map((r) => (r.payload.content ?? []).map((p) => p?.text ?? '').join('\n'));
+      },
+    }),
   });
   static docs = Object.freeze([
     'codex/mcp', 'codex/config-reference', 'codex/environment-variables', 'codex/agents-md', 'codex/hooks',

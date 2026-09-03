@@ -1,5 +1,5 @@
-// Shared test scaffolding: a sandbox HOME with both harnesses present (codex CLI faked to
-// mirror what the real one writes), and scratch-substrate helpers.
+// Shared test scaffolding: a sandbox HOME with every harness's config home and fake claude/codex
+// bins (the codex CLI faked to mirror what the real one writes), and scratch-substrate helpers.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -132,4 +132,19 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
   delete env.CLAUDE_PROJECT_DIR;
   delete env.CURSOR_PROJECT_DIR;
   return { home, bin, env, exec };
+}
+
+/**
+ * The codex thread-index lanes need node:sqlite. On any SUPPORTED runtime (engines.node
+ * >= 22.13.0, executed at the bin door by src/node-floor.mjs) it exists — so this never
+ * fires there; on a below-floor runner the codex lanes go RED with the floor named, never
+ * silently green (the silent `{ skip: NO_SQLITE }` hid the whole codex drift net, 2026-08-31).
+ */
+export function requireSqlite() {
+  if (typeof process.getBuiltinModule === 'function' && process.getBuiltinModule('node:sqlite')) return;
+  const err = new Error(
+    `node ${process.version} has no node:sqlite — oathe supports node >= 22.13.0 (package.json engines.node); `
+    + 'the codex trace lanes cannot be skipped on an unsupported runtime, only failed');
+  err.code = 'OATHE_TEST_RUNTIME_BELOW_FLOOR';
+  throw err;
 }

@@ -34,6 +34,19 @@ function fixture({ extraEnv = {} } = {}) {
   return { sb, cwd, manifest, registry, config, env };
 }
 
+test('activation never writes back a stale snapshot: a row another writer saved after this context loaded survives the activation (B4)', async () => {
+  const { cwd, manifest, registry, config, env } = fixture();
+  manifest.save(); // the context loaded (an empty manifest) at the server's first tool call…
+  const init = new InstallManifest({ manifestPath: manifest.manifestPath, backupsDir: manifest.backupsDir, clock: CLOCK });
+  init.upsert({ harness: 'claude', file: '/h/.claude/settings.json', kind: 'json-path', detail: { paths: [['a']] }, blockVersion: '0.4.1', sha256: 'x' });
+  init.save(); // …then `oathe init` ran in another process and recorded its wiring.
+  await activateWorkspace({ cwd, env, manifest, registry, config, version: '9.9.9', source: 'tool:oathe_claim' });
+  const onDisk = JSON.parse(fs.readFileSync(manifest.manifestPath, 'utf8')).rows;
+  assert.ok(onDisk.some((r) => r.harness === 'claude' && r.kind === 'json-path'), "init's row is still on disk after the long-lived context's activation");
+  assert.ok(onDisk.some((r) => r.kind === 'fence'), 'and the activation recorded its own fence rows');
+  assert.ok(manifest.rows.some((r) => r.harness === 'claude'), 'the context now sees the row it did not write');
+});
+
 test('activation writes the fence into every detected harness context file, records, and discloses', async () => {
   const { cwd, manifest, registry, config, env } = fixture();
   const out = await activateWorkspace({

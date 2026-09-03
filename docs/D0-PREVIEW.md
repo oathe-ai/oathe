@@ -80,3 +80,35 @@ enforcement phase's exit (staging record of 2026-08-22, §3.6; product-record de
     hunted vocabulary deliberately (internal docs-directory names, the session-link
     header), as does the `.gitignore` line keeping one such directory out of git. A
     scanner must name what it hunts; none of it references real sessions or documents.
+- **0.4.1 (recorded 2026-09-03).** The clean-machine loop and the marker sweep, re-run by the
+  release's final review on each of the four 0.4.1 cuts; the last cut is the one PR #32 carries.
+  - **Leg 1, the container** (`node:24-bookworm`, Debian Postgres, the packed tarball): install →
+    `oathe init` (ddl 28/28 from `vendor/ddl`) → status → claim → note → ls → done → `oathe verify`
+    refusing typed with no engine present → `oathe uninstall --purge-db` — `FRESH-MACHINE-LOOP-OK`
+    on every cut. One attempt never reached the tarball (the Debian mirror inside the container
+    did not answer); its retry passed.
+  - **The install door**, both sides, on every cut: `npm install -g` under node 22.3.0 exits 1 with
+    `ERROR_NODE_VERSION` and lands nothing but an empty `lib/`; under 24.14.0 it installs and
+    `oathe version` answers.
+  - **Leg 2, the founder's machine, from a fresh-user state** (every earlier install, wiring,
+    `~/.oathe`, the database and its role removed first): a fresh terminal, the tarball installed
+    under node 24.14.0, `oathe init` at the keyboard wiring Claude Code, Codex, Cursor and the
+    notch, `oathe doctor` clean on all ten manifest rows. Then the `/clear` check, the reason the
+    fourth cut exists: in one Claude Code process, served by one `oathe mcp` process that was never
+    restarted or reconnected, a claim spoken before a `/clear` was attributed to the first session
+    and linked its transcript; a claim spoken after the `/clear` was attributed to the session the
+    hook registered a minute later and linked that transcript; the verifier judged the second claim
+    against the second transcript and accepted, citing it. The speaker's session is a per-act fact.
+  - **Accepted marker-scan exceptions (0.4.1 sweep)**, beyond the 0.3.1 classes above, each judged
+    and kept on purpose: the in-tree scan now hunts any real user's home-directory path and the
+    founder's bare user name, so the sanitizer's synthetic users (`/Users/dev`, `/Users/x`,
+    `/Users/someone`) are exempt by name and appear throughout `tests/fixtures/` and the tests
+    that read them; `scripts/derive-trace-fixtures.mjs` and `scripts/marker-scan.mjs` carry the
+    patterns they hunt, and `tests/vendor-scripts.test.mjs` plants one hit per pattern; `.codex`
+    (the Codex integration's real file locations and the sanitized fixture layout) appears in the
+    docs, the tests, the fixtures, the corpus tools and, as `secrets.CODEX_API_KEY`, in the
+    live-contract workflow; `notch/make-app.sh` names `/Users/` in its own self-check. Build
+    intermediates (`notch/.build`) are skipped by both scans: every Mac build writes the
+    toolchain's home-relative paths into them, they are gitignored, and the shipped binary is
+    stripped and self-checked. Nothing in the tarball or the committed tree names a person, a
+    real home path, or a session.

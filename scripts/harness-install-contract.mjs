@@ -43,7 +43,7 @@ export function installedBin({ home }) {
  * detection sees it — a first launch would create it anyway), OATHE_HOME, a scratch database.
  * With `fromTarball`, the tree is PACKED and the tarball installed globally into the sandbox —
  * the lane then runs what a user would run, not the checkout: a file missing from the tarball
- * (the marketplace manifest, once) can no longer pass here.
+ * cannot pass here.
  */
 export function sandboxEnv({ harness, base = process.env, fromTarball = false }) {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `oathe-install-contract-${harness}-`)));

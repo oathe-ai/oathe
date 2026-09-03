@@ -12,7 +12,7 @@ import { sandbox } from './helpers.mjs';
 const paths = buildPaths({});
 const pkg = JSON.parse(fs.readFileSync(path.join(paths.packageRoot, 'package.json'), 'utf8'));
 
-// Both harnesses' hook event vocabularies (Claude docs + Codex source, 2026-08-25 research pass).
+// The Claude Code and Codex hook event vocabularies (Claude docs + Codex source, 2026-08-25 research pass).
 const CLAUDE_EVENTS = ['SessionStart', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'UserPromptSubmit',
   'Stop', 'StopFailure', 'SubagentStop', 'PreCompact', 'Notification'];
 const CODEX_EVENTS = ['SessionStart', 'SessionEnd', 'SubagentStart', 'SubagentStop', 'PreToolUse',
@@ -33,7 +33,7 @@ test('the package-root marketplace lists the plugin at a relative source (serves
   assert.deepEqual(marketplace.plugins.map((p) => [p.name, p.source]), [['oathe', './plugin']]);
 });
 
-test('hooks.json uses only events BOTH harnesses know, with plugin-root commands and timeouts', () => {
+test('hooks.json uses only events Claude Code and Codex both know, with plugin-root commands and timeouts', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(paths.pluginDir, 'hooks/hooks.json'), 'utf8')).hooks;
   const events = Object.keys(hooks);
   assert.deepEqual(events.sort(), ['PreCompact', 'SessionStart', 'Stop'].sort());
@@ -98,7 +98,7 @@ test('the .cursor-plugin manifest adapter mirrors the plugin: version-locked, in
 const SCRATCH_DB = `oathe_plugin_test_${process.pid}`;
 let substrate;
 
-// Hooks fire in EVERY session now (the launch gate died with the one-click decision) — so the
+// Hooks fire in EVERY session — so the
 // hook env is a SANDBOX home: activation's registry/manifest/fence writes land there, never in
 // the developer's real ~/.oathe or ~/.claude.
 const hookSb = sandbox({ scratchDb: SCRATCH_DB });
@@ -245,7 +245,7 @@ test('R-QUIET: breaches PUSH — a breached promise is the one thing that speaks
 
 /**
  * The row describes THE HARNESS PROCESS: the hook walks up from its ppid to the nearest
- * adapter-owned ancestor (cursor-agent interposes a short-lived /bin/zsh — registering the
+ * adapter-owned ancestor (Cursor's agent CLI interposes a short-lived /bin/zsh — registering the
  * shell would sweep the session when it exits), else keeps the ppid. The expectation is
  * computed with the same public helpers the hook uses; the helpers themselves are pinned
  * by the process-identity fixtures in harness-contract.
@@ -303,6 +303,52 @@ test('heartbeat beats the session row — last_seen_at moves, registered_at and 
     assert.equal(after.registered_at, before.registered_at, 'first-writer facts stay');
     assert.deepEqual(after.ancestry, before.ancestry);
     assert.ok(after.last_seen_at >= before.last_seen_at, 'the beat moved last_seen_at');
+    // The transcript this fixture names does not exist: the hook still exits 0 (fail-soft
+    // surface) but says WHY it linked nothing, typed — an annotator or store bug is never
+    // swallowed into silence.
+    assert.match(out.stderr, /\[TRACE_UNREADABLE\]/, 'the typed reason reaches stderr');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a RESUMED session links the transcript it actually writes: the hook is told <new-id>.jsonl, the rows live in the original — the registry and the trace link name the original', async () => {
+  // Measured live 2026-09-01: after `claude --resume` (and after a compaction) the harness
+  // rotates session_id and reports transcript_path=<new-id>.jsonl, but keeps appending to the
+  // original file, stamping the new rows with session_id. The ghost path killed verification
+  // at the evidence stage (TRACE_UNREADABLE) for every claim spoken in a resumed session.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-resume-'));
+  const projectDir = path.join(hookSb.env.HOME, '.claude', 'projects', 'resume-x');
+  fs.mkdirSync(projectDir, { recursive: true });
+  const fileId = '12121212-3434-5656-7878-909090909090';
+  const original = path.join(projectDir, `${fileId}.jsonl`);
+  const resumed = 'sess-resumed-1';
+  fs.writeFileSync(original, [
+    { type: 'user', uuid: 'u1', parentUuid: null, sessionId: fileId, session_id: resumed, cwd: dir, message: { role: 'user', content: 'claim it' } },
+    { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: fileId, session_id: resumed, cwd: dir,
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'mcp__oathe__oathe_claim', input: { task_id: 'resumed-task', objective: 'linked after a resume' } }] } },
+    { type: 'user', uuid: 'u2', parentUuid: 'a1', sessionId: fileId, session_id: resumed, cwd: dir,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: '{"claimed":true}' }] } },
+  ].map((r) => JSON.stringify(r)).join('\n'));
+  try {
+    const { workspaceRef } = await import('../src/workspace.mjs');
+    await substrate.query(`
+      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan, verify_by, claim_mode, created_at)
+      VALUES ('oathe', 'resumed-task', 'founder', 'linked after a resume', 'minted_at_claim',
+              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
+    await substrate.query(
+      `SELECT cell.claim_work('oathe', 'resumed-task', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
+              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
+      [`workspace:${workspaceRef(dir)};contract:oathe/resumed-task@v1`]);
+    const ghost = path.join(projectDir, `${resumed}.jsonl`);
+    const out = runHook('heartbeat.mjs', { cwd: dir, hook_event_name: 'Stop', session_id: resumed, transcript_path: ghost },
+      { OATHE_PRINCIPAL: 'founder' });
+    assert.equal(out.status, 0, out.stderr);
+    const row = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'sessions.json'), 'utf8')).sessions[resumed];
+    assert.equal(row.transcript_path, original, 'the registry holds the file the session writes, not the one it was told');
+    const { rows } = await substrate.query(
+      "SELECT evidence_refs FROM cell.agent_statement WHERE task_id = 'resumed-task' AND subject_ref = $1", [`trace:${resumed}`]);
+    assert.deepEqual(rows.map((r) => r.evidence_refs), [[original]], 'the trace link names a file a verifier can read');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -495,10 +541,10 @@ test('heartbeat links traces for ASSERTED claims too — claim-and-done inside o
 });
 
 // -------------------------------------- activation: opening a session on a folder ACTIVATES it
-// The launch gate died with the one-click decision (founder, 2026-08-28): hooks fire in every
-// session, SessionStart registers the workspace centrally and writes the context-file fences
-// through the ONE activation writer, and DISCLOSES what it wrote. OATHE_LAUNCHED_HARNESS is a
-// custody marker only. (The old silent-noop tests are superseded, deleted deliberately.)
+// The one-click decision (founder, 2026-08-28): hooks fire in every session, SessionStart
+// registers the workspace centrally and writes the context-file fences through the ONE
+// activation writer, and DISCLOSES what it wrote. OATHE_LAUNCHED_HARNESS is a custody marker
+// only.
 
 test('render-board ACTIVATES: registry row, fences on disk, and the write disclosed in both channels', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-activate-'));
@@ -855,6 +901,42 @@ test('OATHE_HOOK_CAPTURE_DIR makes a hook write its RAW stdin payload before nor
     const quiet = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-capture-off-'));
     runHook('render-board.mjs', payload);
     assert.equal(fs.readdirSync(quiet).length, 0, 'nothing is captured unless asked');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Forty claims left behind outrank every later render's quiet claim under the cap, and the
+// claim rows fan out into more tables than a test should know: this one runs last.
+test('UX rule 18 at session start: forty quiet claims are ONE push line, eight context rows and a +N more — never a wall', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-budget-'));
+  try {
+    for (let i = 0; i < 40; i++) {
+      const id = `budget-${String(i).padStart(2, '0')}`;
+      await substrate.query(`
+        INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                               verify_by, claim_mode, created_at)
+        VALUES ('oathe', $1, 'founder', 'one of forty', 'minted_at_claim',
+                '{"plan_status":"unknown"}'::jsonb, now() + interval '7 days', 'exclusive', now())`, [id]);
+      await substrate.query(
+        `SELECT cell.claim_work('oathe', $1, gen_random_uuid(), NULL, NULL, 'founder', 'founder',
+                'exclusive', now() + interval '4 hours', $2, now() - interval '2 hours', gen_random_uuid())`,
+        [id, `workspace:ws-000000000000;contract:oathe/${id}@v1`]);
+    }
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
+      { OATHE_PRINCIPAL: 'founder', OATHE_PAGER_QUIET_HOURS: '1' });
+    assert.equal(out.status, 0, out.stderr);
+    const payload = JSON.parse(out.stdout);
+    // Other renders' quiet claims page too under this threshold: the count is whatever is
+    // true, the budget is the rows.
+    // The first render of a fresh folder also discloses its activation on a second line.
+    const total = Number(payload.systemMessage.split('\n')[0].match(/^(\d+) gone quiet$/)?.[1]);
+    assert.ok(total >= 40, `the push is the whole count in one line: ${payload.systemMessage}`);
+    const section = payload.hookSpecificOutput.additionalContext.slice(
+      payload.hookSpecificOutput.additionalContext.indexOf('## Breached promises'));
+    assert.equal(section.split('\n').filter((l) => l.startsWith('- [')).length, 8, 'eight rows');
+    assert.match(section, new RegExp(`^_\\+${total - 8} more — oathe_board lists every breach on this board; \`oathe ls\` every one on this machine_$`, 'm'));
+    assert.ok(Buffer.byteLength(section) < 4096, `a budget, not a wall: ${Buffer.byteLength(section)} bytes`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

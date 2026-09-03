@@ -1,5 +1,5 @@
 {
-  "description": "Oathe session lifecycle: the board at SessionStart, lease heartbeat at Stop, frame note before compaction. Same three events exist verbatim in Claude Code and Codex. Commands go through the oathe bin on PATH \u2014 the plugin is cached by copy in both harnesses, so the tree carries no paths.",
+  "description": "Oathe session lifecycle: the board at SessionStart, lease heartbeat at Stop, frame note before compaction. Same three events exist verbatim in Claude Code and Codex. Commands go through the oathe bin on PATH \u2014 the plugin is cached by copy in Claude Code and Codex, so the tree carries no paths.",
   "hooks": {
     "SessionStart": [
       {

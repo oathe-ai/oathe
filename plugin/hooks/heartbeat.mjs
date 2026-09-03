@@ -5,9 +5,11 @@
 // packet 2026-08-26); the horizon is set at claim time by the substrate's claim verb.
 
 import { linkTrace } from '../../src/statements.mjs';
+import { homeOf } from '../../src/paths.mjs';
 import { failSoft, ensureSessionRegistered } from './lib.mjs';
-import { claimIntervals } from '../../src/atif.mjs';
-import { projectorFor } from '../../src/harnesses/catalog.mjs';
+import { claimIntervals, AtifError } from '../../src/atif.mjs';
+import { TraceContractError } from '../../src/traces.mjs';
+import { projectAnnotated } from '../../src/oathe-annotator.mjs';
 
 await failSoft(async ({ substrate, identity, session, paths, workspace }) => {
   // The session's liveness signal — independent of trace linkage (a planning-only session
@@ -20,10 +22,17 @@ await failSoft(async ({ substrate, identity, session, paths, workspace }) => {
   // a planning-only session leaves no claim evidence.
   let touched;
   try {
-    const trajectory = (await projectorFor(session.transcriptPath)).project(session.transcriptPath);
+    const trajectory = await projectAnnotated(session.transcriptPath, { home: homeOf(process.env) });
     touched = new Set(claimIntervals(trajectory).map((i) => i.task_id));
-  } catch {
-    return; // fail-soft: an unreadable or unprojectable trace attributes nothing
+  } catch (e) {
+    // An unreadable or unprojectable trace attributes nothing — said, typed, on stderr (the
+    // sanctioned fail-soft surface still reports visibly). Anything else is a bug and reaches
+    // failSoft loud, never swallowed into silence.
+    if (e instanceof AtifError || e instanceof TraceContractError) {
+      process.stderr.write(`oathe hook: heartbeat linked nothing [${e.code}] ${String(e.message).slice(0, 200)}\n`);
+      return;
+    }
+    throw e;
   }
   if (touched.size === 0) return;
   // Linkage covers ASSERTED claims too: a claim taken and completed inside a single turn has

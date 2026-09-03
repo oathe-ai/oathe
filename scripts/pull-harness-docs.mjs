@@ -56,7 +56,7 @@ export const DOC_SOURCES = Object.freeze([
   { harness: 'cursor', slug: 'rules', url: 'https://cursor.com/docs/rules.md' },
   { harness: 'cursor', slug: 'cli-mcp', url: 'https://cursor.com/docs/cli/mcp.md' },
   { harness: 'cursor', slug: 'cli-configuration', url: 'https://cursor.com/docs/cli/reference/configuration.md' },
-  // Cursor CLI (`agent` / `cursor-agent`, installed on the founder machine 2026-08-29): the
+  // Cursor CLI (`agent`; its installer also leaves a `cursor-agent` symlink, 2026-08-29): the
   // pages a CI drift lane depends on — install, headless mode, auth, output shape, GitHub Actions.
   { harness: 'cursor', slug: 'cli-overview', url: 'https://cursor.com/docs/cli/overview.md' },
   { harness: 'cursor', slug: 'cli-installation', url: 'https://cursor.com/docs/cli/installation.md' },

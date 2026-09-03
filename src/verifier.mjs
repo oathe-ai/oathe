@@ -9,7 +9,7 @@
 //   → gather the record: objective, frozen plan, completion statement, linked traces (fan-out
 //     derived at read time; a trace that fails the contract REFUSES — never less evidence
 //     than the claim recorded)
-//   → one headless engine run (claude|codex, assigned at claim time) → strict JSON verdict
+//   → one headless engine run (any verifier-capable adapter, assigned at claim time) → strict JSON verdict
 //   → the verdict lands as the verification task's completion statement (durable, addressable)
 //   → the acceptance lane settles the ORIGINAL claim: seat = verifier principal (FC010: not
 //     the author), checker = 'oathe-verdict' (deterministic: the standard conditions PLUS the
@@ -22,10 +22,10 @@
 // PROVENANCE; the judgment quality is the engine's, and the linked traces exist precisely so
 // that judgment stays auditable.
 
-import { isTraceSubjectSql } from './statements.mjs';
+import { isTraceSubjectSql, TRACE_SUBJECT_PREFIX } from './statements.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
-import { amendSubjectRef, engineFailureRef } from './statements.mjs';
+import { amendSubjectRef, engineFailureRef, evidenceFailureRef } from './statements.mjs';
 import { emit as wireEmit } from './wire.mjs';
 import { WorkspaceRegistry } from './registry.mjs';
 import { homeOf } from './paths.mjs';
@@ -33,7 +33,8 @@ import { HomeBoard } from './home.mjs';
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
 import { renderEvidenceView, sliceForTask } from './atif.mjs';
-import { projectorFor } from './harnesses/catalog.mjs';
+import { transcriptFor } from './harnesses/catalog.mjs';
+import { projectAnnotated } from './oathe-annotator.mjs';
 import { verificationTaskId, isVerificationTask, ACCEPTANCE_CLAUSE_KEY } from './plans.mjs';
 import { RECORDED_VERDICT_CHECKER } from './runtime/discharge.mjs';
 
@@ -56,7 +57,8 @@ export class Verifier {
    *          config: import('./config.mjs').OatheConfig, operatorPrincipal: string,
    *          engineRunner?: ({engine, prompt}) => Promise<{verdict: string, reason: string}>}} o
    */
-  constructor({ substrate, paths, workspace, config, operatorPrincipal, engineRunner, provider = null, homePathFor = null }) {
+  constructor({ substrate, paths, workspace, config, operatorPrincipal, engineRunner, provider = null, homePathFor = null, env = process.env }) {
+    this.env = env; // the store home follows the RUN's env — a rebound HOME (cage, sandbox) must read the store the hooks wrote
     this.substrate = substrate;
     this.paths = paths;
     this.workspace = workspace;
@@ -123,8 +125,14 @@ export class Verifier {
       [this.orgId, workClaimId]);
     const traces = [];
     for (const row of rows) {
-      for (const file of row.evidence_refs) {
-        traces.push({ path: file, trajectory: (await projectorFor(file)).project(file) });
+      // The file the session's rows LIVE in: a link spoken from a resumed session names the
+      // transcript the harness reported and never wrote — the store resolves it from the rows
+      // that carry the session id (transcriptFor); a file nothing carries stays as recorded
+      // and refuses below, loudly.
+      const sessionId = row.subject_ref.slice(TRACE_SUBJECT_PREFIX.length);
+      for (const ref of row.evidence_refs) {
+        const file = transcriptFor({ sessionId, reportedPath: ref, home: homeOf(this.env) });
+        traces.push({ path: file, trajectory: await projectAnnotated(file, { home: homeOf(this.env) }) });
       }
     }
     return traces;
@@ -137,8 +145,9 @@ export class Verifier {
       'You are a verification agent. Judge ONE question: do the recorded ACTIONS and OUTCOMES',
       'support the completion assertion? In the trace views below, SAID lines are the agent\'s',
       'own claims; CLAIM lines are its on-the-record speech acts; DID lines are the actions it',
-      'actually took; GOT lines are what actually came back. Judge claims against actions and',
-      'outcomes — be strict: absence of evidence is absence.',
+      'actually took; GOT lines are what actually came back; FROM lines are messages other agents sent',
+      'this one (a delegated brief, a subagent\'s answer) — never this agent\'s own claims. Judge',
+      'claims against actions and outcomes — be strict: absence of evidence is absence.',
       'You are running in the task\'s workspace — check asserted artifacts against the files on disk.',
       '',
       `TASK: ${taskId}`,
@@ -184,14 +193,15 @@ export class Verifier {
     const vclaim = await this.tools.oathe_claim({ task_id: verificationTask });
 
     // 2-3. EVERYTHING between the claim and a durable verdict runs under the release
-    // guard (ruling 2026-08-31: ANY exit before a verdict fails loud and frees the claim
-    // — an unreadable trace once killed a run OUTSIDE the old engine-only guard and left
-    // the twin wedged behind its lease, caught live). Evidence-gathering and the engine
-    // fail the same way: durable statement, yield, verify_failed on the wire.
+    // guard (ruling 2026-08-31: ANY exit before a verdict fails loud and frees the claim —
+    // an exit outside the guard, an unreadable trace say, would leave the twin wedged
+    // behind its lease). Evidence-gathering and the engine fail the same way: durable
+    // statement, yield, verify_failed on the wire.
     let raw;
     let completion;
     let taskRows;
     let traces;
+    let engineLaunched = false;
     try {
       completion = await this.#completionStatement(originalTask);
       ({ rows: taskRows } = await this.substrate.query(
@@ -209,6 +219,7 @@ export class Verifier {
           WHERE org_id = $1 AND task_id = $2 AND subject_ref = $3
           ORDER BY asserted_at`,
         [this.orgId, originalTask, amendSubjectRef(originalTask)]);
+      engineLaunched = true;
       raw = await this.engineRunner({
         engine,
         cwd: taskHome,
@@ -220,16 +231,23 @@ export class Verifier {
           + `{verdict: ${VERDICTS.join('|')}, reason} and the lane never guesses`, { raw, engine });
       }
     } catch (e) {
+      // One guard, two honest stalls (the 2026-08-31 pileup): an unreadable record fails
+      // every engine alike, so only an engine-stage death may advise trying another one.
+      const msg = String(e?.message ?? e).slice(0, 400);
+      const stall = engineLaunched
+        ? { proposition: `engine ${engine} failed before a verdict: ${msg}`,
+            ref: engineFailureRef(engine),
+            note: `engine ${engine} died — released for retry: oathe verify ${originalTask} --engine <another>` }
+        : { proposition: `gathering evidence failed before the ${engine} engine launched: ${msg}`,
+            ref: evidenceFailureRef(e?.code),
+            note: `the record could not be read — fix the cause and retry: oathe verify ${originalTask}` };
       try {
         await this.tools.oathe_statement({
           task_id: verificationTask,
-          proposition: `engine ${engine} failed before a verdict: ${String(e?.message ?? e).slice(0, 400)}`,
-          evidence_ref: engineFailureRef(engine),
+          proposition: stall.proposition,
+          evidence_ref: stall.ref,
         });
-        await this.tools.oathe_yield({
-          task_id: verificationTask,
-          note: `engine ${engine} died — released for retry: oathe verify ${originalTask} --engine <another>`,
-        });
+        await this.tools.oathe_yield({ task_id: verificationTask, note: stall.note });
       } catch { /* best-effort release — the primary failure must surface either way */ }
       // The glass hears the failure too (fail-soft inside emit): named by the ORIGINAL
       // task — the row a person is looking at — so retry is one act, not archaeology.

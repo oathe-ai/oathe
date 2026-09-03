@@ -18,6 +18,7 @@ import {
   ownerOfTracePath, traceStores, verifierCapable, verifiers, wireable,
 } from '../src/harnesses/catalog.mjs';
 import { DOC_SOURCES } from '../scripts/pull-harness-docs.mjs';
+import { ORIGIN_KINDS } from '../src/harnesses/claude-roster.mjs';
 import { sandbox } from './helpers.mjs';
 
 const FIXTURES_DIR = fileURLToPath(new URL('./fixtures/hooks', import.meta.url));
@@ -57,7 +58,7 @@ test('identity facts: every entry declares them (null where a fact does not appl
   }
 });
 
-test('capability roll-call: each capability is a frozen object with its contract, or null — and the old flags are GONE', () => {
+test('capability roll-call: each capability is a frozen object with its contract, or null', () => {
   for (const C of HARNESS_CLASSES) {
     const n = C.harnessName;
     assert.ok(C.wiring === null || typeof C.wiring.needsCli === 'boolean', `${n}: wiring is null or {needsCli}`);
@@ -65,7 +66,12 @@ test('capability roll-call: each capability is a frozen object with its contract
     assert.ok(C.launch === null || (typeof C.launch.splash === 'boolean' && typeof C.launch.bin === 'string'),
       `${n}: launch is null or {splash, bin} — the adapter names its OWN binary, never the harness name assumed`);
     assert.ok(C.headless === null || (Array.isArray(C.headless.auth) && isFn(C.headless.command) && isFn(C.headless.extract)), `${n}: headless is null or {auth, command, extract}`);
-    assert.ok(C.traces === null || (isFn(C.traces.store) && isFn(C.traces.newest) && isFn(C.traces.projector) && isFn(C.traces.ownsPath)), `${n}: traces is null or {store, newest, projector, ownsPath}`);
+    assert.ok(C.traces === null || (isFn(C.traces.store) && isFn(C.traces.newest) && isFn(C.traces.recent) && isFn(C.traces.projector) && isFn(C.traces.ownsPath)
+      && typeof C.traces.roster === 'object' && Object.isFrozen(C.traces.roster) && isFn(C.traces.kindOf)
+      && typeof C.traces.fidelity === 'object' && Object.isFrozen(C.traces.fidelity)
+      && 'harbor' in C.traces && (C.traces.harbor === null || (typeof C.traces.harbor.agent === 'string'
+        && typeof C.traces.harbor.sessions?.home === 'string' && typeof C.traces.harbor.sessions?.logs === 'string'))),
+    `${n}: traces is null or {store, newest, recent, projector, ownsPath, roster, kindOf, fidelity, harbor} — harbor names the reference converter and where it reads sessions, or is null`);
     assert.ok(C.surfaces === null || (isFn(C.surfaces.ownsExec) && isFn(C.surfaces.name)), `${n}: surfaces is null or {ownsExec, name}`);
     for (const flag of ['engine', 'wireable', 'launchable', 'splashOnLaunch', 'hookDialect', 'verifierCommand', 'extractVerifierText', 'traceStore', 'newestTrace', 'atifProjector']) {
       assert.equal(C[flag], undefined, `${n}: the flag/static '${flag}' must not exist — ask the capability`);
@@ -84,6 +90,114 @@ test('the GOLDEN capability table — the definition of a supported harness; a r
     cowork: { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: true },
     'chatgpt-web': { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: false },
   });
+});
+
+test('the GOLDEN payload roster — every trace row type is handled or CONSCIOUSLY ignored, per engine; a new type is a reviewed row change', () => {
+  // Rows measured over the 40 most recent real rollouts/transcripts on 2026-08-31 (codex CLI
+  // 0.149–0.150, Claude Code 2.1.x). `handled` types project; `ignored` types were seen,
+  // judged non-evidence, and each carries its reason; anything else quarantines visibly at
+  // projection and fails the census lane as DRIFT.
+  assert.deepEqual(byName('codex').traces.roster, {
+    line: {
+      handled: ['session_meta', 'response_item', 'event_msg', 'turn_context', 'compacted'],
+      ignored: {
+        world_state: 'environment snapshot — context machinery, not agent actions',
+        inter_agent_communication_metadata: 'fan-out routing metadata ({trigger_turn} only) — the sqlite spawn edges and the SubAgentActivity items carry the fact',
+      },
+    },
+    response_item: {
+      handled: ['message', 'agent_message', 'reasoning', 'function_call', 'local_shell_call',
+        'custom_tool_call', 'function_call_output', 'custom_tool_call_output',
+        'tool_search_call', 'tool_search_output', 'compaction'],
+      ignored: {},
+    },
+    event_msg: {
+      handled: ['token_count', 'item_completed'],
+      ignored: {
+        task_started: 'turn lifecycle marker — response_item is ground truth (docs/traces.md)',
+        task_complete: 'turn lifecycle marker — response_item is ground truth',
+        thread_settings_applied: 'settings bookkeeping, not agent action',
+        user_message: 'nudge-channel duplicate of the response_item user message',
+        agent_message: 'nudge-channel duplicate of the response_item agent message',
+        agent_reasoning: 'nudge-channel duplicate of the response_item reasoning row',
+        turn_aborted: 'turn lifecycle marker — the absence of further items already shows it',
+      },
+    },
+    // The typed item stream (item_completed.item.type) — the vendor's own decode of what the
+    // exec source wraps, plus lifecycle facts that exist nowhere else. Measured 2026-09-01:
+    // 100% of cli/exec/child rollouts carry it (8/14 vscode) — enrichment, never the spine.
+    item: {
+      handled: ['CommandExecution', 'McpToolCall', 'FileChange', 'SubAgentActivity', 'Extension'],
+      ignored: {
+        Reasoning: 'the response_item reasoning row is the fact (encrypted either way)',
+        AgentMessage: 'the response_item message row is the fact',
+        UserMessage: 'the response_item user message row is the fact',
+        CollabAgentToolCall: 'the collaboration function_call and its output are the fact; the item repeats them',
+        ContextCompaction: 'the compacted line row is the fact',
+        DynamicToolCall: 'a dynamic tool call rides its own function_call/output pair',
+        Plan: 'a plan update is the agent\'s own words, carried by the message row',
+        ImageView: 'an image view is a read, not an action the record claims',
+      },
+    },
+  });
+  assert.deepEqual(byName('claude').traces.roster, {
+    line: {
+      handled: ['user', 'assistant', 'system', 'ai-title', 'file-history-snapshot'],
+      ignored: {
+        'last-prompt': 'editor bookkeeping, not conversation',
+        mode: 'UI mode marker',
+        'permission-mode': 'UI mode marker',
+        'atis-latch': 'harness-internal latch',
+        'bridge-session': 'harness-internal session bridging',
+        attachment: 'attachment bookkeeping — the message rows carry the content',
+        'queue-operation': 'queue bookkeeping',
+        // The nine the first live census surfaced (measured 2026-09-01) — the reviewed-row
+        // process working: each ignored type carries its reason.
+        'agent-name': 'agent naming bookkeeping, not conversation',
+        'agent-setting': 'agent settings bookkeeping',
+        'artifact-autoreact-ledger': 'artifact auto-reply bookkeeping',
+        'artifact-comment-monitor': 'artifact comment-watch bookkeeping',
+        'cost-state': 'usage accounting snapshot',
+        'custom-title': 'user-set display title (ai-title is the handled title row)',
+        'file-history-delta': 'incremental sibling of file-history-snapshot — inter-snapshot bookkeeping',
+        'frame-link': 'session frame linkage bookkeeping',
+        'pr-link': 'PR linkage bookkeeping',
+      },
+    },
+  });
+  // Claude's origin.kind table — measured over the 40 newest transcripts (2026-09-01: human
+  // 417, task-notification 262, auto-continuation 1, peer 1; absent = tool-result rows): which
+  // user rows are the person's and which the harness's. An unknown kind quarantines visibly.
+  assert.deepEqual(ORIGIN_KINDS, { human: 'user', 'task-notification': 'system', peer: 'system', 'auto-continuation': 'system' });
+  // The fidelity probes — the census lane's raw-vs-projection checks; one set, every trace-store engine.
+  assert.deepEqual(Object.keys(byName('codex').traces.fidelity),
+    ['tool-call-args', 'token-metrics', 'claim-events', 'subagent-embedding', 'cross-source', 'attribution']);
+  assert.deepEqual(Object.keys(byName('claude').traces.fidelity),
+    ['tool-call-args', 'token-metrics', 'claim-events', 'subagent-embedding', 'cross-source', 'attribution']);
+  // kindOf is the census classifier: one parsed row → its roster coordinate.
+  const codexKind = byName('codex').traces.kindOf;
+  assert.deepEqual(codexKind({ type: 'response_item', payload: { type: 'custom_tool_call' } }),
+    { channel: 'response_item', type: 'custom_tool_call' });
+  assert.deepEqual(codexKind({ type: 'turn_context', payload: {} }), { channel: 'line', type: 'turn_context' });
+  assert.deepEqual(codexKind({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'McpToolCall' } } }),
+    { channel: 'item', type: 'McpToolCall' }, 'an item_completed row is classified by the item it completes');
+  assert.deepEqual(byName('claude').traces.kindOf({ type: 'assistant' }), { channel: 'line', type: 'assistant' });
+});
+
+test('the roster and docs/traces.md are held CLOSED against each other — no upstream page exists, so the doc is the pin', async () => {
+  const fs = await import('node:fs');
+  const doc = fs.readFileSync(new URL('../docs/traces.md', import.meta.url), 'utf8');
+  for (const harness of ['codex', 'claude']) {
+    for (const [channel, lane] of Object.entries(byName(harness).traces.roster)) {
+      for (const type of [...lane.handled, ...Object.keys(lane.ignored)]) {
+        assert.ok(doc.includes(`\`${type}\``),
+          `${harness} roster ${channel}.${type} is not in docs/traces.md — the declared contract and the pinned doc drifted apart`);
+      }
+    }
+  }
+  for (const kind of Object.keys(ORIGIN_KINDS)) {
+    assert.ok(doc.includes(`\`${kind}\``), `claude origin.kind '${kind}' is not in docs/traces.md`);
+  }
 });
 
 test('every process-identity fixture names through exactly the owning adapter — exec paths and bundles as pinned', async () => {
@@ -142,13 +256,13 @@ test('detection is STRUCTURED — presence {app, cli, configHome}; installed is 
   assert.equal(seen.claude.installed, true); assert.equal(seen.claude.presence.cli, true);
   assert.equal(seen.codex.installed, true);
   assert.equal(seen.cursor.installed, true, 'the IDE alone (config home) installs cursor');
-  assert.equal(seen.cursor.presence.cli, false, '…but the sandbox has no cursor-agent on PATH');
+  assert.equal(seen.cursor.presence.cli, false, '…but the sandbox has no agent on PATH');
   assert.equal(seen['chatgpt-web'].installed, false);
   assert.equal(typeof seen.cowork.presence.app, 'boolean');
   const noBins = Object.fromEntries(buildAll({ home, envPath: '/nonexistent', paths, exec }).map((h) => [h.name, h.detect()]));
   assert.equal(noBins.claude.installed, false, 'claude needs its CLI');
   assert.equal(noBins.claude.presence.configHome, path.join(home, '.claude'));
-  const cursorBin = fakeBin('cursor-agent');
+  const cursorBin = fakeBin('agent');
   const cursorCli = new (byName('cursor'))({ home, envPath: cursorBin, paths, exec }).detect();
   assert.equal(cursorCli.presence.cli, true);
 });
@@ -170,8 +284,8 @@ test('headless: one command spelling per harness, model optional, extraction per
   assert.deepEqual(byName('claude').headless.command('do it', 'opus'), ['claude', ['-p', 'do it', '--output-format', 'json', '--model', 'opus']]);
   assert.deepEqual(byName('codex').headless.command('do it', null), ['codex', ['exec', '--skip-git-repo-check', 'do it']]);
   assert.deepEqual(byName('codex').headless.command('do it', 'o5'), ['codex', ['exec', '--skip-git-repo-check', '-m', 'o5', 'do it']]);
-  assert.deepEqual(byName('cursor').headless.command('do it', null), ['cursor-agent', ['-p', 'do it', '--trust', '--output-format', 'json']]);
-  assert.deepEqual(byName('cursor').headless.command('do it', 'm'), ['cursor-agent', ['-p', 'do it', '--trust', '--output-format', 'json', '--model', 'm']]);
+  assert.deepEqual(byName('cursor').headless.command('do it', null), ['agent', ['-p', 'do it', '--trust', '--output-format', 'json']]);
+  assert.deepEqual(byName('cursor').headless.command('do it', 'm'), ['agent', ['-p', 'do it', '--trust', '--output-format', 'json', '--model', 'm']]);
   assert.equal(byName('claude').headless.extract('{"result": "the text"}'), 'the text');
   assert.throws(() => byName('claude').headless.extract('not json'), /did not return JSON/);
   assert.equal(byName('codex').headless.extract('raw text out'), 'raw text out');
@@ -261,7 +375,35 @@ test('DRIFT: every declared doc page exists in the snapshot sources, and every s
 test('install facts: how a fresh runner gets each REAL CLI', () => {
   assert.deepEqual(byName('claude').install, { npm: '@anthropic-ai/claude-code', bin: 'claude', versionArgs: ['--version'] });
   assert.deepEqual(byName('codex').install, { npm: '@openai/codex', bin: 'codex', versionArgs: ['--version'] });
-  assert.deepEqual(byName('cursor').install, { installer: 'curl https://cursor.com/install -fsS | bash', bin: 'cursor-agent', versionArgs: ['--version'] });
+  assert.deepEqual(byName('cursor').install, { installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'] });
+});
+
+test('the declared binary is the one the pinned install docs verify with — a renamed CLI cannot drift silently', (t) => {
+  // A CLI installed by the vendor's own script (`install.installer`) is named by that vendor,
+  // not by an npm package's bin — so the adapter's install.bin must be the command one of its
+  // own pinned pages tells the user to run after installing (`<bin> --version`). Read from the
+  // snapshot, never the web. npm-installed CLIs are held by the install-contract lane instead.
+  const snapshot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.harness-docs');
+  if (!fs.existsSync(snapshot)) return t.skip('no .harness-docs snapshot on this machine (npm run pull-harness-docs)');
+  const verifiesWith = (bin) => new RegExp(`(^|[\\s\`])${bin} --version`, 'm');
+  for (const C of HARNESS_CLASSES) {
+    if (!C.install?.installer) continue;
+    const pages = C.docs.filter((d) => fs.existsSync(path.join(snapshot, `${d}.md`)));
+    assert.ok(pages.length > 0, `${C.harnessName}: its pinned pages are in the snapshot`);
+    assert.ok(pages.some((d) => verifiesWith(C.install.bin).test(fs.readFileSync(path.join(snapshot, `${d}.md`), 'utf8'))),
+      `${C.harnessName}: a pinned page verifies the install with '${C.install.bin} --version' — the declared binary follows the vendor's docs`);
+  }
+  return undefined;
+});
+
+test("cursor's ancestry match takes the CLI by either name on disk: `agent`, and `cursor-agent`, the executable it links to", () => {
+  const owns = byName('cursor').surfaces.ownsExec;
+  assert.equal(owns('/Users/x/.local/bin/agent'), true, 'the documented command');
+  assert.equal(owns('/Users/x/.local/share/cursor-agent/versions/2026.08.25-3e8eec8/cursor-agent'), true, 'the versioned executable behind the symlink');
+  assert.equal(owns('/Users/x/.local/bin/cursor-agent'), true, "the installer's legacy symlink");
+  assert.equal(owns('/Applications/Cursor.app/Contents/MacOS/Cursor'), true, 'the IDE');
+  assert.equal(owns('/usr/local/bin/cursor'), false, "the IDE's shell launcher is not the CLI");
+  assert.equal(owns('/usr/local/bin/node'), false);
 });
 
 test('every hook fixture normalizes through exactly the dialect its adapter declares', () => {

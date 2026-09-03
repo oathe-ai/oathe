@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// oathe — the monorepo re-link step (ruling R-E). `oathe-runtime` is no longer a
-// `file:` dependency, so npm treats `node_modules/oathe-runtime` as extraneous and PRUNES it
+// oathe — the monorepo re-link step (ruling R-E). `oathe-runtime` is not a declared
+// dependency, so npm treats `node_modules/oathe-runtime` as extraneous and PRUNES it
 // on every `npm install`/`npm ci` (proven by experiment). On any
 // monorepo machine, run this — `npm run link-runtime` — after every npm install/ci to put the
 // symlink back, computed at the CORRECT relative depth for wherever this checkout actually

@@ -146,6 +146,18 @@ test('oathe trace exports the linked traces of a claim as VALID ATIF on stdout',
   assert.equal(trajectories[0].extra.oathe.task_id, 'trace-cli-task');
   assert.ok(trajectories[0].extra.oathe.work_claim_id);
   assert.match(out.stderr, /^oathe: trace ok$/m, 'summary rides stderr — stdout stays pure JSON');
+
+  // --pure: the converter's output alone — what a Harbor converter could also emit — for a
+  // cross-implementation check (their validator, their converters): no oathe key anywhere,
+  // the record facts still there, still valid, the default export untouched.
+  const pure = spawnSync('node', [BIN, 'trace', 'trace-cli-task', '--pure'], { encoding: 'utf8', env: sb.env, cwd: project });
+  assert.equal(pure.status, 0, pure.stderr);
+  const pureTrajectories = JSON.parse(pure.stdout);
+  assert.equal(pureTrajectories.length, 1);
+  assert.ok(!pure.stdout.includes('"oathe"'), 'no oathe key anywhere in a pure export');
+  assert.equal(pureTrajectories[0].extra.record.source_path, transcript);
+  assert.equal(new AtifValidator().validate(pureTrajectories[0]).ok, true);
+  assert.match(pure.stderr, /^oathe: trace ok$/m);
   oathe(['yield', 'trace-cli-task', 'export test done']);
 });
 
@@ -282,18 +294,22 @@ test('oathe claim ACTIVATES the folder through the one writer: fences on disk, p
   oathe(['yield', 'fence-cli-task', 'done with the fixture']);
 });
 
-test('oathe notch is PURE JSON on stdout — push, breaches, sections, workspace null; the trailer rides stderr', () => {
+test('oathe notch is PURE JSON on stdout — breaches, more, sections, default_agent; the trailer rides stderr', () => {
+  // A ROOT claim is this pin's premise: earlier hook tests registered fixture sessions keyed
+  // to this process's pid, and a claim spoken from a session folds under the session's
+  // root (lineage, UX rule 21) — so the premise is made true, not assumed.
+  fs.rmSync(path.join(sb.env.OATHE_HOME, 'sessions.json'), { force: true });
   const claim = oathe(['claim', 'notch-cli-task', 'Feed the glass']);
   assert.equal(claim.status, 0, claim.stderr);
   const out = oathe(['notch']);
   assert.equal(out.status, 0, out.stderr);
   const frame = JSON.parse(out.stdout); // pure JSON or this throws — the whole point
-  assert.equal(frame.workspace, null, 'the machine frame has no folder lens');
+  assert.ok(!('workspace' in frame) && !('push' in frame), 'the frame carries only what the glass decodes — no lens, no push line');
   assert.ok('default_agent' in frame, 'the machine default agent rides the frame — the glass reads no config');
-  assert.ok(Array.isArray(frame.breaches), 'the breach digest rides the frame');
+  assert.ok(Array.isArray(frame.breaches), 'the breach digest\'s rows ride the frame');
+  assert.ok(Number.isInteger(frame.more), 'and the count beyond the budget');
   assert.ok(frame.sections.mine.some((r) => r.task_id === 'notch-cli-task'), 'sections are the one classification');
-  if (frame.breaches.length === 0) assert.equal(frame.push, null, 'breaches-or-silence');
-  else assert.match(frame.push, /to fix|to verify|gone quiet/, 'the founder-worded push — person words, two buckets');
+  for (const b of frame.breaches) assert.ok(typeof b.kind_word === 'string' && typeof b.act.word === 'string', 'every word the glass shows rides from Node');
   assert.match(out.stderr, /^oathe: notch ok$/m, 'the trailer rides stderr — stdout stays machine-safe');
   oathe(['yield', 'notch-cli-task', 'fixture done']);
 });
@@ -301,7 +317,8 @@ test('oathe notch is PURE JSON on stdout — push, breaches, sections, workspace
 test('oathe notch answers from ANYWHERE — the home directory included — no workspace is resolved', () => {
   const out = oathe(['notch'], sb.env, sb.home);
   assert.equal(out.status, 0, out.stderr);
-  assert.equal(JSON.parse(out.stdout).workspace, null);
+  const frame = JSON.parse(out.stdout);
+  assert.ok(Array.isArray(frame.breaches) && Array.isArray(frame.motion), 'a whole frame, from a cwd no verb could resolve');
 });
 
 test('oathe notch only SHOWS — the registry file is byte-identical after the run (R-PAGER kinship)', () => {
@@ -371,8 +388,45 @@ test('a breach row carries its clock and its ACT — the glass renders an age an
     const breach = JSON.parse(out.stdout).breaches.find((b) => b.task_id === 'quiet-breach-cli');
     assert.ok(breach, 'the quiet claim pages');
     assert.match(breach.at, /Z$/, 'the breach clock rides the row');
+    assert.equal(breach.kind_word, 'quiet', 'the kind word rides the row — the glass composes none');
     assert.equal(breach.act.kind, 'spawn-terminal', 'a quiet claim\'s act is the resumption');
+    assert.equal(breach.act.word, 'continue ↗', 'and the act word is the one table\'s');
     assert.match(breach.act.command, /'continue quiet-breach-cli'/);
+  } finally {
+    await substrate.close();
+  }
+});
+
+test('oathe ls is the pull (UX rule 18): every breached promise on the machine, uncapped, no +more — and nothing breached prints no section', async () => {
+  const substrate = new Substrate({ database: SCRATCH_DB, paths, env: process.env });
+  try {
+    const ws = (await import('../src/workspace.mjs')).workspaceRef(project);
+    for (let i = 0; i < 9; i++) {
+      const id = `ls-quiet-${i}`;
+      await substrate.query(`
+        INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
+                               verify_by, claim_mode, created_at)
+        VALUES ('oathe', $1, 'founder', 'quiet number ${i}', 'minted_at_claim',
+                '{"plan_status":"unknown"}'::jsonb, now() + interval '7 days', 'exclusive', now())`, [id]);
+      await substrate.query(
+        `SELECT cell.claim_work('oathe', $1, gen_random_uuid(), NULL, NULL, 'founder', 'founder',
+                'exclusive', now() + interval '4 hours', $2, now() - interval '2 hours', gen_random_uuid())`,
+        [id, `workspace:${ws};contract:oathe/${id}@v1`]);
+    }
+    const out = oathe(['ls'], { ...sb.env, OATHE_PAGER_QUIET_HOURS: '1' });
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /^breached \(all workspaces\):$/m, 'the machine-wide section, no flag');
+    for (let i = 0; i < 9; i++) {
+      assert.match(out.stdout, new RegExp(`^  \\[quiet\\] ls-quiet-${i} — quiet number ${i} \\(founder holds it, quiet for 2h \\(last word [^)]+\\) · `, 'm'),
+        `row ${i}: kind word, task, objective, detail, home`);
+    }
+    assert.doesNotMatch(out.stdout, /\+\d+ more/, 'the pull is uncapped');
+    assert.match(out.stdout, /^oathe: ls ok$/m);
+    // At the default threshold these two-hour-old claims are not quiet: the section (whatever
+    // else this shared substrate has breached) lists none of them.
+    const rested = oathe(['ls']);
+    assert.equal(rested.status, 0, rested.stderr);
+    assert.doesNotMatch(rested.stdout, /\[quiet\] ls-quiet-/, 'a condition that has cleared is not listed (the board still holds the claims)');
   } finally {
     await substrate.close();
   }
@@ -394,7 +448,7 @@ test('oathe notch --serve streams ndjson frames — a write in another process l
   ]);
   try {
     if (lines.length === 0) await nextFrame('initial frame never arrived');
-    assert.equal(lines[0].workspace, null, 'the feed serves the machine frame');
+    assert.ok(Array.isArray(lines[0].breaches) && Number.isInteger(lines[0].more), 'the feed serves the machine frame');
     const woke = nextFrame('the wire carried nothing after a claim');
     const claim = oathe(['claim', 'serve-task', 'wake the feed']);
     assert.equal(claim.status, 0, claim.stderr);
@@ -423,7 +477,7 @@ test('oathe notch --serve streams ndjson frames — a write in another process l
       assert.ok(row, 'a heard task is motion');
       assert.equal(row.session?.surface, 'chatgpt', 'the heard app identity serves as the session ref');
       assert.equal(row.session?.alive, true);
-      assert.deepEqual(row.resume, { kind: 'activate', app_pid: process.pid, bundle: '/Applications/ChatGPT.app' },
+      assert.deepEqual(row.resume, { kind: 'activate', app_pid: process.pid, bundle: '/Applications/ChatGPT.app', word: 'continue ↗' },
         'continue on a live heard app ACTIVATES it — homelessness never demotes a living speaker to copied');
     } finally {
       await substrate.close();
@@ -580,6 +634,6 @@ test('doctor prints the version line: package version and the cached plugin vers
 test('oathe init ends with the Next line (live polish #7) — the picker output kept the moment', () => {
   const out = oathe(['init', '--yes']);
   assert.equal(out.status, 0, out.stderr);
-  assert.match(out.stdout, /Next: oathe claude \(or codex, cursor\) in any project/,
+  assert.match(out.stdout, /Next: claude, codex or agent in any project — the board rides every session/,
     'the Next line names every launchable — cursor joined the primitive');
 });

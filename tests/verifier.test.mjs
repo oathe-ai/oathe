@@ -167,6 +167,63 @@ for (const [providerName, makeProvider] of PROVIDERS) {
         'pre-claim planning is context, not execution evidence — it never reaches the engine');
     });
 
+    it('the evidence section of the engine prompt respects verifierEvidenceBudget — the render bound holds through the verifier', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'budget-task', objective: 'prove the prompt bound' });
+      await linkTrace('budget-task', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'budget-task', proposition: 'done', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'fine' };
+      const budget = 600;
+      const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vbudget-')));
+      const tight = new Verifier({
+        substrate, paths, workspace: WS, operatorPrincipal: OPERATOR,
+        config: new OatheConfig({
+          env: { HOME: home, OATHE_HOME: path.join(home, '.oathe'), OATHE_VERIFIER_EVIDENCE_BUDGET: String(budget) },
+          cwd: home,
+        }),
+        provider: new StandaloneRuntimeProvider({ paths }),
+        engineRunner: async ({ prompt }) => { engineCalls.push({ prompt }); return engineVerdict; },
+      });
+      try {
+        await tight.verify({ taskId: 'budget-task' });
+      } finally {
+        await tight.close();
+      }
+      const prompt = engineCalls.at(-1).prompt;
+      const start = prompt.indexOf('SESSION TRACES');
+      const end = prompt.lastIndexOf('Reply with ONLY');
+      assert.ok(start >= 0 && end > start, 'the prompt carries its evidence section');
+      const section = prompt.slice(prompt.indexOf('\n', start) + 1, end);
+      // one linked trace → one render ≤ budget; the section adds only its joining newlines
+      assert.ok(section.length <= budget + 4,
+        `evidence section is ${section.length} chars against a ${budget} budget`);
+    });
+
+    it('a claim linked from a RESUMED session is judged on the file its rows live in — the ghost <new-id>.jsonl the hook was told resolves through the store', async () => {
+      // Live 2026-09-01: every claim spoken in a resumed/compacted session linked a transcript
+      // the harness never wrote; the verifier died at the evidence stage (TRACE_UNREADABLE).
+      // Ghost links already on the record heal at read time through the same resolver.
+      const claim = await workerTools.oathe_claim({ task_id: 'resumed-judged', objective: 'judged after a resume' });
+      const { file } = fixtureTranscript(crypto.randomUUID());
+      const rotated = crypto.randomUUID();
+      fs.appendFileSync(file, `\n${JSON.stringify({
+        type: 'user', uuid: 'u9', sessionId: path.basename(file, '.jsonl'), session_id: rotated, cwd: path.dirname(file),
+        message: { role: 'user', content: 'after the resume' },
+      })}`);
+      const ghost = path.join(path.dirname(file), `${rotated}.jsonl`);
+      await substrate.query(
+        `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+                execution_actor, claim_principal, statement_type, subject_ref, proposition,
+                evidence_refs, epistemic_status, asserted_at)
+         VALUES ($1, 'oathe', 'resumed-judged', $2, $3, $4, 'progress', $5, 'claude session worked this claim', $6::jsonb, 'observed', now())`,
+        [crypto.randomUUID(), claim.work_claim_id, `session:${rotated}`, OPERATOR, `trace:${rotated}`, JSON.stringify([ghost])]);
+      await workerTools.oathe_done({ task_id: 'resumed-judged', proposition: 'done after a resume', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'the original file holds the work' };
+      const out = await verifier.verify({ taskId: 'resumed-judged' });
+      assert.equal(out.verdict, 'accepted', 'the evidence stage read the original, not the ghost');
+      assert.equal(out.settled, true);
+      assert.ok(!fs.existsSync(ghost), 'the read resolved; nothing wrote the ghost and the record did not change');
+    });
+
     it('ACCEPTED: the whole lane — verdict recorded, verification row signed by the seat, claim SETTLED', async () => {
       const claim = await workerTools.oathe_claim({ task_id: 'settle-me', objective: 'be verified for real' });
       await linkTrace('settle-me', claim.work_claim_id);
@@ -201,7 +258,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       // a SETTLED task leaves the board — the obligation is closed
       const { sections } = await workerTools.oathe_board({});
       assert.ok(!sections.asserted.some((r) => r.task_id === 'settle-me'),
-        'settled work no longer shows as asserted');
+        'settled work does not show as asserted');
       assert.ok(!sections.open.some((r) => r.task_id === 'settle-me'));
 
       // the engine saw the ALIGNED evidence: objective, assertion, and SAID/DID/GOT per step
@@ -211,6 +268,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       assert.match(prompt, /SAID: did the work/, 'the claim channel');
       assert.match(prompt, /DID: Bash\(/, 'the action channel');
       assert.match(prompt, /GOT \[exit 0\]: made it/, 'the outcome channel');
+      assert.match(prompt, /FROM lines are messages other agents sent/, 'the legend names the inbound channel — a child\'s answer is never this agent\'s claim');
     });
 
     it('the substrate itself refuses a self-signed verification (FC010) beneath whichever lane runs', async () => {
@@ -380,6 +438,47 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       assert.match(stmts[0].proposition, /usage limit reached/, 'the real error text, not a banner');
     });
 
+    it('EVIDENCE DEATH releases: a failure BEFORE the engine launches records evidence-failure — no engine ran, so its stall never blames one', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'evidence-dies', objective: 'survive an unreadable record' });
+      // The linked trace names a file NO store owns — projection dies in evidence-gathering,
+      // exactly where a runtime-bound store (node:sqlite missing) dies (the 2026-08-31 pileup).
+      const bogus = path.join(os.tmpdir(), 'oathe-nowhere', 'rollout-that-never-was.jsonl');
+      const sessionId = crypto.randomUUID();
+      await substrate.query(
+        `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+                execution_actor, claim_principal, statement_type, subject_ref, proposition,
+                evidence_refs, epistemic_status, asserted_at)
+         VALUES ($1, 'oathe', $2, $3, $4, $5, 'progress', $6, 'trace', $7::jsonb, 'observed', now())`,
+        [crypto.randomUUID(), 'evidence-dies', claim.work_claim_id, `session:${sessionId}`,
+          OPERATOR, `trace:${sessionId}`, JSON.stringify([bogus])]);
+      await workerTools.oathe_done({ task_id: 'evidence-dies', proposition: 'done', evidence_ref: 'x' });
+      let engineLaunched = false;
+      const failing = new Verifier({
+        substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
+        provider: new StandaloneRuntimeProvider({ paths }),
+        engineRunner: async () => { engineLaunched = true; return { verdict: 'accepted', reason: 'must never run' }; },
+      });
+      try {
+        await assert.rejects(failing.verify({ taskId: 'evidence-dies' }), /no trace store owns/);
+      } finally {
+        await failing.close();
+      }
+      assert.equal(engineLaunched, false, 'the failure is the record, not the judge — no engine launched');
+      const { rows: claimRows } = await substrate.query(
+        "SELECT state FROM cell.work_claim WHERE org_id='oathe' AND task_id='verify:evidence-dies' ORDER BY claimed_at DESC LIMIT 1");
+      assert.notEqual(claimRows[0].state, 'active', 'the dead run RELEASED its claim');
+      const { rows: stmts } = await substrate.query(
+        `SELECT proposition, evidence_refs FROM cell.agent_statement
+          WHERE org_id='oathe' AND task_id='verify:evidence-dies' AND statement_type='progress'
+            AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(evidence_refs) er WHERE er LIKE 'evidence-failure:%')`);
+      assert.equal(stmts.length, 1, 'the failure is DURABLE, marked as an evidence failure — not an engine one');
+      assert.match(stmts[0].proposition, /failed before the \S+ engine launched/,
+        'the stall says the engine never ran');
+      assert.match(stmts[0].proposition, /no trace store owns/, 'and carries the real cause');
+      assert.doesNotMatch(stmts[0].proposition, /^engine \S+ failed/,
+        'never worded as an engine failure — that wording advises the wrong retry');
+    });
+
     it('RECOVERY: re-verifying an ALREADY-SETTLED task recovers instead of OATHE_SETTLEMENT_BLOCKED — the kill-window wedge', async () => {
       const claim = await workerTools.oathe_claim({ task_id: 'wedge-me', objective: 'settle once, recover on retry' });
       await linkTrace('wedge-me', claim.work_claim_id);
@@ -463,8 +562,8 @@ it('defaultEngineRunner hands the engine a CLOSED stdin — an engine that reads
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-stdin-eng-'));
   fs.mkdirSync(path.join(home, 'bin'));
   const payload = JSON.stringify({ result: JSON.stringify({ verdict: 'accepted', reason: 'stdin closed' }) });
-  // Many CLIs (codex exec among them, live 2026-08-30) drain stdin to EOF before answering.
-  // spawnSync used to close stdin implicitly; async spawn defaults to an OPEN pipe nobody ends.
+  // Many CLIs (codex exec among them, live 2026-08-30) drain stdin to EOF before answering,
+  // and async spawn defaults to an OPEN pipe nobody ends.
   fs.writeFileSync(path.join(home, 'bin', 'claude'), `#!/bin/sh\ncat > /dev/null\ncat <<'JSON'\n${payload}\nJSON\n`);
   fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
   const out = await Promise.race([

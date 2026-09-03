@@ -77,8 +77,8 @@ export class OatheRuntimeProvider {
   }
 
   /** THIN WRAPPER (ruling, 2026-08-26): no composition logic lives here. The runtime
-   *  package owns the whole acceptance build — including the recorded-verdict checker wiring
-   *  that previously lived in this method — and lands as `oathe-runtime/seam` exporting
+   *  package owns the whole acceptance build — the recorded-verdict checker wiring included —
+   *  as `oathe-runtime/seam` exporting
    *  `buildAcceptanceRuntime({ pool }) → { SETTLE, laneFor(seatPrincipal) }`. */
   async acceptanceRuntime({ pool }) {
     this.#assertResolves();

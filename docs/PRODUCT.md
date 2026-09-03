@@ -1,20 +1,20 @@
-# Oathe D0.1 — Product Handoff
+# Oathe — Product Handoff
 
-**Version 0.1.2 · 2026-08-25 · status: live on the founder's machine, 162/162 tests, all
-settlement paths proven with real engines.** This document is the complete technical handoff:
-an agent reading nothing else should be able to work on this codebase correctly.
+**This document is the complete technical handoff**: an agent reading nothing else should be
+able to work on this codebase correctly. The version is `package.json`'s; each release's proof
+is in its notes and in `git log`.
 
 Oathe is an npm package that puts an **organizational spine under interactive AI coding
 sessions**: work is claimed before it is done, progress is recorded as statements, completion
 is asserted (never self-settled), and a **non-author verification lane actually settles or
-reopens work** by reading the agent's own session traces. It onboards BOTH installed
-harnesses — Claude Code and Codex — from one `oathe init`.
+reopens work** by reading the agent's own session traces. It onboards every installed
+harness — Claude Code, Codex, Cursor — from one `oathe init`.
 
 **Design authority:** the D0 interface doc + specs, and the oathe runtime/DDL (developed
-privately; landing here as `oathe-runtime`). The substrate DDL is vendored under
-`vendor/ddl/` (26 files, ~55 plpgsql verbs, sha256-manifested); a runtime checkout, when
-one is present, is consumed READ-ONLY via `OATHE_MONOREPO` + `npm run link-runtime`.
-Nothing here edits that checkout.
+privately). The substrate DDL is vendored under `vendor/ddl/` (28 files, sha256-manifested);
+a runtime checkout, when one is present, is consumed READ-ONLY via
+`OATHE_MONOREPO` + `npm run link-runtime` through the runtime seam (§5); without one the
+package runs on its standalone provider. Nothing here edits that checkout.
 
 **House rules (founder rulings, binding):** never hardcode (everything tunable flows through
 `OatheConfig`); OOP core with thin functional edges, DRY (one implementation per concept);
@@ -30,14 +30,14 @@ TDD red-first for all behavior.
  this package
  ├─ oathe CLI ──────────────┐
  ├─ MCP server (oathe mcp) ─┤        ┌────────────────────────────────┐
- ├─ plugin (both harnesses) ┼───────▶│  cell substrate (oathe_local)  │
- │   hooks: SessionStart /  │        │  26 DDL files, plpgsql verbs,  │
+ ├─ plugin (all harnesses)  ┼───────▶│  cell substrate (oathe_local)  │
+ │   hooks: SessionStart /  │        │  28 DDL files, plpgsql verbs,  │
  │   Stop / PreCompact      │        │  refusals-by-construction      │
  ├─ launchers (cage+host) ──┤        └────────────────────────────────┘
  └─ verifier ───────────────┘                      ▲
         │ reads                                    │ settles via
         ▼                                          │ acceptance lane
- ~/.claude/projects/*  ~/.codex/sessions/*   oathe-runtime (read-only file: dep)
+ ~/.claude/projects/*  ~/.codex/sessions/*   oathe-runtime (read-only, when present)
  (trace ground truth)  (+ state_5.sqlite)
 ```
 
@@ -51,7 +51,7 @@ yield needs a declared cause, settlement without a verdict is refused (FC110–F
 ## 2. The substrate (`src/substrate.mjs`)
 
 - `oathe init` detects Postgres (homebrew socket default, `pgHost`/`pgPort` config), creates
-  `oathe_local`, and applies the monorepo's 26 DDL files **in `apply.py`'s exact order**
+  `oathe_local`, and applies the monorepo's 28 DDL files **in `apply.py`'s exact order**
   (never glob — a unit test cross-checks our list against `apply.py` AND the directory).
 - Idempotency is oathe's own bookkeeping (`oathe.ddl_applied`: filename + sha). A re-run
   skips applied files; a **changed** applied file is a `DDL_DRIFT` refusal. Never DROP.
@@ -124,7 +124,7 @@ sanctioned install path:
   oathe@oathe`, `codex mcp add oathe -- oathe mcp`), each **verified** by the stanza it must
   leave in `~/.codex/config.toml` — an install that can't be proven is refused. Codex reads
   the same `.claude-plugin/marketplace.json` (source-verified fallback) — one marketplace
-  file at the package root serves both harnesses. The standing rule for folderless sessions
+  file at the package root serves both CLI harnesses. The standing rule for folderless sessions
   (ChatGPT desktop) is a global fence in `~/.codex/AGENTS.override.md` when that file exists,
   else `~/.codex/AGENTS.md` — the harness's own precedence (`globalContextFiles`).
 - **Cursor**: installer-written owned entries — `mcpServers.oathe` in `~/.cursor/mcp.json`
@@ -134,17 +134,22 @@ sanctioned install path:
   oathe.mjs` — Cursor runs user hooks from `~/.cursor` and GUI apps read no shell rc), every
   write verified after landing (`CURSOR_VERIFICATION_FAILED`), byte-reversible. Detection is
   structured: the config home `~/.cursor` is the IDE (enough to wire — the IDE leaves no bin
-  on PATH); the `cursor-agent`/`cursor` CLI on PATH is what makes Cursor a verifier
-  candidate (`headless`: `cursor-agent -p --trust --output-format json`).
+  on PATH); the `agent` CLI on PATH is what makes Cursor a verifier
+  candidate (`headless`: `agent -p --trust --output-format json`).
 - **The workspace registry** (`~/.oathe/workspaces.json`, `src/registry.mjs`): the machine-wide
   record of which folders carry a board — root realpath, identity, first registrar, last-seen,
   harnesses seen, fence versions. Hooks, MCP tools, CLI verbs, and launchers all upsert it on
   use; writes are atomic (temp-then-rename) under a bounded lock (`src/fslock.mjs`) that gives
   up and proceeds — registration is idempotent, a hook never deadlocks on a foreign lock.
 - Every write to a user surface is managed: text files get versioned fences
-  (`# >>> oathe v0.1.2 >>>` / HTML-comment style for CLAUDE.md/AGENTS.md), JSON files get
+  (`# >>> oathe v<version> >>>` / HTML-comment style for CLAUDE.md/AGENTS.md), JSON files get
   manifest-recorded owned key paths (no in-file markers — Claude validates settings.json).
-  All recorded in `~/.oathe/install-manifest.json` with pre-first-write backups.
+  All recorded in `~/.oathe/install-manifest.json` with pre-first-write backups. The manifest is
+  written against the FILE, never a snapshot (ruling 2026-09-03): a long-lived holder — the
+  MCP server's context, built once per config change — re-reads it inside the activation lock
+  before adding a row (`InstallManifest.refresh()`), and `init`/`uninstall` merge-refresh under
+  the same lock before their one save (rows that landed mid-run are kept, this run's removals
+  hold, this run's rows win), so an open session can no longer overwrite what an init recorded.
 - `oathe doctor` verifies every manifest row (`ok`/`user-edited`/`removed`/…; a user edit is
   REPORTED, never overwritten), substrate status, plugin resolution, and the **live trace
   contract** (full ATIF projection of the newest record in each store → `DRIFT` fails).
@@ -166,19 +171,20 @@ Hook payloads arrive in each harness's own **dialect** (`src/harnesses/dialects.
 Claude/Codex hand `cwd` and take the camelCase `hookSpecificOutput` reply; Cursor hands
 `workspace_roots[]` and takes snake_case fire-and-forget `additional_context`. The hook spine
 (`plugin/hooks/lib.mjs`) sniffs the shape, normalizes, and answers in kind. Hooks fire in
-EVERY session — the old launch gate is gone (§6) — and SessionStart **activates** the
+EVERY session, and SessionStart **activates** the
 workspace: central registry row + the context-file fences through the one writer
 (`src/activation.mjs`), disclosed in the render; `autoActivate: false` registers only.
 
 - **SessionStart** (`render-board`): activation, then hook JSON — `additionalContext` = the
   markdown board for the MODEL; `systemMessage` = breaches-or-silence (R-QUIET, 2026-08-29:
   breaches push, status pulls, and the restored-state banner rides the actual `oathe_pickup`,
-  never ambient session start — the old 🎉/🔒/🍺 states and the ⭐ star ask are gone). An
+  never ambient session start). An
   activation write's disclosure still speaks once. A session with no resolvable workspace
   exits silently — there is no board to speak about.
-- **Stop** (`heartbeat`): renews leases for this principal's active claims in this workspace
-  AND **links the session trace** — one statement per (claim × session), `subject_ref:
-  trace:<session_id>`, transcript path as evidence. Covers claims in `active` **and**
+- **Stop** (`heartbeat`): **links the session trace** — one statement per (claim × session),
+  `subject_ref: trace:<session_id>`, transcript path as evidence — and registers the session's
+  liveness. It never touches the ownership horizon (R1, 2026-08-26: session liveness is not an
+  organizational act; the horizon is set once by the claim verb and expires on its own). Covers claims in `active` **and**
   `completion_asserted` (unsettled) states — a claim taken and asserted within one turn gets
   its evidence at that turn's end (live-found fix).
 - **PreCompact** (`frame-note`): records a durable statement on active claims before context
@@ -190,7 +196,11 @@ workspace: central registry row + the context-file fences through the one writer
 
 ## 5. Launchers (`src/launch.mjs`, `src/session-host.mjs`)
 
-`oathe claude` / `oathe codex` = one `runHarness`:
+The everyday way into a folder's board is the harness itself — `claude`, `codex`, `agent` —
+because the plugin rides every session (§4). The launcher is what the notch's continue runs
+(`oathe <agent> 'continue <task>'` in the task's home, §8) and an opt-in for a person who
+wants a session tracked as one attempt or run `--hermetic`. `oathe claude` / `oathe codex` /
+`oathe cursor` = one `runHarness`:
 
 1. **Pre-flight**: refuses if the harness was never onboarded; activates the cwd's workspace
    through the ONE writer (`src/activation.mjs`) — the fences land in the union of the
@@ -202,20 +212,38 @@ workspace: central registry row + the context-file fences through the one writer
 3. **Adapter-declared ANSI splash** (the adapter's `launch.splash` — Codex buries hook output in its ctrl+T overlay, unrendered):
    the board in bold/dim aligned columns + a TTY-gated 3s pause (`Enter to go now`). Claude
    launches clean — its own banner is the good experience.
-4. **The cage**: `spawnCaged` (imported by path from the monorepo — the one sanctioned path
-   import) — REPLACED environment (curated; `--hermetic` = terminal-plumbing whitelist +
+4. **The cage**: `spawnCaged` from the runtime seam below — the runtime's (imported by path
+   from the monorepo, the one sanctioned path import) or the standalone `SimpleCage` —
+   REPLACED environment (curated; `--hermetic` = terminal-plumbing whitelist +
    oathe wiring only), `OATHE_EXECUTION_ATTEMPT_ID` fence stamp, and **proven-empty
    teardown** after exit. The binary resolves against the LAUNCH env's PATH.
-5. **Session host**: leases renew exactly while `cage.enumerate()` shows live pids
-   (SIGSTOP'd = still held). Killed → renewals stop, the lease visibly runs out, **no
-   statement is fabricated** (R10: an absence is an absence). Clean exit → an exit statement
-   on every held claim. Everything after the verb passes to the harness VERBATIM (only the
+5. **Session host**: observes liveness and nothing else — each tick asks the cage's
+   `enumerate()` (SIGSTOP'd = still alive) and never touches the ownership horizon (R1: the
+   horizon is set once at claim time and expires on its own). Killed → the host halts and
+   writes **nothing** (R10: an absence is an absence). Clean exit → one exit statement on
+   every claim this principal still holds: "session ended (exit N) with this claim still held
+   — the lease will expire unless the work is picked up or yielded". Everything after the verb passes to the harness VERBATIM (only the
    first `--hermetic` and one `--` are oathe's).
 
 Custody model: oathe-launched sessions have **liveness custody**; bare sessions on any wired
 harness (plugin/hooks active) have **turn custody** (Stop-hook trace linkage only).
 `OATHE_LAUNCHED_HARNESS` is the custody marker and nothing more — tool access is gated by
 workspace RESOLUTION (§6), not by who spawned the session.
+
+**The runtime seam (`src/runtime/provider.mjs` — ruling: ONE seam, never a fork).** Two
+providers serve one capability surface — cage, settlement, pickup — chosen by
+`runtimeProvider` (`auto|oathe|standalone`; `auto` is `oathe` exactly when the sanctioned cage
+path resolves on disk). The `oathe` provider binds the runtime checkout: the cage above, the
+runtime's acceptance lane, and the thin-path pickup (§6). The `standalone` provider is what
+the published package runs on a clean machine: `SimpleCage` (`src/runtime/simple-cage.mjs`, a
+clean-room implementation of the same contract — replaced environment, attempt-id stamp, a
+fresh process group, teardown with the emptiness re-observed), `SqlAcceptanceLane`
+(`src/runtime/sql-acceptance-lane.mjs` — the shared deterministic clause discharge,
+`src/runtime/discharge.mjs`, then `cell.verification` + `cell.settle_work_claim` in one
+transaction; the substrate's triggers stay the enforcement), and a pickup that refuses typed
+(`OATHE_PICKUP_UNAVAILABLE`, naming the recovery). Requesting `oathe` where the checkout does
+not resolve is `OATHE_RUNTIME_UNAVAILABLE`; a checkout present but unlinked is
+`OATHE_RUNTIME_UNLINKED` (`npm run link-runtime`).
 
 ## 6. The board & the speech-act verbs (`src/mcp/oathe-tools.mjs`, `src/mcp/connection.mjs`)
 
@@ -239,7 +267,7 @@ environment, and the tool context comes lazily from the ONE resolution ladder
 5. per-call typed `OATHE_WORKSPACE_UNRESOLVED` naming every input received verbatim.
 
 `notifications/roots/list_changed` closes the stale context and re-resolves. **Resolution IS
-the gate** (the launch gate is gone): every successful call registers the workspace in
+the gate**: every successful call registers the workspace in
 `~/.oathe/workspaces.json`; `oathe_claim` — the write-intent act — ACTIVATES it (fences via
 `src/activation.mjs`) and discloses in its result. `OATHE_WORKSPACE_DIR` stays session env
 by design, NOT an `OatheConfig` key: it names a per-process workspace binding, not a
@@ -253,7 +281,7 @@ preference — a config file must never pin every session to one folder.
 | `oathe_done` | three acts: (1) if the plan is unknown, **bind the policy-standard plan** via `cell.amend_verification_contract` (G2-b policy binder; FC161 allows amendment only under an ACTIVE claim, i.e. exactly now); (2) completion statement + `cell.assert_claim_completion` (the statement must be `statement_type='completion'`); (3) **mint `verify:<task>`** on the board carrying the assigned engine (verification tasks mint no verifier for themselves — the regress ends at the deterministic bar). The result coaches FC010: you cannot verify your own work, including via your own sub-agents |
 | `oathe_yield` | `cell.oathe_yield_operator` — the obligation returns to the board with a declared cause |
 | `oathe_verify` | the verification lane (below); also `oathe verify` CLI |
-| `oathe_pickup` | the founder-ruled "continue task-x": the verified successor sequence — `buildProductionDeps → readPriorAttemptStep → reallocateStep` (RECOMPILE decided inside `allocate()`), frozen contract read from 019's claim-time freeze; refusal on a yielded task COACHES the recovery (claim again, then pick up) |
+| `oathe_pickup` | the founder-ruled "continue task-x": the verified successor sequence — `buildProductionDeps → readPriorAttemptStep → reallocateStep` (RECOMPILE decided inside `allocate()`), frozen contract read from 019's claim-time freeze; refusal on a yielded task COACHES the recovery (claim again, then pick up). Served where the runtime resolves (§5); the standalone provider refuses `OATHE_PICKUP_UNAVAILABLE` and names the recovery |
 
 Workspace identity (`src/workspace.mjs`): `ws-<12hex>` from git-root realpath + origin URL
 (plain dir realpath otherwise), carried in each claim's `contract_ref`
@@ -289,24 +317,52 @@ before any work in every session) and `oathe init` puts the managed block where 
 through the same fence writer (`src/fence.mjs`), recorded as a fence row `uninstall` strips —
 and the board render states the rule on every render, not only the empty state.
 
-**The breach pager (R-PAGER — `src/pager.mjs`).** Session start renders, below the board, a
-machine-wide digest of BREACHED promises only: a completion asserted and unverified past its
-`verify_by` (`cell.unverified_past_verify_by`, the R2 clock leg); a rejection nobody
-reclaimed (origin `reopened`, the latest claim predating the latest rejected verification);
-an active claim silent past `pagerQuietHours` (its last word = latest non-trace progress
-statement, else the claim itself). Condition-based — it repeats every session while true, with
-no read-state — and stateless; a lapsed lease is lifecycle, not a breach; one line per task
-under its sharpest breach; homes shown as folders via the registry (`homeless` for a synthetic
-mint). The hook computes it in its own fail-soft try (a broken pager reaches stderr; the board
-still renders); the launcher splash carries it; `oathe ls` is untouched. The system only
-SHOWS — no auto-yield; only a principal speaks.
+**The breach pager (R-PAGER — `src/pager.mjs`) and its digest (`src/breach-digest.mjs`).**
+The pager reads four conditions machine-wide, in sharpness order: a rejection nobody
+reclaimed (`reopened` — the latest claim predating the latest rejected verification); a
+verification that died before a verdict and released its claim (`stalled`); a completion
+asserted and unverified past its `verify_by` (`overdue` — `cell.unverified_past_verify_by`,
+the R2 clock leg); an active claim silent past `pagerQuietHours` (`quiet` — its last word =
+latest non-trace progress statement, else the claim itself). Condition-based — it repeats
+every session while true, with no read-state — and stateless; a lapsed lease is lifecycle,
+not a breach; one row per task under its sharpest breach, or per sibling group (children
+spawned under one claim fold into one row); homes shown as folders via the registry
+(`homeless` for a synthetic mint); the data whole. `BreachDigest` is the ONE budget every
+surface renders: counts by kind, the push line (`3 to fix · 1 to verify · 2 gone quiet`),
+rows capped at eight sharpest-first, then one `+N more` naming the pull — `oathe_board` for
+the model (`breaches`: every kind, grouped, uncapped, this board), `oathe ls` for the
+terminal (uncapped, no flag), the glass's own count. The SessionStart context, the launcher
+splash, tool attention (this board's rejected and verify-failed work only) and the notch
+frame render the same digest, and every word about a kind lives in its `KINDS` table. The
+hook computes it in its own fail-soft try (a broken pager reaches stderr; the board still
+renders). The system only SHOWS — no auto-yield; only a principal speaks. UX rules 17–20
+hold this.
+
+**Lineage (ruling 2026-09-01: provenance now, delegation later — `src/statements.mjs`).**
+Work claimed while a session holds a claim is recorded as SPAWNED under it: one observation
+statement on the parent's claim (`spawn:<child>`, evidence `task:<child>`, idempotent per
+claim × child), decided before the child's claim lands (`spawnParentFor`: omit `parent` for
+the session's root — the oldest active claim this principal holds that is linked to the
+session; an id names the claim it serves and must be held, else `OATHE_SPAWN_PARENT_NOT_HELD`;
+`null` is standalone) and written right after it (`linkSpawn`). `spawnParentSql` is the ONE
+read — the board folds children under a parent in view and gives the parent a counts line
+(`spawned 3 — 2 active · 1 settled`); the pager's rows carry `parent`, so the digest groups
+siblings into one row under their sharpest breach and attention names the parent once. The
+delegation column (`cell.work_claim.parent_work_claim_id`, DDL 010's forward contract with
+`assert_children_verified`) stays reserved for accountable cross-principal delegation; when
+the delegate verb ships, the read fragment unions both edges and no renderer changes. Stated
+limitation: nested fan-out inside one session attaches to the session's root claim — the
+trace's spawn tree is the exact record. UX rule 21 holds this.
 
 ### 6b. Session identity & continuation — the SPEAKER primitive (ruling 2026-08-30)
 
 Every speech act is spoken by a SPEAKER, and the writer resolves WHO from its own process
 ancestry — never from the model's word, never from an MCP client's self-declared name when
 the process tree says more (ChatGPT-embedded codex is `chatgpt`, not `codex`). One shape,
-resolved once per writer process by `resolveSpeaker` (`src/speaker.mjs`):
+resolved by `resolveSpeaker` (`src/speaker.mjs`) — the ancestry walk once per writer process,
+the session at every act (ruling 2026-09-03: a `/clear` or a resume registers a new id under
+the same process, and the next act speaks as it; a long-lived server never keeps the session it
+first saw):
 
 ```
 { surface:  which glass is speaking, named by the adapters (or null)
@@ -359,41 +415,56 @@ Ground truth, discovered by experiment and PINNED (both vendors disclaim schema 
   refusals; **drift fails loud in `npm test` (live-store contract tests) and in `oathe
   doctor`** — a harness update that moves the format breaks the suite by design.
 
-## 8. ATIF projection (`src/atif.mjs`, `docs/atif-oathe.md`)
+## 8. ATIF projection (`src/atif.mjs`, `src/harnesses/claude-transcript.mjs`, `src/harnesses/codex-rollout.mjs`, `src/oathe-annotator.mjs`, `docs/atif-oathe.md`)
 
 Traces project at read time into **Harbor ATIF v1.7** — statement/action/outcome split
 structurally (`message` / `reasoning_content` / `tool_calls` / `observation.results` keyed by
 `source_call_id`). Custom fields outside `extra` are forbidden by the reference models
-(`extra:"forbid"`, source-verified), so oathe's layer rides the sanctioned slots as the
-**versioned `extra.oathe` convention** (`oathe_convention: 1`):
+(`extra:"forbid"`, source-verified), so everything beyond the spec rides the sanctioned
+`extra` slot in two namespaces with two owners (`oathe_convention: 2`):
 
-- root: harness, source_path, session_id, session_title, files_touched, and (on export) the
-  obligation linkage (org/task/work_claim/contract_ref/workspace) + settled `verdict`
-- step: `claim_events` — the agent's on-the-record oathe speech acts, structurally separable
-  (verb names derived from `makeToolDefs()`, never retyped)
-- tool_call: `files` (any call with a `file_path` argument)
-- observation_result: `observed.exit_code` parsed CONSERVATIVELY from stated "Exit code N" —
-  **absent when unstated, never fabricated**
+- **`extra.record` — the converter's.** Each adapter's projector emits pure ATIF, what a
+  Harbor converter could also emit, with the raw-record facts ATIF has no field for
+  (`source_path`, `session_title`, `files_touched`, `unrecognized_rows`; codex's
+  `step_boundary`, `orphan_token_counts`, `uncorrelated_items`; the inter-agent `inbound` on a
+  step; structural `exit_code` / `executions` / `files_changed` on a result; `subagent_meta`
+  on an embedded child). No oathe concept appears in a converter output.
+- **`extra.oathe` — the annotator's.** `OatheAnnotator` applies the claims-vs-actions layer
+  over any valid trajectory: root `oathe_convention` and, on export, the obligation linkage
+  (org/task/work_claim/contract_ref/workspace), the settled `verdict`, and the `sliced`
+  marker; step `claim_events` — the agent's on-the-record oathe speech acts, structurally
+  separable (verb names derived from `makeToolDefs()`, never retyped); tool_call `files` (any
+  call with a `file_path` argument); observation_result `observed.exit_code` — the
+  converter's structural code first, else an explicit "Exit code N" as the output's own last
+  line — **absent when unstated, never fabricated**. `projectAnnotated(file)` is the ONE read
+  every oathe consumer performs.
 
 `AtifValidator` re-implements the reference rules (sequential step_ids, call-ref integrity,
-agent-only fields, known-fields-only, unique embedded trajectory_ids) — and **Harbor's own
-golden fixture must pass it** (`tests/fixtures/harbor-golden-terminus2.trajectory.json`; it
-already corrected us once: `source_call_id` is optional). Every projector output is
-validator-asserted before return. `renderEvidenceView` renders the aligned record —
-`SAID:` / `CLAIM(verb task)` / `DID: tool(args)` / `GOT [exit N]: …` — under
-`verifierEvidenceBudget`, tail-prioritized with **announced** elisions.
-`oathe trace <task> [--out dir]` exports (pure JSON stdout; summary on stderr).
+agent-only fields, known-fields-only, unique embedded trajectory_ids, subagent refs resolving
+to an embedded child; `ATIF-v1.0`…`v1.8` accepted inbound, `v1.7` emitted) — and **Harbor's
+own golden fixture must pass it** (`tests/fixtures/harbor-golden-terminus2.trajectory.json`;
+it already corrected us once: `source_call_id` is optional). Every projector output is
+validator-asserted before return. The evidence renderer (`src/evidence.mjs`,
+`renderEvidenceView`) renders the aligned record — `SAID:` / `CLAIM(verb task)` / `DID:
+tool(args)` / `GOT [exit N]: …` / `FROM <author>` — under `verifierEvidenceBudget`,
+budget-true and tail-prioritized with **announced** elisions. `oathe trace <task> [--out dir]
+[--pure]` exports (pure JSON stdout; summary on stderr; `--pure` is the converter's output
+alone, for a check against Harbor's validator and converters).
 
-**The notch** (R-QUIET's glass): `oathe notch` serves the machine frame — full board +
-breach digest + the push line — as pure JSON from anywhere, with no workspace resolution
-and no registry write (a surface that only SHOWS). `oathe notch --serve` LISTENs on the
-wire (`src/wire.mjs`: one pg_notify per successful WRITE tool, emitted from the activation
-wrapper; reads silent) and streams one ndjson frame per speech act — the restored-state
-receipt rides the frame its pickup caused — plus a `notchHeartbeatSeconds` drift-guard
-frame. The macOS renderer (notch-spike/, Swift, outside this repo) supervises the feed as
-a child. Lifecycle: `oathe config notchApp <binary> --global` opts the machine in; init
-writes the LaunchAgent (manifest-owned, `src/notch.mjs`) and bootstraps it now; uninstall
-boots it out and removes it. D1: bundle a prebuilt binary and default `notchApp`.
+**The notch** (R-QUIET's glass): `oathe notch` serves the machine frame — the digest's
+rows with their kind and act words, the count beyond the budget (`more`), work in motion
+with its resumption, the board's sections, the machine's default agent — as pure JSON from
+anywhere, with no workspace resolution and no registry write (a surface that only SHOWS).
+`src/notch-frame.mjs` assembles the frame and owns every word in it; the verb fetches and
+serves. `oathe notch --serve` LISTENs on the wire (`src/wire.mjs`: one pg_notify per
+successful WRITE tool, emitted from the activation wrapper; reads silent) and streams one
+ndjson frame per speech act — the event's notice rides the frame it caused — plus a
+`notchHeartbeatSeconds` drift-guard frame. The macOS renderer (`notch/`, Swift, in this
+repo) supervises the feed as a child and plays the frame: it reads no config and composes no
+sentence, and `tests/notch-frame.test.mjs` holds the frame to its decoder (`Feed.swift`)
+field by field. Lifecycle: the package carries the built app (`prepack`); init writes the
+LaunchAgent (manifest-owned, `src/notch.mjs`) and bootstraps it now; uninstall boots it out
+and removes it; `oathe config notchApp <path> --global` overrides the packaged app.
 
 ## 9. The verification lane (`src/verifier.mjs`, `src/plans.mjs`)
 
@@ -401,21 +472,24 @@ The ruled shape: **verification is ordinary work; agent evaluators are allocated
 per obligation, never a standing grader; the LLM only produces EVIDENCE — every settlement
 is signed by a deterministic lane under a non-author seat.**
 
-Per `oathe verify [task] [--all] [--engine claude|codex]`:
+Per `oathe verify [task] [--all] [--engine claude|codex|cursor]`:
 
 1. Claims `verify:<task>` as `oathe-verifier` (visible lease on the board).
 2. Gathers: objective + bound plan, the completion statement, the linked traces projected to
    ATIF (fan-outs embedded; contract failures refuse — never less evidence than recorded).
-3. ONE fresh headless engine run (`claude -p --output-format json` / `codex exec
-   --skip-git-repo-check`) — fresh context, different eyes ("same-harness verification is
+3. ONE fresh headless engine run (each adapter's declared `headless` command — `claude -p
+   --output-format json`, `codex exec --skip-git-repo-check`, `agent -p --trust
+   --output-format json`) — fresh context, different eyes ("same-harness verification is
    never a subagent of the worker session": FC010's two-part author split + the
    anti-laundering ruling). Strict JSON verdict; malformed → typed refusal, the lane never
    guesses.
 4. The verdict lands as the verification task's completion statement (evidence ref
    `verdict:<verdict>:<task>`).
-5. **Settlement — deterministic**: `buildProductionAcceptanceLane({pool, seatPrincipal:
-   'oathe-verifier', registry})` with the composed `oathe-verdict` checker (standard clause
-   conditions AND the recorded verdict — data on the clause, provenance in the substrate).
+5. **Settlement — deterministic**: the runtime seam's acceptance lane (§5 — the runtime's
+   `buildProductionAcceptanceLane({pool, seatPrincipal: 'oathe-verifier', registry})` with the
+   composed `oathe-verdict` checker, or the standalone `SqlAcceptanceLane` over the same clause
+   discharge): standard clause conditions AND the recorded verdict — data on the clause,
+   provenance in the substrate.
    Accepted → `cell.verification` row (`verified | seat | acceptance_package`, FC010-clean)
    + `cell.settle_work_claim` in ONE transaction (FC113/FC114 hold by construction).
    Rejected → rejected verification row + `cell.reopen_rejected_task` (R8) — the task shows
@@ -477,14 +551,18 @@ Layered `OatheConfig`: defaults → `~/.oathe/config.json` (global) → `<worksp
 
 | key | default | env |
 |---|---|---|
-| `org` / `principal` / `department` | `oathe` / `$USER` / `founder` | `OATHE_ORG` / `OATHE_PRINCIPAL` / `OATHE_DEPARTMENT` |
-| `db` / `pgHost` / `pgPort` | `oathe_local` / `/tmp` / `5432` | `OATHE_DB` / `OATHE_PG_HOST` / `OATHE_PG_PORT` |
+| `org` / `principal` / `department` | `oathe` / `$USER` / `operator` | `OATHE_ORG` / `OATHE_PRINCIPAL` / `OATHE_DEPARTMENT` |
+| `db` / `pgHost` / `pgPort` | `oathe_local` / `$PGHOST`, else `/tmp` (darwin) or `/var/run/postgresql` / `5432` | `OATHE_DB` / `OATHE_PG_HOST` / `OATHE_PG_PORT` |
 | `leaseHours` / `verifyByHours` | `4` / `24` | `OATHE_LEASE_HOURS` / `OATHE_VERIFY_BY_HOURS` |
-| `verifier` / `verifierPrincipal` | `claude` / `oathe-verifier` | `OATHE_VERIFIER` / `OATHE_VERIFIER_PRINCIPAL` |
+| `verifier` / `verifierPrincipal` | the first verifier-capable harness / `oathe-verifier` | `OATHE_VERIFIER` / `OATHE_VERIFIER_PRINCIPAL` |
+| `defaultAgent` | `null` (the launchable harness that picks work back up — the notch's continue; asked at init) | `OATHE_DEFAULT_AGENT` |
 | `verifierEvidenceBudget` | `24000` chars | `OATHE_VERIFIER_EVIDENCE_BUDGET` |
+| `runtimeProvider` | `auto` (`oathe` exactly when the cage path resolves, else `standalone` — §5) | `OATHE_RUNTIME_PROVIDER` |
+| `traceCensusDays` / `traceCensusMaxFiles` | `3` / `40` (the doctor's and the census lane's sweep window) | `OATHE_TRACE_CENSUS_DAYS` / `OATHE_TRACE_CENSUS_MAX_FILES` |
 | `autoActivate` | `true` (false = register only, no fence writes) | `OATHE_AUTO_ACTIVATE` |
 | `rootsTimeoutMs` | `2000` | `OATHE_ROOTS_TIMEOUT_MS` |
 | `pagerQuietHours` | `24` (hours an active claim may stay silent before it is paged) | `OATHE_PAGER_QUIET_HOURS` |
+| `notchApp` / `notchMotionMinutes` / `notchHeartbeatSeconds` | `null` (the packaged app; a path overrides it) / `60` / `300` | `OATHE_NOTCH_APP` / `OATHE_NOTCH_MOTION_MINUTES` / `OATHE_NOTCH_HEARTBEAT_SECONDS` |
 
 Also env-overridable: `OATHE_MONOREPO`, `OATHE_HOME` (paths.mjs). `OatheConfig.global()`
 loads defaults → global file → env with no workspace layer (the server's pre-resolution
@@ -494,8 +572,8 @@ never a silently-wrong config root. `OATHE_WORKSPACE_DIR` is deliberately NOT a 
 
 ## 11. CLI reference
 
-`init [--harness a,b] [--yes]` (a setup plan rendered by a prompter — `docs/UX.md`) `· claude · codex · claim · amend · ls · note · done · verify · trace ·
-yield · config · doctor [--surface] · status · uninstall [--purge-db] · hook <name> · mcp`
+`init [--harness a,b] [--yes]` (a setup plan rendered by a prompter — `docs/UX.md`) `· claude · codex · cursor · claim · amend · ls · note · done · verify · trace [--pure] ·
+notch [--welcome] · yield · config · doctor [--surface] · status · version · uninstall [--purge-db] · hook <name> · mcp`
 (last two are the plugin's bin-addressed entry points; `doctor --surface` prints the
 resolution report — ladder inputs as received, winning rung, registry status — with no
 substrate contact, the probe the unknown surfaces get pointed at alongside
@@ -506,7 +584,7 @@ JSON). Substrate refusals surface non-zero as `refused`.
 ## 12. Testing strategy (`tests/`, two lanes)
 
 - **TDD red-first for every behavior**; each unit committed green.
-- **Real substrate in tests**: scratch Postgres databases per suite — the 26-file DDL apply,
+- **Real substrate in tests**: scratch Postgres databases per suite — the 28-file DDL apply,
   claim/yield/done refusals, and the ENTIRE settlement lane (acceptance lane, FC010, R8
   reopen+reclaim) run against real plpgsql, not mocks. Only the LLM engine is faked (seam).
 - **Sandboxed integration**: fresh `$HOME`, fake harness binaries + CLI fakes that mirror the
@@ -514,6 +592,12 @@ JSON). Substrate refusals surface non-zero as `refused`.
 - **Live contract tests**: the newest REAL transcript/rollout on the machine must parse AND
   project to valid ATIF — harness drift breaks `npm test` and `oathe doctor`.
 - **Golden cross-check**: Harbor's own fixture must pass our validator.
+- **The trace corpus and its lanes**: sanitized REAL records under `tests/fixtures/traces/`,
+  each carrying its expected projection (`scripts/trace-fixtures.mjs`,
+  `derive-trace-fixtures.mjs`); the Harbor conformance lane drives the reference converters
+  on the corpus and holds the divergence to a reviewed baseline (`docs/traces.md`); the trace
+  census sweeps both real stores against the declared rosters and fidelity probes (`npm run
+  trace-census`).
 - **The full loop over the real stdio server**: initialize → claim → note → pickup (real
   successor) → yield, plus double-yield refusal.
 - `claude plugin validate` clean on plugin + marketplace.
@@ -564,8 +648,8 @@ the same rules (`init-tty`) on every PR.
   rich contracts (G2-b worker-proposes path).
 - CLI-driven speech acts (`Bash(oathe done …)`) are visible as DID lines but not marked as
   `claim_events` — a small convention extension if wanted.
-- The verifier engine run is `spawnSync`, not caged, and inherits the invoking env — below
-  the launcher's posture; flagged.
+- The verifier engine run is not caged and inherits the invoking env — below the launcher's
+  posture; disclosed in `docs/PRIVACY.md`.
 - **Sandbox surfaces (canary-confirmed 2026-08-28)**: Cowork sessions run in a cloud sandbox
   with a Linux-VM shell — an attached folder's fence reaches them, the local board does not;
   ChatGPT desktop hands sessions a synthetic `~/.codex/.chatgpt-projects/<id>` cwd — served
@@ -575,57 +659,77 @@ the same rules (`init-tty`) on every PR.
   and also unlocks the cross-machine continuation D0 disclaims.
 - Quality verification (judging the diff via `git_sha` metadata — evidence that
   dereferences) is designed but unbuilt.
-- The pager's three reads run unindexed over `verify_by` / `origin` / `claimed_at` — fine at
+- The pager's four reads run unindexed over `verify_by` / `origin` / `claimed_at` — fine at
   local scale (hundreds of tasks); an index is the first fix should a SessionStart ever near
   its 8s budget.
-- The 6 pre-pipeline asserted smoke tasks in the repo workspace have no verification tasks
-  (backfill on request). Extraction gates (publish to npm/GitHub): oathe-runtime dependency,
-  cage import-by-path, `private: true`, star URL 404.
 - `extra.oathe` is upstream-RFC-shaped for harbor-framework/harbor (external-contribution
   precedent exists: NVIDIA in v1.7).
 
 ## 15. File map
 
 ```
-bin/oathe.mjs            CLI router (parseArgs; verbatim arg passthrough to harnesses)
+bin/oathe.mjs            CLI router (parseArgs; verbatim arg passthrough to harnesses; the node floor at the door)
+bin/node-floor.mjs       the same floor at npm's install door (package.json preinstall)
+src/node-floor.mjs       the engines.node floor, executed (ERROR_NODE_VERSION) — read from package.json by both doors
 src/config.mjs           OatheConfig — every tunable, layered, provenance-aware
 src/paths.mjs            all filesystem locations, env-overridable
 src/blocks.mjs           managed writes: FencedBlock (text) + JsonEntries + JsonArrayEntries
 src/manifest.mjs         install manifest + pre-first-write backups (atomic writes)
 src/fslock.mjs           atomic temp-then-rename JSON + bounded advisory lock
 src/registry.mjs         the central workspace registry (~/.oathe/workspaces.json)
-src/harnesses/           the adapter catalog: base, dialects, claude/codex/cursor, surfaces
+src/sessions.mjs         the device session registry (~/.oathe/sessions.json): which living process speaks for a session
+src/speaker.mjs          the SPEAKER primitive: {surface, app, session} resolved from process ancestry
+src/harnesses/           the adapter catalog: base, dialects, claude/codex/cursor, surfaces; the rosters
+                         (claude-roster, codex-roster), the projectors (claude-transcript, codex-rollout), the fidelity probes
 src/workspace-resolver.mjs  the ONE resolution ladder (env → adapters' vars → roots → cwd)
 src/fence.mjs            the managed fence, owned once: folder + global bodies, THE write (backup, apply, manifest row)
 src/activation.mjs       workspace activation (preflight, hooks, and claim all call it) + ActivationSeam
 src/home.mjs             ContractRef + HomeBoard — the ONE owner of the contract_ref grammar and the home rule
-src/statements.mjs       statement vocabulary: the trace-subject grammar + the latest-progress SQL fragment
-src/pager.mjs            the breach pager — a condition-based digest of breached promises (R-PAGER)
-src/board-render.mjs     the ONE board renderer: markdown context + ANSI splash, breach section included
-src/substrate.mjs        PG detect/create, ordered DDL apply, seeds, authority registration
+src/statements.mjs       statement vocabulary: the trace-subject grammar, linkTrace, spawn lineage, the latest-progress SQL fragment
+src/pager.mjs            the breach pager — four conditions machine-wide (R-PAGER)
+src/breach-digest.mjs    BreachDigest — the ONE budget over the pager's facts; KINDS owns every word about a kind
+src/board-render.mjs     the ONE board renderer: markdown context + ANSI splash, the digest included
+src/notch-frame.mjs      the notch frame: every word the glass shows, assembled from fetched facts
+src/notch.mjs            the notch lifecycle (darwin): the LaunchAgent, the materialized app, boot in/out
+src/welcome.mjs          the one-time welcome tour, consumed on emit
+src/wire.mjs             one pg_notify per successful speech act — how the ambient surfaces wake
+src/substrate.mjs        PG detect/create, ordered DDL apply, seeds, authority registration, the transaction gate
 src/workspace.mjs        ws-<hash> identity (git root + origin) + root/identity exports
-src/context.mjs          the composition seam every verb starts from
+src/context.mjs          the composition seam every verb starts from (packageVersion lives here)
 src/setup.mjs            oathe init as data: SetupPlan (from the census + describe()) and the TTY SetupPrompter — docs/UX.md
 src/init.mjs / doctor.mjs / uninstall.mjs
+src/launch-env.mjs       the env block a launched session carries (the custody marker + oathe wiring)
 src/launch.mjs           preflight (via activation), splash, cage, runHarness
-src/session-host.mjs     liveness-custody lease renewal (R10 absences)
+src/session-host.mjs     liveness observation for a launched session: nothing on a kill, one exit statement per held claim on a clean exit (R1, R10)
 src/mcp/oathe-tools.mjs  the speech-act MCP server + tool implementations
 src/mcp/connection.mjs   the transport: lazy context, roots requests, list_changed
 src/plans.mjs            the G2-b policy-standard plan + verification-task naming
-src/traces.mjs           TraceStore family (ground-truth readers, drift refusals)
-src/atif.mjs             AtifProjector family + AtifValidator + renderEvidenceView
-src/verifier.mjs         the allocated-on-demand verifier + acceptance-lane settlement
-src/successor.mjs        the pickup successor sequence (real runtime wiring)
-plugin/                  hooks (bin-addressed, dialect-aware), skill, .mcp.json,
+src/traces.mjs           TraceStore family (ground-truth readers, drift refusals, transcriptFor)
+src/trace-census.mjs     the store sweep behind `oathe doctor` and `npm run trace-census`
+src/atif.mjs             the AtifProjector base + AtifValidator + claimIntervals / sliceForTask
+src/oathe-annotator.mjs  the annotator: extra.oathe over any valid trajectory; projectAnnotated, the ONE read
+src/evidence.mjs         the budget-true evidence renderer the verifier reads
+src/verifier.mjs         the allocated-on-demand verifier + settlement through the provider's lane
+src/verify-dispatch.mjs  verifierSeam: oathe_verify dispatches the bin verb detached and awaits the verdict
+src/successor.mjs        the pickup successor sequence (delegates to oathe-runtime/seam, or refuses typed)
+src/runtime/provider.mjs the runtime seam: OatheRuntimeProvider | StandaloneRuntimeProvider (cage, settlement, pickup)
+src/runtime/simple-cage.mjs / sql-acceptance-lane.mjs / discharge.mjs   the standalone cage and lane, and the clause discharge both providers share
+plugin/                  hooks (bin-addressed, dialect-aware), the oathe-work skill, the verify command, .mcp.json,
                          .claude-plugin/plugin.json + .cursor-plugin/plugin.json (adapters)
 .claude-plugin/marketplace.json   one marketplace, both CLI harnesses
+notch/                   the macOS glass (Swift): Feed.swift decodes the frame; make-app.sh assembles the signed universal app
 scripts/pull-harness-docs.mjs / surface-canary.mjs   dev-only: docs snapshot + surface probe
 scripts/harness-docs-drift.mjs / harness-install-contract.mjs / harness-live-contract.mjs   the drift lanes (lane-report.mjs: their one report)
+scripts/trace-fixtures.mjs / derive-trace-fixtures.mjs / trace-census.mjs   the trace corpus tools (list · materialize · project · repin), the sanitizing deriver (marker-scan gated, `--repin` rewrites an expectation from its record), the live-store census
+scripts/harbor-conformance.mjs   the Harbor conformance lane (drives the reference converters on the corpus; `--lock` re-pins)
+scripts/marker-scan.mjs / vendor-ddl.mjs / link-runtime.mjs / pack-notch.mjs   the private-marker scan, the DDL re-vendor, the monorepo re-link, the prepack notch build
 harness-docs.lock.json   the tracked pin of every snapshot page (url + sha) the docs lane compares against
+harbor-conformance.lock.json   the Harbor pin + the reviewed divergence baseline per fixture
 docs/UX.md               the UX contract every prompt and output follows (each rule names its test)
-docs/traces.md           the trace ground-truth contract
-docs/atif-oathe.md       the extra.oathe convention spec
-tests/                   two lanes (test:unit / test:heavy) incl. live-store contracts + Harbor golden fixture
+docs/traces.md           the trace ground-truth contract and the row-type rosters
+docs/atif-oathe.md       the extra.record / extra.oathe convention spec
+docs/PRIVACY.md          what oathe reads, stores, and sends
+tests/                   two lanes (test:unit / test:heavy) incl. live-store contracts, the trace corpus, and the Harbor golden fixture
 ```
 
 ## 16. Key refusal codes (a working vocabulary)
@@ -641,6 +745,9 @@ tests/                   two lanes (test:unit / test:heavy) incl. live-store con
 `OATHE_JSON_TARGET_INVALID` · `OATHE_INIT_HARNESS_UNKNOWN/ABSENT` · `OATHE_INIT_INPUT_CLOSED` · `OATHE_INIT_ABORTED` · `OATHE_VERIFY_IN_FLIGHT` ·
 `OATHE_AMEND_AFTER_DONE` · `OATHE_AMEND_UNAUTHORIZED` · `OATHE_AMEND_VERIFY_TASK` ·
 `TRACE_OWNER_UNKNOWN` · `TRACE_STORE_HARNESS_REQUIRED`.
+`ERROR_NODE_VERSION` carries no oathe prefix on purpose (founder ruling 2026-09-02): it is
+the Node floor refusing at both doors — npm's `preinstall` and the bin — to someone who is
+not yet running oathe at all, so it speaks plainly rather than in oathe's vocabulary.
 Substrate-side: FC003 (second claimant), FC010 (self-verification), FC110–FC114
 (settlement gates), FC130–FC134 (reopen/reclaim), FC140/FC141 (yield cause), FC160/FC161
 (contract freeze/amend), FC170 (authority writer).

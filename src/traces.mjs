@@ -1,4 +1,4 @@
-// oathe — the trace stores: how both harnesses' session records are found, validated, and
+// oathe — the trace stores: how Claude Code's and Codex's session records are found, validated, and
 // read. The CONTRACT lives in docs/traces.md; both vendors disclaim schema stability, so
 // every read validates and REFUSES loudly (TraceContractError) rather than returning less
 // evidence than a claim recorded. Nothing is hardcoded: every path derives from the store's
@@ -88,6 +88,26 @@ export class TraceStore {
   newestFileIn(dir, matches) {
     return this.#newestIn(dir, matches);
   }
+
+  /**
+   * Protected: matched files whose mtime falls inside the window, newest first, capped at
+   * maxFiles — and the newest match is ALWAYS included, so an idle store still yields its
+   * latest record instead of an empty (and therefore silently green) sweep.
+   */
+  recentFilesIn(dir, matches, { days, maxFiles, now = Date.now() }) {
+    if (!fs.existsSync(dir)) return [];
+    const hits = [];
+    for (const entry of fs.readdirSync(dir, { recursive: true })) {
+      const full = path.join(dir, String(entry));
+      if (!matches(String(entry))) continue;
+      const stat = fs.statSync(full, { throwIfNoEntry: false });
+      if (stat?.isFile()) hits.push({ full, mtimeMs: stat.mtimeMs });
+    }
+    hits.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const windowed = hits.filter((h) => h.mtimeMs >= now - days * 86_400_000).slice(0, maxFiles);
+    if (windowed.length === 0 && hits.length > 0) return [hits[0].full];
+    return windowed.map((h) => h.full);
+  }
 }
 
 const CLAUDE_MESSAGE_TYPES = new Set(['user', 'assistant', 'system']);
@@ -152,8 +172,44 @@ export class ClaudeTraceStore extends TraceStore {
       });
   }
 
+  static #isTranscript = (p) => /[0-9a-f-]{36}\.jsonl$/.test(p) && !p.includes('subagents');
+
+  /**
+   * The file a session's rows actually live in. The harness names a transcript per hook
+   * (`transcript_path`), but after a resume — and after a context compaction — it rotates the
+   * session id, reports `<new-id>.jsonl`, and keeps appending to the ORIGINAL file, stamping
+   * each new row with `session_id: <new-id>` beside the file's own `sessionId` (measured
+   * 2026-09-01). So: a reported file that exists is the answer; otherwise the newest sibling
+   * whose rows carry the id is; otherwise the reported path stands — a fresh session's file
+   * is created lazily and nothing carries its id yet. Positive evidence only, never a guess:
+   * a file that merely mentions the id in its text is not the session's.
+   */
+  transcriptFor({ sessionId, reportedPath }) {
+    if (reportedPath === null || reportedPath === undefined || fs.existsSync(reportedPath)) return reportedPath ?? null;
+    const dir = path.dirname(reportedPath);
+    if (!fs.existsSync(dir)) return reportedPath;
+    const siblings = fs.readdirSync(dir)
+      .filter((f) => ClaudeTraceStore.#isTranscript(f))
+      .map((f) => ({ full: path.join(dir, f), mtimeMs: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const carries = (row) => row?.session_id === sessionId || row?.sessionId === sessionId;
+    for (const { full } of siblings) {
+      const text = fs.readFileSync(full, 'utf8');
+      if (!text.includes(sessionId)) continue; // the cheap gate; the rows decide
+      for (const line of text.split('\n')) {
+        if (!line.includes(sessionId)) continue;
+        try { if (carries(JSON.parse(line))) return full; } catch { /* a malformed line is describe()'s refusal, not this scan's */ }
+      }
+    }
+    return reportedPath;
+  }
+
   newestTranscript() {
-    return this.newestFileIn(this.projectsRoot, (p) => /[0-9a-f-]{36}\.jsonl$/.test(p) && !p.includes('subagents'));
+    return this.newestFileIn(this.projectsRoot, ClaudeTraceStore.#isTranscript);
+  }
+
+  recentTranscripts({ days, maxFiles }) {
+    return this.recentFilesIn(this.projectsRoot, ClaudeTraceStore.#isTranscript, { days, maxFiles });
   }
 }
 
@@ -222,21 +278,57 @@ export class CodexTraceStore extends TraceStore {
     }
   }
 
-  /** Fan-out: children of a thread per thread_spawn_edges, joined to their rollout paths. */
+  /**
+   * Fan-out: children of a thread per thread_spawn_edges, joined to their rollout paths —
+   * with the edge status (a failed child must be distinguishable from a completed one) and
+   * the spawn identity from threads.source (`{subagent: {thread_spawn: {agent_nickname,
+   * agent_role, agent_path, depth, …}}}`, measured live 2026-08-31). A source that is not
+   * JSON is an expected shape gone unreadable — refuse, never project a nameless child.
+   */
   childThreads(threadId) {
     const db = this.#db();
     try {
       return db.prepare(
-        `SELECT e.child_thread_id AS thread_id, t.rollout_path, t.cwd, t.title
+        `SELECT e.child_thread_id AS thread_id, e.status, t.rollout_path, t.cwd, t.title, t.source
            FROM thread_spawn_edges e LEFT JOIN threads t ON t.id = e.child_thread_id
           WHERE e.parent_thread_id = ?`,
-      ).all(threadId);
+      ).all(threadId).map(({ source, ...row }) => {
+        let parsed = null;
+        if (source != null) {
+          try {
+            parsed = JSON.parse(source);
+          } catch (e) {
+            throw new TraceContractError('TRACE_CODEX_SOURCE_MALFORMED',
+              `thread ${row.thread_id}: threads.source is not JSON (${e.message}) — the spawn `
+              + 'identity this store relies on is unreadable', { thread_id: row.thread_id });
+          }
+        }
+        return { ...row, spawn: parsed?.subagent?.thread_spawn ?? null };
+      });
     } finally {
       db.close();
     }
   }
 
+  static #isRollout = (p) => /rollout-.+\.jsonl(\.zst)?$/.test(p);
+
+  /**
+   * The rollout a thread's rows live in: the reported path when it exists, else the thread
+   * index's own `rollout_path` (the store's record of where it writes), else the reported
+   * path — a rollout not written yet. Same contract as the Claude store's.
+   */
+  transcriptFor({ sessionId, reportedPath }) {
+    if (reportedPath === null || reportedPath === undefined || fs.existsSync(reportedPath)) return reportedPath ?? null;
+    let indexed = null;
+    try { indexed = this.threadRow(sessionId)?.rollout_path ?? null; } catch { indexed = null; } // no index on this machine: nothing to consult
+    return indexed !== null && fs.existsSync(indexed) ? indexed : reportedPath;
+  }
+
   newestRollout() {
-    return this.newestFileIn(this.sessionsRoot, (p) => /rollout-.+\.jsonl(\.zst)?$/.test(p));
+    return this.newestFileIn(this.sessionsRoot, CodexTraceStore.#isRollout);
+  }
+
+  recentRollouts({ days, maxFiles }) {
+    return this.recentFilesIn(this.sessionsRoot, CodexTraceStore.#isRollout, { days, maxFiles });
   }
 }

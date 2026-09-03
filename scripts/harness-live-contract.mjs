@@ -152,11 +152,14 @@ export async function runLiveContract({
           : `${surface} (pid ${row.pid} ${pidAlive(row.pid) ? 'alive' : 'exited'}${row.app ? `, ${path.basename(row.app.bundle)}` : ', no app'})`);
   }
 
-  // 6. engines: the session's transcript projects (RUNTIME is the environment, not drift)
+  // 6. engines: the session's transcript projects AND the store censuses clean — the
+  // doctor's trace status is census-backed (roster + fidelity over the recent window), so
+  // the freshest CLI's own rollout is swept the night it lands (RUNTIME stays the
+  // environment, never drift).
   if (Adapter.traces !== null) {
     const status = await traceStatus(harness, env);
     report.add('transcript-projects', status === 'ok',
-      status === 'ok' ? '' : status === 'RUNTIME' ? 'RUNTIME — this runtime cannot read the store (Node >= 22.5 needed); not harness drift'
+      status === 'ok' ? '' : status === 'RUNTIME' ? 'RUNTIME — this runtime cannot read the store (node:sqlite needs Node >= 22.13); not harness drift'
         : status === 'store-absent' ? 'no transcript found under HOME — the session left no record' : `${status}`);
   }
   return report;

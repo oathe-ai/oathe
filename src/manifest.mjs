@@ -44,6 +44,10 @@ export class InstallManifest {
       { format: MANIFEST_FORMAT, saved_at: this.clock(), rows: this.rows, backups: this.backups });
   }
 
+  /** Row identities this object removed since it last read the file — a merge-refresh must not
+   *  bring them back from a disk copy that predates the removal. */
+  #removed = new Set();
+
   /** One row per (harness, file, kind, detail identity); a re-run replaces its own row. */
   upsert({ harness, file, kind, scope = 'user', detail = null, blockVersion, sha256 }) {
     const key = this.#key({ harness, file, kind, detail });
@@ -54,6 +58,7 @@ export class InstallManifest {
     const at = this.rows.findIndex((r) => this.#key(r) === key);
     if (at === -1) this.rows.push(row);
     else this.rows[at] = row;
+    this.#removed.delete(key); // written again in the same run: a row, not a removal
     return row;
   }
 
@@ -65,7 +70,37 @@ export class InstallManifest {
   removeWhere(predicate) {
     const dropped = this.rows.filter(predicate);
     this.rows = this.rows.filter((r) => !predicate(r));
+    for (const row of dropped) this.#removed.add(this.#key(row));
     return dropped;
+  }
+
+  /**
+   * Re-read this manifest's file into THIS object (B4, 2026-09-03). A holder that loaded long
+   * ago — the MCP server's context, built once per config change and kept for days — used to
+   * write its snapshot back over everything `oathe init` and `oathe uninstall` had recorded
+   * since. Plain: rows and backups become the file's (the caller holds the lock and mutates
+   * next). With `merge`: rows another writer landed since this object loaded are kept, rows
+   * this object removed stay removed, and this object's own rows win on identity — what init
+   * and uninstall need at the end of a run long enough for a hook to activate in between.
+   * A missing file reads as empty, as load() reads it.
+   * @returns {InstallManifest} this
+   */
+  refresh({ merge = false } = {}) {
+    const fresh = InstallManifest.load({ manifestPath: this.manifestPath, backupsDir: this.backupsDir, clock: this.clock });
+    if (!merge) {
+      this.rows = fresh.rows;
+      this.backups = fresh.backups;
+    } else {
+      const mine = new Set(this.rows.map((r) => this.#key(r)));
+      for (const row of fresh.rows) {
+        const key = this.#key(row);
+        if (!mine.has(key) && !this.#removed.has(key)) this.rows.push(row);
+      }
+      const backedUp = new Set(this.backups.map((b) => b.file));
+      for (const b of fresh.backups) if (!backedUp.has(b.file)) this.backups.push(b);
+    }
+    this.#removed.clear();
+    return this;
   }
 
   /**

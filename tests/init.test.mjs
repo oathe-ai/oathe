@@ -11,12 +11,13 @@ import { runUninstall } from '../src/uninstall.mjs';
 import { Substrate, DDL_FILES } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
 import { launchAgentPath } from '../src/notch.mjs';
+import { InstallManifest } from '../src/manifest.mjs';
 
 const SCRATCH_DB = `oathe_init_test_${process.pid}`;
 const paths = buildPaths({});
 
 // Once vendor/ddl ships in this tree, the OATHE_DDL_DIR > vendor/ddl > monorepo > null fallback
-// chain always resolves a source — "no DDL source at all" is no longer reachable via env alone
+// chain always resolves a source — "no DDL source at all" is not reachable via env alone
 // (nulling OATHE_MONOREPO just falls through to vendor/ddl). Skip loudly rather than silently
 // rewrite the test's meaning into a duplicate of the "named source missing" case below.
 const skipNoDdlSource = paths.ddlSource === 'vendor'
@@ -460,15 +461,15 @@ test('when the machine-wide verifier IS already chosen, init says so instead of 
   assert.match(result.verifier_engine.reason ?? '', /already chosen machine-wide/);
 });
 
-test('the verifier candidates require the CLI: an IDE-only Cursor is not offered; one with cursor-agent on PATH is', async () => {
+test('the verifier candidates require the CLI: an IDE-only Cursor is not offered; one with agent on PATH is', async () => {
   // The sandbox inherits the machine PATH (node must stay findable); this machine may carry a real
-  // cursor-agent, so the IDE-only case pins PATH to the sandbox bin plus node's own directory.
+  // agent, so the IDE-only case pins PATH to the sandbox bin plus node's own directory.
   const nodeDir = path.dirname(process.execPath);
   const { home, env, exec } = sandbox(); // ~/.cursor exists
   const ideOnly = await runInit({ env: { ...env, PATH: `${path.join(home, 'bin')}:${nodeDir}` }, exec });
   assert.deepEqual(ideOnly.verifier_engine.candidates, ['claude', 'codex']);
   const { home: home2, env: env2, exec: exec2 } = sandbox();
-  fs.writeFileSync(path.join(home2, 'bin/cursor-agent'), '#!/bin/sh\n'); fs.chmodSync(path.join(home2, 'bin/cursor-agent'), 0o755);
+  fs.writeFileSync(path.join(home2, 'bin/agent'), '#!/bin/sh\n'); fs.chmodSync(path.join(home2, 'bin/agent'), 0o755);
   const withCli = await runInit({ env: { ...env2, PATH: `${path.join(home2, 'bin')}:${nodeDir}` }, exec: exec2 });
   assert.deepEqual(withCli.verifier_engine.candidates, ['claude', 'codex', 'cursor']);
 });
@@ -536,4 +537,31 @@ test('init plants the welcome marker ONLY when it CREATES the database — re-in
     await substrate.close();
     await substrate.dropDatabase();
   }
+});
+
+test('init and uninstall merge what landed on disk while they ran — a hook that activates mid-run keeps its row, and neither writes a snapshot over a living file (B4)', async () => {
+  // Measured 2026-09-03: an init's rows vanished under a long-lived server's stale save (that
+  // half is activation's refresh); the other half is init/uninstall themselves, which load at
+  // their start and save once at their end while their CLI calls take seconds — a hook that
+  // activates a workspace in between must not lose its fence row to that final save.
+  const { env, exec } = sandbox();
+  const { manifestPath, backupsDir } = buildPaths(env);
+  const foreignFence = (file) => {
+    const m = InstallManifest.load({ manifestPath, backupsDir });
+    m.upsert({ harness: 'project', file, kind: 'fence', detail: null, blockVersion: '9.9.9', sha256: 'f' });
+    m.save();
+  };
+  let fired = false;
+  const midInit = { ...exec, run: (...a) => { if (!fired) { fired = true; foreignFence('/elsewhere/CLAUDE.md'); } return exec.run(...a); } };
+  await runInit({ env, exec: midInit, assumeYes: true });
+  assert.ok(fired, 'the interposed hook fired during init');
+  const afterInit = InstallManifest.load({ manifestPath, backupsDir });
+  assert.ok(afterInit.rows.some((r) => r.file === '/elsewhere/CLAUDE.md'), "the mid-init fence row survived init's save");
+  assert.ok(afterInit.rows.some((r) => r.harness === 'claude'), 'and init recorded its own rows');
+  fired = false;
+  const midUninstall = { ...exec, run: (...a) => { if (!fired) { fired = true; foreignFence('/elsewhere2/CLAUDE.md'); } return exec.run(...a); } };
+  await runUninstall({ env, exec: midUninstall });
+  const afterUninstall = InstallManifest.load({ manifestPath, backupsDir });
+  assert.ok(afterUninstall.rows.some((r) => r.file === '/elsewhere2/CLAUDE.md'), "a fence row that landed mid-uninstall survived (the next uninstall's business, never a lost update)");
+  assert.ok(!afterUninstall.rows.some((r) => r.harness === 'claude' || r.file === '/elsewhere/CLAUDE.md'), "uninstall's own removals held");
 });

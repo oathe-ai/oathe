@@ -15,7 +15,7 @@ import { Substrate } from '../../src/substrate.mjs';
 import { buildPaths, homeOf } from '../../src/paths.mjs';
 import { OatheConfig } from '../../src/config.mjs';
 
-import { dialectFor, ownerOfTracePath } from '../../src/harnesses/catalog.mjs';
+import { dialectFor, ownerOfTracePath, transcriptFor } from '../../src/harnesses/catalog.mjs';
 import { cwdDialect } from '../../src/harnesses/dialects.mjs';
 import { WorkspaceResolver } from '../../src/workspace-resolver.mjs';
 
@@ -52,11 +52,13 @@ export async function buildHookContext(input, env = process.env) {
     : await new WorkspaceResolver({ env, home }).resolve();
   const cwd = place.dir;
   const config = new OatheConfig({ env, cwd });
-  // The session identity the harness hands every hook — the trace linkage rides on it.
+  // The session identity the harness hands every hook — the trace linkage rides on it. The
+  // transcript is the file the session's rows LIVE in, resolved through its store: a resumed
+  // or compacted session is told <new-id>.jsonl and keeps writing the original.
   const session = normalized.sessionId
     ? {
       sessionId: normalized.sessionId,
-      transcriptPath: normalized.transcriptPath,
+      transcriptPath: transcriptFor({ sessionId: normalized.sessionId, reportedPath: normalized.transcriptPath, home }),
       harness: ownerOfTracePath(normalized.transcriptPath ?? ''),
     }
     : null;
@@ -67,7 +69,7 @@ export async function buildHookContext(input, env = process.env) {
     synthetic: place.synthetic, // R-BOARD-SCOPE: a staging dir serves the full board
     identity: {
       orgId: config.get('org'),
-      principalId: config.get('principal') || env.USER || 'operator',
+      principalId: config.get('principal'),
       department: config.get('department'),
     },
     config,
@@ -98,7 +100,7 @@ export async function ensureSessionRegistered({ session, paths, workspace = unde
     const { SessionRegistry, processAncestry, nearestAppBundle } = await import('../../src/sessions.mjs');
     const { ownedAncestorIndex } = await import('../../src/harnesses/catalog.mjs');
     // The row describes THE HARNESS PROCESS, not whatever interposer spawned the hook
-    // (cursor-agent runs hooks through a short-lived /bin/zsh — registering the shell's pid
+    // (Cursor's agent CLI runs hooks through a short-lived /bin/zsh — registering the shell's pid
     // would sweep the session the moment the shell exits). Walk up to the nearest
     // adapter-owned ancestor; a chain with none (fixtures, bare runners) keeps the ppid.
     const walk = processAncestry({ pid: process.ppid });

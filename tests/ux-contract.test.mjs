@@ -32,6 +32,17 @@ test('docs/UX.md: every rule is held by a named, existing test file — a rule n
     }
   }
   assert.doesNotMatch(ux, /\[\d+\]/, 'the contract itself shows no numbered menu');
+  assert.ok(rules.length >= 20, `the breach rules (17–20) are in the contract (found ${rules.length})`);
+});
+
+test('UX rule 16 applied: the copy promises what the code does — verify blocks on its verdict, the handoff names the digest', () => {
+  const verify = fs.readFileSync(path.join(root, 'plugin/commands/verify.md'), 'utf8');
+  assert.match(verify, /verdict/, 'the command copy names the verdict the call returns');
+  assert.doesNotMatch(verify, /returns immediately/, 'the seam blocks and answers; the copy must not say it returns immediately');
+  const product = fs.readFileSync(path.join(root, 'docs/PRODUCT.md'), 'utf8');
+  assert.match(product, /BreachDigest/, 'the handoff names the one budget');
+  assert.match(product, /\+N more/, 'and the pull pointer');
+  assert.match(product, /src\/notch-frame\.mjs/, 'and the frame builder');
 });
 
 test('PRODUCT.md §3 names every file a wiring adapter says init writes — the handoff cannot lag describe()', async () => {

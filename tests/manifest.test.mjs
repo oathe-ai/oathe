@@ -79,6 +79,54 @@ test('backupOnce of a file that does not exist yet records an absent-before mark
   assert.equal(m.backups[0].absent_before, true);
 });
 
+test('refresh() re-reads the file into the SAME object — a holder that loaded long ago sees what others saved, never its snapshot (B4)', () => {
+  // The MCP server builds its context once per config change and keeps the manifest object for
+  // days; every oathe_claim through it used to write that snapshot back over init's rows
+  // (measured 2026-09-03: rows dated 2026-08-31 beside files the 0.4.0 init had rewritten).
+  const { manifestPath, backupsDir } = scratch();
+  const longLived = InstallManifest.load({ manifestPath, backupsDir, clock: FIXED_CLOCK });
+  longLived.save();
+  const init = InstallManifest.load({ manifestPath, backupsDir, clock: FIXED_CLOCK });
+  init.upsert({ harness: 'claude', file: '/h/.claude/settings.json', kind: 'json-path', detail: { paths: [['a']] }, blockVersion: '0.4.1', sha256: 'x' });
+  init.backupOnce(manifestPath); // any file: the backups list must travel too
+  init.save();
+  assert.deepEqual(longLived.rows, [], 'the stale snapshot, before refresh');
+  const same = longLived.refresh();
+  assert.equal(same, longLived, 'refresh returns the object it refreshed');
+  assert.equal(longLived.rows.length, 1);
+  assert.equal(longLived.rows[0].harness, 'claude');
+  assert.equal(longLived.backups.length, 1, 'backups refreshed with the rows');
+  longLived.upsert({ harness: 'project', file: '/ws/CLAUDE.md', kind: 'fence', detail: null, blockVersion: '0.4.1', sha256: 'f' });
+  longLived.save();
+  const onDisk = JSON.parse(fs.readFileSync(manifestPath, 'utf8')).rows.map((r) => r.harness).sort();
+  assert.deepEqual(onDisk, ['claude', 'project'], "init's row survived the long-lived holder's save");
+});
+
+test('refresh({ merge: true }) keeps rows that landed since this object loaded, drops what this object removed, and lets its own rows win (B4, the init/uninstall case)', () => {
+  const { manifestPath, backupsDir } = scratch();
+  const seed = InstallManifest.load({ manifestPath, backupsDir, clock: FIXED_CLOCK });
+  seed.upsert({ harness: 'codex', file: '/h/.codex/config.toml', kind: 'cli-managed', detail: { stanza: 'old' }, blockVersion: '0.3.1', sha256: 'o' });
+  seed.upsert({ harness: 'claude', file: '/h/.claude/settings.json', kind: 'json-path', detail: { paths: [['a']] }, blockVersion: '0.3.1', sha256: 'o' });
+  seed.save();
+  const init = InstallManifest.load({ manifestPath, backupsDir, clock: FIXED_CLOCK }); // init loads at its start
+  // …and while init runs its CLIs, a hook activates a workspace and saves its fence row:
+  const hook = InstallManifest.load({ manifestPath, backupsDir, clock: FIXED_CLOCK });
+  hook.upsert({ harness: 'project', file: '/ws/CLAUDE.md', kind: 'fence', detail: null, blockVersion: '0.4.1', sha256: 'f' });
+  hook.save();
+  // init's own work: the codex stanza is offboarded, the claude row is rewritten
+  init.removeWhere((r) => r.harness === 'codex');
+  init.upsert({ harness: 'claude', file: '/h/.claude/settings.json', kind: 'json-path', detail: { paths: [['a']] }, blockVersion: '0.4.1', sha256: 'n' });
+  init.refresh({ merge: true });
+  init.save();
+  const rows = JSON.parse(fs.readFileSync(manifestPath, 'utf8')).rows;
+  assert.deepEqual(rows.map((r) => `${r.harness}@${r.block_version}`).sort(), ['claude@0.4.1', 'project@0.4.1'],
+    "the hook's fence row is kept, the removed codex row stays removed, init's rewrite wins");
+  // A row removed and then written again in the same run is a row, not a removal.
+  init.upsert({ harness: 'codex', file: '/h/.codex/config.toml', kind: 'cli-managed', detail: { stanza: 'old' }, blockVersion: '0.4.1', sha256: 'n' });
+  init.refresh({ merge: true });
+  assert.ok(init.rows.some((r) => r.harness === 'codex' && r.block_version === '0.4.1'));
+});
+
 test('removeWhere drops matching rows and reports what it dropped', () => {
   const { manifestPath, backupsDir } = scratch();
   const m = InstallManifest.load({ manifestPath, backupsDir, clock: FIXED_CLOCK });
