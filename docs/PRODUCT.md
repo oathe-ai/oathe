@@ -155,6 +155,13 @@ sanctioned install path:
   contract** (full ATIF projection of the newest record in each store → `DRIFT` fails).
 - `oathe uninstall` removes exactly the recorded entries via the inverse CLIs/fence
   removals; the database stays (`--purge-db` is the one exception).
+- `oathe update` (`src/update.mjs`) is the documented upgrade as one verb: `npm i -g
+  @oathe/oathe@latest` through the npm beside the node running this bin (`process.execPath` —
+  never PATH's, which on an nvm machine can be another node's), then `init` through the NEW bin
+  under npm's global prefix (`npm prefix -g` — node's own directory by default, elsewhere with a
+  custom prefix) as a child with the terminal attached (this process still holds the old modules). A checkout
+  is refused typed (`OATHE_UPDATE_NOT_GLOBAL` — it updates by git); npm's failure is
+  `OATHE_UPDATE_FAILED` with npm's own last line.
 
 ## 4. The plugin (`plugin/`) — one tree, thin manifest adapters per harness
 
@@ -573,7 +580,7 @@ never a silently-wrong config root. `OATHE_WORKSPACE_DIR` is deliberately NOT a 
 ## 11. CLI reference
 
 `init [--harness a,b] [--yes]` (a setup plan rendered by a prompter — `docs/UX.md`) `· claude · codex · cursor · claim · amend · ls · note · done · verify · trace [--pure] ·
-notch [--welcome] · yield · config · doctor [--surface] · status · version · uninstall [--purge-db] · hook <name> · mcp`
+notch [--welcome] · yield · config · doctor [--surface] · status · version · update [--yes] · uninstall [--purge-db] · hook <name> · mcp`
 (last two are the plugin's bin-addressed entry points; `doctor --surface` prints the
 resolution report — ladder inputs as received, winning rung, registry status — with no
 substrate contact, the probe the unknown surfaces get pointed at alongside
@@ -697,7 +704,7 @@ src/substrate.mjs        PG detect/create, ordered DDL apply, seeds, authority r
 src/workspace.mjs        ws-<hash> identity (git root + origin) + root/identity exports
 src/context.mjs          the composition seam every verb starts from (packageVersion lives here)
 src/setup.mjs            oathe init as data: SetupPlan (from the census + describe()) and the TTY SetupPrompter — docs/UX.md
-src/init.mjs / doctor.mjs / uninstall.mjs
+src/init.mjs / doctor.mjs / uninstall.mjs / update.mjs   (update: the upgrade as one verb — this node's npm, then init through the new bin)
 src/launch-env.mjs       the env block a launched session carries (the custody marker + oathe wiring)
 src/launch.mjs           preflight (via activation), splash, cage, runHarness
 src/session-host.mjs     liveness observation for a launched session: nothing on a kill, one exit statement per held claim on a clean exit (R1, R10)
