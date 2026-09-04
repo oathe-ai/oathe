@@ -10,7 +10,7 @@ You're mid-refactor in Claude Code when it hits a usage limit. You open Codex, s
 
 That's the product. Below is exactly how much of it works today, because a reliability project that overstates its own status would be a joke.
 
-<img width="800" height="519" alt="image" src="https://github.com/user-attachments/assets/fa2b6481-d9db-4242-8bcd-a3add6f7a46b" />
+<img width="800" height="519" alt="Live UI/UX. Picking up a chatgpt app task in Claude code" src="https://github.com/user-attachments/assets/fa2b6481-d9db-4242-8bcd-a3add6f7a46b" />
 
 [![CI](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/oathe-ai/oathe/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE) [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/sjrdWEj4W8)
 
