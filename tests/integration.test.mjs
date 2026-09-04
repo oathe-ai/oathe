@@ -200,8 +200,11 @@ test('an EMPTY env (the codex allowlist posture) still serves: no inherited vari
 });
 
 test('doctor is clean over the whole install, then uninstall byte-restores every harness config', async () => {
-  const doctor = await runDoctor({ env: sb.env });
+  const doctor = await runDoctor({ env: sb.env, exec: sb.exec });
   assert.ok(doctor.rows.every((r) => r.status === 'ok'), JSON.stringify(doctor.rows));
+  if (process.platform === 'darwin') { // the notch is a darwin surface; off it there is no agent row at all
+    assert.ok(doctor.rows.some((r) => r.kind === 'launch-agent' && r.status === 'ok'), 'the notch agent row is ok only because launchd RUNS it');
+  }
 
   const cursorMcpBefore = fs.readFileSync(path.join(sb.home, '.cursor/mcp.json'), 'utf8');
   assert.ok(cursorMcpBefore.includes('oathe'), 'cursor was wired by init');

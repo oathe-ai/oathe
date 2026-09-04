@@ -15,6 +15,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { defaultExec } from './harnesses/harness.mjs';
+import { notchStatus } from './notch.mjs';
+import { homeOf } from './paths.mjs';
 
 export class UpdateError extends Error {
   constructor(code, message, details = {}) {
@@ -45,17 +47,24 @@ function defaultHandoff(bin, args, { env }) {
   return { status: r.status ?? 1 };
 }
 
+/** launchd's word on the notch after init — darwin only; elsewhere there is no notch to report. */
+function defaultNotch({ env }) {
+  return process.platform === 'darwin' ? notchStatus({ home: homeOf(env) }) : null;
+}
+
 const lastLine = (text) => String(text ?? '').trim().split('\n').filter(Boolean).at(-1) ?? '';
 const realpathOrSelf = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
 
 /**
  * @param {{packageRoot: string, execPath?: string, exec?: {run: Function}, handoff?: Function,
- *          env?: NodeJS.ProcessEnv, args?: string[], out?: {write: Function}, tag?: string}} o
- * @returns {{before: string, after: string, initStatus: number}}
+ *          env?: NodeJS.ProcessEnv, args?: string[], out?: {write: Function}, tag?: string,
+ *          notch?: Function}} o
+ * @returns {{before: string, after: string, initStatus: number,
+ *            notch: {label: string, loaded: boolean, pid: number|null}|null}}
  */
 export function runUpdate({
   packageRoot, execPath = process.execPath, exec = defaultExec, handoff = defaultHandoff,
-  env = process.env, args = [], out = process.stdout, tag = 'latest',
+  env = process.env, args = [], out = process.stdout, tag = 'latest', notch = defaultNotch,
 }) {
   const readPkg = () => JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
   const pkg = readPkg();
@@ -82,5 +91,12 @@ export function runUpdate({
   // custom prefix — never assumed from where node is.
   const prefix = npmQuery(exec, npm, ['prefix', '-g'], 'OATHE_UPDATE_NPM_UNAVAILABLE');
   const init = handoff(path.join(prefix, 'bin', 'oathe'), ['init', ...args], { env });
-  return { before, after, initStatus: init.status };
+  if (init.status !== 0) return { before, after, initStatus: init.status, notch: null };
+  // The last word is the one the person needs: the version live NOW, and whether the notch
+  // they look at is the new one — read from launchd after init re-wired it, never assumed.
+  const glass = notch({ env });
+  if (glass === null) out.write(`update successful — oathe v${after}\n`);
+  else if (glass.pid !== null) out.write(`update successful — oathe v${after} · notch running (pid ${glass.pid})\n`);
+  else out.write(`update installed oathe v${after} — but the notch is NOT running (launchd: ${glass.loaded ? 'loaded, no pid' : 'not loaded'}); run \`oathe init\` and read its notch line\n`);
+  return { before, after, initStatus: init.status, notch: glass };
 }

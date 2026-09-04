@@ -13,7 +13,7 @@ import path from 'node:path';
 
 import {
   NOTCH_LABEL, notchLabel, launchAgentPath, launchAgentPlist, packagedNotchApp,
-  materializeNotchApp, wireNotch, unwireNotch,
+  materializeNotchApp, wireNotch, unwireNotch, notchStatus,
 } from '../src/notch.mjs';
 import { InstallManifest } from '../src/manifest.mjs';
 
@@ -30,7 +30,8 @@ function plantApp(root, bytes = 'binary-v1') {
 
 function fakeExec() {
   const calls = [];
-  return { calls, run: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '', stderr: '' }; } };
+  // launchd answers a wired agent with its pid — a fake that stays silent would be a notch that never came up.
+  return { calls, run: (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: args[0] === 'print' ? '\tpid = 1\n' : '', stderr: '' }; } };
 }
 
 function manifestIn(home) {
@@ -40,7 +41,7 @@ function manifestIn(home) {
   });
 }
 
-const fakeConfig = (overrides = {}) => ({ get: (k) => overrides[k] ?? null });
+const fakeConfig = (overrides = {}) => ({ get: (k) => ({ notchRestartSeconds: 1, notchRestartPollMs: 1, ...overrides })[k] ?? null });
 
 test('launchAgentPlist keeps the agent alive and launches at load — a dead notch is a silent notch', () => {
   const plist = launchAgentPlist('/x/OatheNotch', { nodeBinDir: '/n/bin' });
@@ -97,7 +98,8 @@ test('wireNotch points launchd at the MATERIALIZED copy, records both rows, prun
     assert.ok(agentRow && appRow, 'both surfaces are manifest-owned');
     assert.ok(fs.existsSync(appRow.file), 'the notch-app row names the materialized dir');
 
-    assert.deepEqual(exec.calls.map((c) => c[1]), ['bootout', 'bootstrap'], 're-run is the restart');
+    assert.deepEqual(exec.calls.map((c) => c[1]).filter((v) => v !== 'print'), ['bootout', 'bootstrap'], 're-run is the restart');
+    assert.equal(exec.calls.at(-1)[1], 'print', 'and launchd is asked whether the job runs — the row says what launchd says');
 
     // An upgrade (new bytes) re-wires to a NEW key and PRUNES the old one — launchd is
     // already off it (bootout precedes), so nothing yanks a running binary.
@@ -170,4 +172,66 @@ test('wire and unwire speak the derived label end to end — file name, Label ke
     unwireNotch({ manifest, exec, uid: 501 });
     assert.ok(exec.calls.some((c) => c[1] === 'bootout' && c[2] === `gui/501/${label}`), 'unwire boots out what wire named');
   } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+/** launchd as it really behaves: bootout returns at once, bootstrap refuses while the old job is
+ *  still tearing down ("Bootstrap failed: 5: Input/output error"), then takes it; print names the
+ *  pid once the job runs. `refusals` = how many bootstraps launchd turns away first. */
+function launchdExec({ refusals = 0, pid = 4242, bootstrapOk = true } = {}) {
+  const calls = [];
+  let loaded = false;
+  return {
+    calls,
+    run(cmd, args) {
+      calls.push([cmd, ...args]);
+      if (args[0] === 'bootout') { loaded = false; return { status: 0, stdout: '', stderr: '' }; }
+      if (args[0] === 'bootstrap') {
+        if (refusals-- > 0 || !bootstrapOk) return { status: 5, stdout: '', stderr: 'Bootstrap failed: 5: Input/output error\nTry re-running the command as root for richer errors.\n' };
+        loaded = true; return { status: 0, stdout: '', stderr: '' };
+      }
+      if (args[0] === 'print') {
+        return loaded ? { status: 0, stdout: `\tstate = running\n\tpid = ${pid}\n`, stderr: '' }
+          : { status: 113, stdout: '', stderr: 'Could not find service "x" in domain for user gui: 501\n' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  };
+}
+
+test('re-wire outlives launchd\'s asynchronous bootout: bootstrap is retried until launchd takes it, and the running pid is reported (the 0.4.3 update left the notch unloaded)', { skip: process.platform !== 'darwin' && 'LaunchAgents are a darwin surface' }, () => {
+  const home = tmp(); const root = tmp();
+  try {
+    plantApp(root);
+    const exec = launchdExec({ refusals: 2, pid: 777 });
+    const slept = [];
+    const actions = wireNotch({ home, manifest: manifestIn(home), config: fakeConfig(), version: 'v1', exec, uid: 501, packageRoot: root, sleep: (ms) => slept.push(ms) });
+    assert.equal(exec.calls.filter((c) => c[1] === 'bootstrap').length, 3, 'two refusals, then the one that lands');
+    assert.ok(slept.length >= 2, 'the retries wait between attempts, never spin');
+    assert.deepEqual(actions.map((a) => a.action), ['launch-agent-written', 'notch-running']);
+    assert.equal(actions[1].pid, 777, 'the pid launchd reports, not a guess');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('launchd never taking the agent inside the budget is said, with launchd\'s own words — never a silent "written"', { skip: process.platform !== 'darwin' && 'LaunchAgents are a darwin surface' }, () => {
+  const home = tmp(); const root = tmp();
+  try {
+    plantApp(root);
+    const exec = launchdExec({ bootstrapOk: false });
+    const slept = [];
+    const started = Date.now();
+    const actions = wireNotch({ home, manifest: manifestIn(home), config: fakeConfig({ notchRestartSeconds: 1, notchRestartPollMs: 400 }), version: 'v1', exec, uid: 501, packageRoot: root, sleep: (ms) => slept.push(ms) });
+    // The budget is the budget: a poll never sleeps past the deadline (Greptile P1 on #34).
+    assert.ok(slept.every((ms) => ms <= 400 && ms >= 0), `each sleep is at most one poll: ${slept}`);
+    assert.ok(Date.now() - started < 1000 + 400, 'and the whole wait ends at the deadline, not a poll after it');
+    assert.deepEqual(actions.map((a) => a.action), ['launch-agent-written', 'notch-not-running']);
+    assert.match(actions[1].detail, /Bootstrap failed: 5: Input\/output error/, 'launchd\'s last word rides the row');
+    assert.ok(exec.calls.filter((c) => c[1] === 'bootstrap').length >= 2, 'it kept trying inside the budget');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('notchStatus reads launchd: a loaded job with a pid is running; an unknown label is not loaded', () => {
+  const up = launchdExec({ pid: 99 }); up.run('launchctl', ['bootstrap', 'gui/501', 'x.plist']);
+  assert.deepEqual(notchStatus({ home: '/h', exec: up, uid: 501 }), { label: notchLabel('/h'), loaded: true, pid: 99 });
+  const down = launchdExec();
+  assert.deepEqual(notchStatus({ home: '/h', exec: down, uid: 501 }), { label: notchLabel('/h'), loaded: false, pid: null });
 });

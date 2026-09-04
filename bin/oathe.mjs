@@ -128,6 +128,14 @@ const handlers = {
     process.stdout.write(`  substrate: db up, ddl ${s.ddl_applied}/${s.ddl_expected} applied `
       + `(source: ${s.ddl_source}), yield cause ${s.yield_cause_registered ? 'registered' : 'MISSING'}\n`);
     process.stdout.write(`  principal: ${result.principal.principal_id} (${result.principal.role})\n`);
+    // The notch is a surface the person looks at: its state is said from launchd, and a dead
+    // one is attention, never folded into ok.
+    const glass = result.actions.find((a) => a.harness === 'notch' && /^notch-(running|not-running)$/.test(a.action));
+    if (glass) {
+      process.stdout.write(glass.action === 'notch-running'
+        ? `  notch: running (pid ${glass.pid})\n`
+        : `  notch: NOT RUNNING — launchd: ${glass.detail} (${glass.label}); run \`oathe init\` again, or \`oathe doctor\`\n`);
+    }
     // The surface note lives here, once: the screen showed only the row.
     for (const surface of result.surfaces.filter((x) => x.detected)) {
       process.stdout.write(`\n${surface.displayName} — detected; nothing to wire:\n${surface.steps.split('\n').map((l) => `  ${l}`).join('\n')}\n`);
@@ -138,7 +146,7 @@ const handlers = {
     // The harness itself is the way in — the plugin rides every session (the launcher is the notch's).
     const bins = launchable().map((name) => byName(name).launch.bin);
     process.stdout.write(`\n  Next: ${B}${bins.slice(0, -1).join(', ')} or ${bins.at(-1)}${R} in any project — the board rides every session.\n`);
-    summary('init', 'ok');
+    summary('init', glass?.action === 'notch-not-running' ? 'attention' : 'ok');
   },
 
 
@@ -553,7 +561,7 @@ const handlers = {
       e.code = 'OATHE_UPDATE_INIT_FAILED';
       throw e;
     }
-    summary('update', 'ok');
+    summary('update', out.notch && out.notch.pid === null ? 'attention' : 'ok');
   },
 
   async doctor(argv) {

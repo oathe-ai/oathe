@@ -261,7 +261,7 @@ test('init refuses BEFORE creating the database when OATHE_DDL_DIR names a direc
 test('doctor over a healthy install reports every row ok; after a user edit inside our keys it REPORTS, never overwrites', async () => {
   const { home, env, exec } = sandbox();
   await runInit({ env, exec });
-  const healthy = await runDoctor({ env });
+  const healthy = await runDoctor({ env, exec }); // the same launchd that took the agent answers whether it runs
   assert.equal(healthy.substrate.reachable, true);
   // the trace-contract monitor derives store paths from env HOME (nothing hardcoded): the
   // sandbox home has no session stores, and the doctor says so VISIBLY instead of skipping.

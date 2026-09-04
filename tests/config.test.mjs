@@ -208,3 +208,11 @@ test('verifier accepts every harness with a headless run — cursor included —
   assert.equal(new OatheConfig({ env: { ...env, OATHE_VERIFIER: 'cursor' }, cwd }).get('verifier'), 'cursor');
   assert.throws(() => new OatheConfig({ env: { ...env, OATHE_VERIFIER: 'cowork' }, cwd }).get('verifier'), /cowork/);
 });
+
+test('the notch restart budget is config: how long init waits for launchd to take the agent, and how often it asks', () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-config-'));
+  const env = { HOME: cwd, OATHE_HOME: path.join(cwd, '.oathe') };
+  assert.equal(new OatheConfig({ env, cwd }).get('notchRestartSeconds'), 10);
+  assert.equal(new OatheConfig({ env, cwd }).get('notchRestartPollMs'), 100);
+  assert.equal(new OatheConfig({ env: { ...env, OATHE_NOTCH_RESTART_SECONDS: '3' }, cwd }).get('notchRestartSeconds'), 3);
+});

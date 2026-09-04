@@ -161,7 +161,10 @@ sanctioned install path:
   under npm's global prefix (`npm prefix -g` — node's own directory by default, elsewhere with a
   custom prefix) as a child with the terminal attached (this process still holds the old modules). A checkout
   is refused typed (`OATHE_UPDATE_NOT_GLOBAL` — it updates by git); npm's failure is
-  `OATHE_UPDATE_FAILED` with npm's own last line.
+  `OATHE_UPDATE_FAILED` with npm's own last line. Its last line is the person's: `update
+  successful — oathe v<after> · notch running (pid N)`, the pid read from launchd
+  (`notchStatus`) after init re-wired the glass; a notch launchd is not running is said as such
+  and the trailer is `attention`, never `ok`.
 
 ## 4. The plugin (`plugin/`) — one tree, thin manifest adapters per harness
 
@@ -471,7 +474,15 @@ repo) supervises the feed as a child and plays the frame: it reads no config and
 sentence, and `tests/notch-frame.test.mjs` holds the frame to its decoder (`Feed.swift`)
 field by field. Lifecycle: the package carries the built app (`prepack`); init writes the
 LaunchAgent (manifest-owned, `src/notch.mjs`) and bootstraps it now; uninstall boots it out
-and removes it; `oathe config notchApp <path> --global` overrides the packaged app.
+and removes it; `oathe config notchApp <path> --global` overrides the packaged app. The
+restart is asked, not raced: `launchctl bootout` returns before the old job is gone and a
+bootstrap inside that window is refused (`5: Input/output error`), so init re-tries inside
+`notchRestartSeconds` (asking every `notchRestartPollMs`), then reads the pid back from
+`launchctl print` — the init line `notch: running (pid N)` and the update's closing line say
+what launchd says. Past the budget the action row is `notch-not-running` with launchd's last
+word, init trails `attention`, and doctor's `launch-agent` row reads `not-running` for an agent
+on disk that launchd dropped. (0.4.3 read nothing back: every re-wire — so every `oathe
+update` — left the notch unloaded until the next login; 0.4.4.)
 
 ## 9. The verification lane (`src/verifier.mjs`, `src/plans.mjs`)
 
@@ -570,6 +581,7 @@ Layered `OatheConfig`: defaults → `~/.oathe/config.json` (global) → `<worksp
 | `rootsTimeoutMs` | `2000` | `OATHE_ROOTS_TIMEOUT_MS` |
 | `pagerQuietHours` | `24` (hours an active claim may stay silent before it is paged) | `OATHE_PAGER_QUIET_HOURS` |
 | `notchApp` / `notchMotionMinutes` / `notchHeartbeatSeconds` | `null` (the packaged app; a path overrides it) / `60` / `300` | `OATHE_NOTCH_APP` / `OATHE_NOTCH_MOTION_MINUTES` / `OATHE_NOTCH_HEARTBEAT_SECONDS` |
+| `notchRestartSeconds` / `notchRestartPollMs` | `10` / `100` (how long init waits for launchd to take the re-wired agent, and how often it asks) | `OATHE_NOTCH_RESTART_SECONDS` / `OATHE_NOTCH_RESTART_POLL_MS` |
 
 Also env-overridable: `OATHE_MONOREPO`, `OATHE_HOME` (paths.mjs). `OatheConfig.global()`
 loads defaults → global file → env with no workspace layer (the server's pre-resolution

@@ -195,7 +195,7 @@ export class CodexHarness extends Harness {
       // marketplace "already added from a different source". Re-register from this root: the
       // undo the manifest already records, then the add again, proof-checked below.
       if (result.status !== 0 && /already added from a different source/.test(result.stderr)) {
-        this.exec.run('codex', reg.undo);
+        this.exec.run('codex', reg.undo); // result unread: the add that follows is the proof — its failure is the typed refusal below, and the config's proof string is checked after it
         result = this.exec.run('codex', reg.add);
       }
       if (result.status !== 0) {
