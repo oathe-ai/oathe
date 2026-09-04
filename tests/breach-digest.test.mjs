@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  BreachDigest, DigestError, KINDS, BUCKET_WORDS, DIGEST_ROW_CAP, DETAIL_CLIP, clipDetail, pullPointer,
+  BreachDigest, DigestError, KINDS, BUSY, BUCKET_WORDS, DIGEST_ROW_CAP, DETAIL_CLIP, clipDetail, pullPointer,
 } from '../src/breach-digest.mjs';
 import { BREACH_KINDS, breachOrder } from '../src/pager.mjs';
 
@@ -30,6 +30,30 @@ test('KINDS names every pager kind, in the pager\'s order, each with its word, i
   assert.deepEqual(KINDS.overdue, { word: 'never verified', bucket: 'verify', act: 'verify ↗' });
   assert.deepEqual(KINDS.quiet, { word: 'quiet', bucket: 'quiet', act: 'continue ↗' });
   assert.deepEqual(BUCKET_WORDS, { fix: 'to fix', verify: 'to verify', quiet: 'gone quiet' });
+});
+
+test('a BUSY breach is verifying: its word and detail are the one busy spelling, it keeps its row, and it leaves the push count and every count', () => {
+  const d = digest([row('stalled', 's1', { busy: true, detail: 'engine claude failed before a verdict: usage limit' }), row('reopened', 'r1', { busy: false })]);
+  const busy = d.rows.find((r) => r.task_id === 's1');
+  assert.equal(busy.kind, 'stalled', 'busy is a state on the breach, never a fifth kind');
+  assert.equal(busy.kind_word, BUSY.word, 'the person word is "verifying" — from the one table');
+  assert.equal(busy.detail, BUSY.detail, 'the previous failure is GONE from the row — the ruling');
+  assert.equal(busy.busy, true, 'the flag rides to the frame');
+  assert.equal(d.push, '1 to fix', 'an in-flight judgment is not a breach to act on — it is not counted');
+  assert.equal(d.counts.stalled, 0);
+  assert.equal(d.rows.length, 2, 'but it is still a row — a person sees it verifying');
+  assert.equal(BUSY.word, 'verifying');
+});
+
+test('a busy CHILD reads verifying in its parent\'s line; a busy parent leads its group with the busy word', () => {
+  const d = digest([
+    row('stalled', 'c0', { parent: 'P', parent_objective: 'fan out', busy: true }),
+    row('stalled', 'c1', { parent: 'P', parent_objective: 'fan out', busy: false }),
+  ]);
+  const group = d.rows[0];
+  assert.match(group.detail, /c0 · verifying/, 'the child line carries the busy word');
+  assert.match(group.detail, /c1 · verify failed/, 'its idle sibling keeps the kind word');
+  assert.equal(d.push, '1 to fix', 'only the idle sibling counts');
 });
 
 test('a kind the pager never emits is a typed refusal — a digest cannot word what it does not know', () => {

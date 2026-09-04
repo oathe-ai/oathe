@@ -97,6 +97,17 @@ export function isVerifyStallSql(column) {
 }
 
 /** R-AMEND: the amendment trail's subject shape — 'amend:<task_id>', owned here alone. */
+/**
+ * The disclosure an ADMITTED session-less act carries (`trace_link.why`, ruling 2026-09-04):
+ * a surface that runs no hooks by design, or a platform where the process tree could not be
+ * walked and the client's label stood in. One wording, spoken by the tools; the CLI prints it.
+ */
+export function attributionWhy({ surface, walked }) {
+  return walked
+    ? `no session registered for ${surface} (a surface that runs no hooks): nothing links this act to a transcript — its evidence is discovered by fingerprint at verify`
+    : `the process ancestry could not be walked on this platform, so the client's own label (${surface}) stood in: nothing links this act to a transcript — its evidence is discovered by fingerprint at verify`;
+}
+
 export const AMEND_SUBJECT_PREFIX = 'amend:';
 export function amendSubjectRef(taskId) {
   return `${AMEND_SUBJECT_PREFIX}${taskId}`;
@@ -200,6 +211,34 @@ export async function linkSpawn({ client, identity, parent, childTaskId, actor }
       spawnSubjectRef(childTaskId), `spawned '${childTaskId}' under this claim`, JSON.stringify([`task:${childTaskId}`])]);
 }
 
+/**
+ * THIS interval was judged rejected — the verification row's statement link (003: every
+ * verification evaluates a RECORDED statement, and the statement names its claim), never a
+ * clock comparison between a verdict and a claim. The one predicate every reader of "was
+ * this claim rejected" spells (plan 2026-09-04, Leg A); when the upstream `rejected_at`
+ * stamp lands (Leg S) this is the one line that changes.
+ */
+export function rejectedIntervalSql({ claim }) {
+  return `EXISTS (SELECT 1 FROM cell.verification v
+                    JOIN cell.agent_statement s
+                      ON s.org_id = v.org_id AND s.task_id = v.task_id AND s.statement_id = v.statement_id
+                   WHERE s.work_claim_id = ${claim}.work_claim_id AND v.result = 'rejected')`;
+}
+
+/**
+ * The judge's live hold on `task`: its verify claim, active inside its lease at `asOf` (a SQL
+ * expression — `now()`, or a bound parameter for a clock a caller injects). An active verify
+ * claim past its lease is a judge that died without releasing, not a running one. The one
+ * spelling of "a judgment is in flight" — the pager's busy and the board's `verifying` agree
+ * by construction (UX rule 22).
+ */
+export function judgeHoldSql({ task, asOf }) {
+  return `SELECT c.claimed_at FROM cell.work_claim c
+           WHERE c.org_id = ${task}.org_id AND c.task_id = 'verify:' || ${task}.task_id
+             AND c.state = 'active' AND c.settled_at IS NULL AND c.ownership_valid_until > ${asOf}
+           ORDER BY c.claimed_at DESC LIMIT 1`;
+}
+
 export function latestVerdictSql({ task }) {
   return `SELECT s.proposition AS verdict, s.asserted_at AS verdict_at
             FROM cell.agent_statement s
@@ -220,6 +259,17 @@ export function latestTracePathSql({ task }) {
            WHERE s.org_id = ${task}.org_id AND s.task_id = ${task}.task_id
              AND ${isTraceSubjectSql('s.subject_ref')}
            ORDER BY s.asserted_at DESC LIMIT 1`;
+}
+
+/**
+ * Every trace-link statement on a task, oldest first — evidence is the TASK's record,
+ * spanning claims (a re-claim judged blind to its prior interval was a false rejection,
+ * live 2026-09-04). The verifier reads it whole; the reclaim bundle shapes it in JS.
+ */
+export function taskTraceLinksSql() {
+  return `SELECT subject_ref, evidence_refs FROM cell.agent_statement
+           WHERE org_id = $1 AND task_id = $2 AND ${isTraceSubjectSql('subject_ref')}
+           ORDER BY asserted_at`;
 }
 
 export function latestProgressSql({ task, claim }) {

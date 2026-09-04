@@ -905,9 +905,27 @@
             "tool_calls": [
               {
                 "tool_call_id": "call_19",
-                "function_name": "exec",
+                "function_name": "exec_command",
                 "arguments": {
                   "input": "/* redacted exec source 7bc26ccf */ tools.exec_command(/* redacted */);"
+                },
+                "extra": {
+                  "record": {
+                    "executions": [
+                      {
+                        "command": "redacted-64d5ceff",
+                        "exit_code": 0
+                      },
+                      {
+                        "command": "redacted-5285ea9d",
+                        "exit_code": 0
+                      },
+                      {
+                        "command": "redacted-7cbefcda",
+                        "exit_code": 0
+                      }
+                    ]
+                  }
                 }
               }
             ],
@@ -915,25 +933,7 @@
               "results": [
                 {
                   "source_call_id": "call_19",
-                  "content": "redacted 8b110006 (len 47)\nredacted 3e860bd2 (len 39834)",
-                  "extra": {
-                    "record": {
-                      "executions": [
-                        {
-                          "command": "redacted-64d5ceff",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-5285ea9d",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-7cbefcda",
-                          "exit_code": 0
-                        }
-                      ]
-                    }
-                  }
+                  "content": "redacted 8b110006 (len 47)\nredacted 3e860bd2 (len 39834)"
                 }
               ]
             },
@@ -953,9 +953,27 @@
             "tool_calls": [
               {
                 "tool_call_id": "call_20",
-                "function_name": "exec",
+                "function_name": "exec_command",
                 "arguments": {
                   "input": "/* redacted exec source 98d3eb58 */ tools.exec_command(/* redacted */);"
+                },
+                "extra": {
+                  "record": {
+                    "executions": [
+                      {
+                        "command": "redacted-18c50c19",
+                        "exit_code": 0
+                      },
+                      {
+                        "command": "redacted-b016640e",
+                        "exit_code": 0
+                      },
+                      {
+                        "command": "redacted-98dafd2d",
+                        "exit_code": 0
+                      }
+                    ]
+                  }
                 }
               }
             ],
@@ -963,25 +981,7 @@
               "results": [
                 {
                   "source_call_id": "call_20",
-                  "content": "redacted 8b110006 (len 47)\nredacted 93b7379d (len 39776)",
-                  "extra": {
-                    "record": {
-                      "executions": [
-                        {
-                          "command": "redacted-18c50c19",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-b016640e",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-98dafd2d",
-                          "exit_code": 0
-                        }
-                      ]
-                    }
-                  }
+                  "content": "redacted 8b110006 (len 47)\nredacted 93b7379d (len 39776)"
                 }
               ]
             },

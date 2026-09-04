@@ -1,7 +1,8 @@
 // The Cursor wiring: installer-written owned entries in ~/.cursor/mcp.json (object path) and
-// ~/.cursor/hooks.json (owned ARRAY elements among user hooks), absolute-path commands only —
-// Cursor runs user hooks from ~/.cursor and GUI apps read no shell rc, so a bare `oathe` is
-// not an address. Verify-after-write, backup-once, manifest-recorded, byte-reversible.
+// ~/.cursor/hooks.json (owned ARRAY elements among user hooks), addressed at THE SHIM —
+// $HOME/.oathe/bin/oathe, the one durable address (connection-lane plan, 2026-09-04): a bare
+// `oathe` is not an address, and a raw nvm path is stranded by the next node switch.
+// Verify-after-write, backup-once, manifest-recorded, byte-reversible.
 // Schema source: .harness-docs/cursor/{mcp,hooks}.md (pinned 2026-08-28).
 
 import { test } from 'node:test';
@@ -33,19 +34,21 @@ function fixture({ oatheOnPath = true } = {}) {
   const harness = new CursorHarness({
     home, envPath: `${bin}:/usr/bin`, paths: { packageRoot: '/pkg' },
   });
-  return { home, bin, manifest, harness, absOathe: path.join(bin, 'oathe') };
+  return { home, bin, manifest, harness, shim: path.join(home, '.oathe/bin/oathe') };
 }
 
-test('cursor is wireable and onboard writes the absolute-path MCP entry + the three hook entries', () => {
-  const { home, manifest, harness, absOathe } = fixture();
+test('cursor is wireable and onboard writes the shim-addressed MCP entry + the three hook entries', () => {
+  const { home, manifest, harness, shim } = fixture();
   const actions = harness.onboard({ manifest, version: '9.9.9' });
   const mcp = JSON.parse(fs.readFileSync(path.join(home, '.cursor/mcp.json'), 'utf8'));
-  assert.deepEqual(mcp.mcpServers.oathe, { command: absOathe, args: ['mcp'] });
+  assert.deepEqual(mcp.mcpServers.oathe, { command: shim, args: ['mcp'] });
   const hooks = JSON.parse(fs.readFileSync(path.join(home, '.cursor/hooks.json'), 'utf8'));
   assert.equal(hooks.version, 1);
-  assert.deepEqual(hooks.hooks.sessionStart, [{ command: `${absOathe} hook render-board` }]);
-  assert.deepEqual(hooks.hooks.stop, [{ command: `${absOathe} hook heartbeat` }]);
-  assert.deepEqual(hooks.hooks.preCompact, [{ command: `${absOathe} hook frame-note` }]);
+  // Quoted (review F7): the plugin's own hooks quote the address; a HOME with a space must
+  // not break one dialect while the others survive — one string, one rigor.
+  assert.deepEqual(hooks.hooks.sessionStart, [{ command: `"${shim}" hook render-board` }]);
+  assert.deepEqual(hooks.hooks.stop, [{ command: `"${shim}" hook heartbeat` }]);
+  assert.deepEqual(hooks.hooks.preCompact, [{ command: `"${shim}" hook frame-note` }]);
   assert.ok(actions.length >= 2);
   assert.ok(CursorHarness.wiring !== null, 'the adapter declares its wiring capability');
 });
@@ -88,15 +91,35 @@ test('offboard of a fresh install prunes what onboard created — including our 
   assert.deepEqual(hooks, {}, 'nothing of ours remains');
 });
 
-test('with no oathe on PATH the command falls back to <node> <packageRoot>/bin/oathe.mjs — never a bare name', () => {
-  const { home, manifest, harness } = fixture({ oatheOnPath: false });
+test('re-onboard over an OLD-vintage command REPLACES the hook entries — never a duplicate pair', () => {
+  // Review F2 (2026-09-04): owns matched only the CURRENT command string, so the first
+  // shipped address change would have left every wired cursor machine running each hook
+  // twice — once through a dead path — invisible to doctor. Ownership is the SCHEMA
+  // (`… hook <script>`), not this vintage's exact address.
+  const { home, manifest, harness, shim } = fixture();
+  fs.writeFileSync(path.join(home, '.cursor/hooks.json'), `${JSON.stringify({
+    version: 1,
+    hooks: {
+      sessionStart: [{ command: '/old/nvm/v22.13.0/bin/oathe hook render-board' }, { command: './their-hook.sh' }],
+      stop: [{ command: 'oathe hook heartbeat' }],
+    },
+  }, null, 2)}\n`);
+  harness.onboard({ manifest, version: '9.9.9' });
+  const hooks = JSON.parse(fs.readFileSync(path.join(home, '.cursor/hooks.json'), 'utf8'));
+  assert.deepEqual(hooks.hooks.sessionStart, [{ command: `"${shim}" hook render-board` }, { command: './their-hook.sh' }],
+    'the stale oathe entry is replaced IN PLACE — its position and the user\'s own hook untouched');
+  assert.deepEqual(hooks.hooks.stop, [{ command: `"${shim}" hook heartbeat` }], 'the bare vintage too');
+});
+
+test('the address is the SHIM whatever PATH holds — no scan, no fallback, one resolver', () => {
+  // The old PATH-scan answered differently per environment — the exact class that stranded
+  // GUI sessions. The shim is deterministic from home alone; init materializes it first.
+  const { home, manifest, harness, shim } = fixture({ oatheOnPath: false });
   harness.onboard({ manifest, version: '9.9.9' });
   const mcp = JSON.parse(fs.readFileSync(path.join(home, '.cursor/mcp.json'), 'utf8'));
-  assert.equal(mcp.mcpServers.oathe.command, process.execPath);
-  assert.deepEqual(mcp.mcpServers.oathe.args, ['/pkg/bin/oathe.mjs', 'mcp']);
+  assert.deepEqual(mcp.mcpServers.oathe, { command: shim, args: ['mcp'] });
   const hooks = JSON.parse(fs.readFileSync(path.join(home, '.cursor/hooks.json'), 'utf8'));
-  assert.equal(hooks.hooks.sessionStart[0].command,
-    `${process.execPath} /pkg/bin/oathe.mjs hook render-board`);
+  assert.equal(hooks.hooks.sessionStart[0].command, `"${shim}" hook render-board`);
 });
 
 test('backup-once: the pre-oathe bytes of both files are kept; absent files recorded absent', () => {

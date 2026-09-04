@@ -59,7 +59,8 @@ keyboard) is the last gate before a public flip — never the first place a rule
     the summary says only what happened: wired, unwired, or skipped with the reason as a
     sentence ("not installed", "you said no", "not named by --harness") — never a machine
     token, never a path dump. Then the verifier and where it is
-    recorded, the substrate, the principal, the surfaces, and the `Next:` line. — held by
+    recorded, the substrate, the principal, the device id (minted or kept), the notch and
+    daemon, the surfaces, and the `Next:` line. — held by
     `tests/setup.test.mjs, tests/init.test.mjs, tests/cli.test.mjs`
 12. **Paths are shown under `~`.** — held by `tests/setup.test.mjs`
 13. **Refusals are typed and name the fix.** `[OATHE_INIT_HARNESS_ABSENT] … install it first
@@ -100,13 +101,31 @@ keyboard) is the last gate before a public flip — never the first place a rule
     the glass reads no config and composes no sentence. The Swift decoder's fields are pinned
     by a Node test that reads `Feed.swift`, and the sheet's row cap equals the digest's. A row
     expands to the task card: what is owed, where it stands, the last word (whole), where it
-    lives, the one act. — held by `tests/notch-frame.test.mjs, tests/cli.test.mjs`
+    lives, the one act. The glass offers every act the package decides (ruling 2026-09-04): a
+    breach row never dead-ends — continue resumes into the living app that spoke the task, else
+    spawns the agent at its home, else opens the app, else the clipboard, the one ladder a moving
+    row's continue already climbs; the button shows for every act. — held by
+    `tests/notch-frame.test.mjs, tests/cli.test.mjs`
 21. **Siblings are one row.** Work claimed while a session holds a claim is recorded as spawned
     under it (`oathe_claim` `parent`: omit for the session's root, an id to name the claim it
     serves, `null` for standalone work; a parent you do not hold is a typed refusal before any
     claim lands). Children never surface top-level while their parent is in view: the parent's
     row gains one counts line (`spawned 3 — 2 active · 1 settled`), and a breached group is one
     digest row with one act. — held by `tests/lineage.test.mjs, tests/breach-digest.test.mjs`
+22. **A judgment in flight is verifying, never a failure.** While a verifier holds a task's
+    verify claim inside its lease, every breach surface shows that task as `verifying`: the
+    failure it wore is gone, no act is offered (the glass never offers an act it would refuse —
+    a re-dispatch is `OATHE_VERIFY_IN_FLIGHT`), it is not counted among breaches, and its
+    clock is the retry's start. Busy is a state on the breach, never a fifth kind; the word
+    rides from Node, the glass adds only the spinner. And nothing is invisible between done and
+    verdict (ruling 2026-09-04): an asserted claim that is not breached is a row too — the
+    frame's `judged`, the board's `judgment` — saying which judgment it awaits, in the one
+    `JUDGMENT` table's words: `verifying` (the spinner; the same word busy speaks) while a judge
+    holds it, `awaiting verdict` until one does; no act, uncounted. A rejection returned in the
+    asserter's own blocking `done` hands the task back inside that response (`reclaimed`); a
+    verdict rendered elsewhere is picked up by the owner's next act; anyone else is told no
+    and who owns it (`OATHE_RECLAIM_FOREIGN`). — held by
+    `tests/pager.test.mjs, tests/breach-digest.test.mjs, tests/notch-frame.test.mjs, tests/board-render.test.mjs, tests/rejection-loop.test.mjs`
 
 ## Words
 

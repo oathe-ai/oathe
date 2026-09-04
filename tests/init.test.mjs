@@ -98,6 +98,50 @@ test('a source checkout without the built app states the fact — a row naming t
   }
 });
 
+test('init wires the SERVE DAEMON beside the notch — shim-addressed agent, its own label, gone with uninstall', { skip: process.platform !== 'darwin' && 'LaunchAgents are a darwin surface' }, async () => {
+  const { serveLabel } = await import('../src/serve.mjs');
+  const { home, env, exec } = sandbox();
+  const result = await runInit({ env, exec, assumeYes: true });
+  const plist = path.join(home, 'Library', 'LaunchAgents', `${serveLabel(home)}.plist`);
+  assert.ok(fs.existsSync(plist), 'the daemon agent landed');
+  const body = fs.readFileSync(plist, 'utf8');
+  assert.ok(body.includes(`<string>${path.join(home, '.oathe/bin/oathe')}</string><string>serve</string>`),
+    'launchd runs the SHIM with the serve verb — a node move re-stamps one file and the daemon follows');
+  assert.ok(result.actions.some((a) => a.harness === 'serve' && a.action === 'serve-running'),
+    'the supervisor\'s answer rides the init report');
+  const manifest = JSON.parse(fs.readFileSync(path.join(env.OATHE_HOME, 'install-manifest.json'), 'utf8'));
+  assert.ok(manifest.rows.some((r) => r.harness === 'serve' && r.kind === 'launch-agent'), 'manifest-owned');
+  const out = await runUninstall({ env, exec });
+  assert.ok(!fs.existsSync(plist), 'uninstall removes exactly what init recorded');
+  assert.ok(out.actions.some((a) => a.action === 'serve-agent-removed'));
+});
+
+test('init mints the DEVICE identity (ruling 2026-09-04): 0600, one manifest row the doctor verifies, kept byte-for-byte on re-run, gone with uninstall', async () => {
+  const { env, exec } = sandbox();
+  const first = await runInit({ env, exec, assumeYes: true });
+  const devicePath = path.join(env.OATHE_HOME, 'device.json');
+  assert.ok(fs.existsSync(devicePath), 'the device identity landed');
+  assert.equal(fs.statSync(devicePath).mode & 0o777, 0o600);
+  assert.ok(first.actions.some((a) => a.harness === 'device' && a.action === 'device-minted'), JSON.stringify(first.actions.filter((a) => a.harness === 'device')));
+  assert.match(first.device.device_id, /^[0-9a-f-]{36}$/);
+  assert.equal(first.device.minted, true);
+  const bytes = fs.readFileSync(devicePath);
+  const again = await runInit({ env, exec, assumeYes: true });
+  assert.equal(again.device.minted, false);
+  assert.equal(again.device.device_id, first.device.device_id, 're-init keeps the identity — re-minting would sever every prior act\'s device ref');
+  assert.ok(bytes.equals(fs.readFileSync(devicePath)));
+  const manifest = JSON.parse(fs.readFileSync(path.join(env.OATHE_HOME, 'install-manifest.json'), 'utf8'));
+  assert.equal(manifest.rows.filter((r) => r.kind === 'device-id').length, 1, 'one device, one row');
+  const healthy = await runDoctor({ env, exec });
+  assert.equal(healthy.rows.find((r) => r.kind === 'device-id')?.status, 'ok');
+  fs.writeFileSync(devicePath, `${fs.readFileSync(devicePath, 'utf8')}\n`);
+  const edited = await runDoctor({ env, exec });
+  assert.equal(edited.rows.find((r) => r.kind === 'device-id')?.status, 'user-edited', 'a touched identity file is reported, never overwritten');
+  const out = await runUninstall({ env, exec });
+  assert.ok(!fs.existsSync(devicePath), 'uninstall removes exactly what init recorded');
+  assert.ok(out.actions.some((a) => a.action === 'device-removed'));
+});
+
 test('init end-to-end: substrate up, every detected harness onboarded, manifest written, and a re-run is byte-idempotent', async () => {
   const { home, env, exec } = sandbox();
   const result = await runInit({ env, exec });
@@ -119,9 +163,20 @@ test('init end-to-end: substrate up, every detected harness onboarded, manifest 
   const toml = fs.readFileSync(path.join(home, '.codex/config.toml'), 'utf8');
   assert.ok(toml.includes('[marketplaces.oathe]'));
   assert.ok(toml.includes('[mcp_servers.oathe]'));
+  // ONE address everywhere (connection-lane plan, 2026-09-04): init materializes the shim
+  // first, and every harness dialect points at it — the GUI-bare-PATH class dies here.
+  const shim = path.join(home, '.oathe/bin/oathe');
+  assert.ok(fs.existsSync(shim), 'the shim landed');
+  assert.ok(fs.statSync(shim).mode & 0o100, 'executable');
+  assert.ok(result.actions.some((a) => a.harness === 'shim' && a.action === 'shim-written'),
+    'the write is reported as a fact');
+  assert.ok(toml.includes(`command = "${shim}"`), 'the codex entry is the shim, literal (no interpolation in toml)');
+  const claudeJson = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+  assert.deepEqual(claudeJson.mcpServers.oathe, { command: shim, args: ['mcp'] },
+    'the claude user-scope entry is the shim');
   const cursorMcp = JSON.parse(fs.readFileSync(path.join(home, '.cursor/mcp.json'), 'utf8'));
-  assert.equal(cursorMcp.mcpServers.oathe.command, path.join(home, 'bin/oathe'),
-    'the cursor entry carries the ABSOLUTE bin path — never a bare name');
+  assert.equal(cursorMcp.mcpServers.oathe.command, shim,
+    'the cursor entry carries the shim — never a bare name, never a PATH scan');
   const cursorHooks = JSON.parse(fs.readFileSync(path.join(home, '.cursor/hooks.json'), 'utf8'));
   assert.ok(cursorHooks.hooks.sessionStart.length === 1);
 
@@ -270,6 +325,10 @@ test('doctor over a healthy install reports every row ok; after a user edit insi
   assert.ok(healthy.rows.length >= 4);
   assert.ok(healthy.rows.every((r) => r.status === 'ok'), JSON.stringify(healthy.rows));
   assert.equal(healthy.plugin.resolves, true);
+  // The daemon probe (phase 2): doctor asks the socket itself — nothing serves in this
+  // sandbox, and the truthful answer is a visible false, never a missing section.
+  assert.deepEqual({ answering: healthy.daemon.answering, server: healthy.daemon.server }, { answering: false, server: null }, JSON.stringify(healthy.daemon));
+  assert.ok(typeof healthy.daemon.socket === 'string' && healthy.daemon.socket.endsWith('serve.sock'));
   // The runtime probe (Finding 1: an oathe selection that does not actually resolve
   // oathe-runtime must show unhealthy, never a HEALTHY doctor line over a broken checkout).
   assert.equal(healthy.runtime.provider !== null, true);
@@ -282,6 +341,15 @@ test('doctor over a healthy install reports every row ok; after a user edit insi
   const edited = await runDoctor({ env });
   const row = edited.rows.find((r) => r.file === settingsPath);
   assert.equal(row.status, 'user-edited');
+
+  // Review F3: the live 2026-09-04 stomp — an old init rewriting the codex entry back to a
+  // bare address — must be VISIBLE, never an ok row over a dead ChatGPT-app lane.
+  const codexToml = path.join(home, '.codex/config.toml');
+  fs.writeFileSync(codexToml, fs.readFileSync(codexToml, 'utf8')
+    .replace(/command = "[^"]*"/, 'command = "oathe"'));
+  const stomped = await runDoctor({ env });
+  assert.ok(stomped.rows.filter((r) => r.harness === 'codex').some((r) => r.status !== 'ok'),
+    'a drifted codex address reads as drift');
   assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).enabledPlugins['oathe@oathe'], false,
     'doctor must not have overwritten the user edit');
 });
@@ -395,7 +463,8 @@ test('UPGRADE PATH, same version: a moved package root STILL re-registers the cl
     'plugin marketplace remove oathe',
     `plugin marketplace add ${paths.packageRoot}`,
     'plugin install oathe@oathe',
-  ], 'a moved root is a materialization: re-register, then install from the new source (the marketplace remove already took the old plugin with it)');
+    `mcp add -s user oathe -- ${path.join(home, '.oathe/bin/oathe')} mcp`,
+  ], 'a moved root is a materialization: re-register, then install from the new source (the marketplace remove already took the old plugin with it); the connection entry lands with it');
   assert.ok(result.actions.some((a) => a.harness === 'claude' && a.action === 'plugin-installed'));
 });
 
@@ -415,7 +484,9 @@ test('uninstall DELETES a file init created once nothing of substance remains in
   // mcp.json and hooks.json do NOT exist — init creates them.
   await runInit({ env, exec });
   assert.ok(fs.existsSync(path.join(home, '.cursor/mcp.json')) && fs.existsSync(path.join(home, '.cursor/hooks.json')));
-  await runUninstall({ env, exec });
+  const un = await runUninstall({ env, exec });
+  assert.ok(un.actions.some((a) => /^mcp-swe/.test(a.action)),
+    'uninstall sweeps live MCP servers — a floorless server answering ENOENT per act is worse than a dead one');
   assert.ok(!fs.existsSync(path.join(home, '.cursor/mcp.json')), 'created by init, empty after uninstall → removed');
   assert.ok(!fs.existsSync(path.join(home, '.cursor/hooks.json')), 'created by init, empty after uninstall → removed');
   assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.claude/settings.json'), 'utf8')).theme, 'dark', 'the user\'s file stays, with the user\'s keys');

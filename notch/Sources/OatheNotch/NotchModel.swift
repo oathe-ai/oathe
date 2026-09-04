@@ -20,6 +20,8 @@ struct WorkRow: Identifiable {
     let progress: String? // the last recorded word, for the expanded row
     let homePath: String? // where the work lives — the copy-only fallback
     let resume: Resume?   // the package-owned resumption continue executes
+    let judgment: String? // an asserted claim: the judgment it awaits — the row's meta, Node's word
+    let busy: Bool        // a judge holds it — the spinner, the same key a breach spins on
 }
 
 /// ONE anatomy for every sheet row — a breach and a working claim are the same object on
@@ -59,6 +61,7 @@ final class NotchModel: ObservableObject {
     let welcome = WelcomeDriver() // WHEN it plays is decided in apply() — the frame carries the lines
 
     var onChange: (() -> Void)?
+    var send: ((String) -> Void)? // the act line UP the feed — wired by the app to its FeedClient
     var onReseat: (() -> Void)?
     var onResetSeat: (() -> Void)?
     var onDragChanged: ((CGSize) -> Void)?
@@ -75,12 +78,13 @@ final class NotchModel: ObservableObject {
     var presentingWelcome: Bool { welcome.active }
 
     /// ONE list: breaches lead (the pager already ordered them sharpest-first — that order
-    /// is the package's, never re-derived here), work follows, one row per task. Derived
-    /// per read; the sheet scrolls past the window — never a wall.
+    /// is the package's, never re-derived here), work follows — in motion, then under
+    /// judgment (asserted, awaiting its verdict: the frame's `judged`), then idle — one row
+    /// per task. Derived per read; the sheet scrolls past the window — never a wall.
     var entries: [SheetEntry] {
         guard let frame else { return [] }
         let breachIds = Set(frame.breaches.map { $0.task_id })
-        let work = (frame.motion + frame.idle)
+        let work = (frame.motion + (frame.judged ?? []) + frame.idle)
             .filter { !breachIds.contains($0.task_id) }
             .map { row in
                 WorkRow(id: row.task_id,
@@ -93,7 +97,9 @@ final class NotchModel: ObservableObject {
                         childrenLine: row.children_line,
                         progress: row.last_progress,
                         homePath: row.home_path,
-                        resume: row.resume)
+                        resume: row.resume,
+                        judgment: row.judgment,
+                        busy: row.busy == true)
             }
         return frame.breaches.map(SheetEntry.breach) + work.map(SheetEntry.work)
     }
@@ -117,7 +123,7 @@ final class NotchModel: ObservableObject {
         // notice fires its own tone; otherwise a task never seen before is the claim event
         // (sage). The first frame is baseline — presence, not an event.
         let seen = Set(frame.breaches.map { $0.task_id }
-            + (frame.motion + frame.idle).map { $0.task_id })
+            + (frame.motion + (frame.judged ?? []) + frame.idle).map { $0.task_id })
         if let notice = frame.notice {
             // A verdict earns the winged glyph (✓/✗) — the ring alone went unseen.
             pulse.fire(notice.tone == "amber" ? .amber : .sage, glyph: true)
@@ -232,6 +238,17 @@ final class NotchModel: ObservableObject {
         case "spawn-terminal":
             spawnTerminal(resume!)
             return "launched"
+        case "dispatch":
+            // A judgment needs no terminal (founder, 2026-09-04): the request rides UP the feed
+            // as one line; the feed runs the one dispatcher and the row turns `verifying` on the
+            // very next frame — that frame is the confirmation, not a sentence composed here.
+            guard let task = resume?.task_id else { return "copied" }
+            var request: [String: Any] = ["act": "verify", "task_id": task]
+            if let cwd = resume?.cwd { request["cwd"] = cwd }
+            guard let data = try? JSONSerialization.data(withJSONObject: request),
+                  let line = String(data: data, encoding: .utf8) else { return "copied" }
+            send?(line)
+            return "dispatched"
         case "open-app":
             if let bundle = resume?.bundle {
                 NSWorkspace.shared.open(URL(fileURLWithPath: bundle))

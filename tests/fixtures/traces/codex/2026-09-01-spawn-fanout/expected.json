@@ -162,6 +162,22 @@
             "function_name": "exec",
             "arguments": {
               "input": "/* redacted exec source bddeb03c */ tools.mcp__oathe__oathe_board(/* redacted */); tools.exec_command(/* redacted */);"
+            },
+            "extra": {
+              "record": {
+                "executions": [
+                  {
+                    "tool": "mcp__oathe__oathe_board",
+                    "arguments": {},
+                    "status": "completed"
+                  },
+                  {
+                    "tool": "exec_command",
+                    "command": "redacted-645903ac",
+                    "exit_code": 128
+                  }
+                ]
+              }
             }
           }
         ],
@@ -169,21 +185,7 @@
           "results": [
             {
               "source_call_id": "call_4",
-              "content": "redacted 53181d21 (len 47)\nredacted bebb2cca (len 170)\nredacted b57b550f (len 790)",
-              "extra": {
-                "record": {
-                  "executions": [
-                    {
-                      "tool": "mcp__oathe__oathe_board",
-                      "arguments": {}
-                    },
-                    {
-                      "command": "redacted-645903ac",
-                      "exit_code": 128
-                    }
-                  ]
-                }
-              }
+              "content": "redacted 53181d21 (len 47)\nredacted bebb2cca (len 170)\nredacted b57b550f (len 790)"
             }
           ]
         },
@@ -242,6 +244,25 @@
             "function_name": "exec",
             "arguments": {
               "input": "/* redacted exec source 769d9808 */ tools.mcp__oathe__oathe_claim(/* redacted */); tools.exec_command(/* redacted */);"
+            },
+            "extra": {
+              "record": {
+                "executions": [
+                  {
+                    "tool": "mcp__oathe__oathe_claim",
+                    "arguments": {
+                      "task_id": "twitter-replies-061",
+                      "objective": "redacted-3a03bb88"
+                    },
+                    "status": "failed"
+                  },
+                  {
+                    "tool": "exec_command",
+                    "command": "redacted-6489c5eb",
+                    "exit_code": 0
+                  }
+                ]
+              }
             }
           }
         ],
@@ -249,24 +270,7 @@
           "results": [
             {
               "source_call_id": "call_6",
-              "content": "redacted 3117a4a0 (len 61)",
-              "extra": {
-                "record": {
-                  "executions": [
-                    {
-                      "tool": "mcp__oathe__oathe_claim",
-                      "arguments": {
-                        "task_id": "twitter-replies-061",
-                        "objective": "redacted-3a03bb88"
-                      }
-                    },
-                    {
-                      "command": "redacted-6489c5eb",
-                      "exit_code": 0
-                    }
-                  ]
-                }
-              }
+              "content": "redacted 3117a4a0 (len 61)"
             }
           ]
         },
@@ -636,6 +640,32 @@
                 "function_name": "exec",
                 "arguments": {
                   "input": "/* redacted exec source ac48d2ed */ tools.exec_command(/* redacted */); tools.exec_command(/* redacted */); tools.exec_command(/* redacted */); tools.exec_command(/* redacted */);"
+                },
+                "extra": {
+                  "record": {
+                    "executions": [
+                      {
+                        "tool": "exec_command",
+                        "command": "redacted-61c713e6",
+                        "exit_code": 0
+                      },
+                      {
+                        "tool": "exec_command",
+                        "command": "redacted-6364001a",
+                        "exit_code": 0
+                      },
+                      {
+                        "tool": "exec_command",
+                        "command": "redacted-0b8e1c4b",
+                        "exit_code": 0
+                      },
+                      {
+                        "tool": "exec_command",
+                        "command": "redacted-c3877b30",
+                        "exit_code": 0
+                      }
+                    ]
+                  }
                 }
               }
             ],
@@ -643,29 +673,7 @@
               "results": [
                 {
                   "source_call_id": "call_15",
-                  "content": "redacted 53dc0937 (len 47)\nredacted baea81d7 (len 39794)",
-                  "extra": {
-                    "record": {
-                      "executions": [
-                        {
-                          "command": "redacted-61c713e6",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-6364001a",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-0b8e1c4b",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-c3877b30",
-                          "exit_code": 0
-                        }
-                      ]
-                    }
-                  }
+                  "content": "redacted 53dc0937 (len 47)\nredacted baea81d7 (len 39794)"
                 }
               ]
             },
@@ -687,6 +695,22 @@
                 "function_name": "exec",
                 "arguments": {
                   "input": "/* redacted exec source 8f7a41f1 */ tools.exec_command(/* redacted */); tools.exec_command(/* redacted */);"
+                },
+                "extra": {
+                  "record": {
+                    "executions": [
+                      {
+                        "tool": "exec_command",
+                        "command": "redacted-86f49d48",
+                        "exit_code": 0
+                      },
+                      {
+                        "tool": "exec_command",
+                        "command": "redacted-29aacf7d",
+                        "exit_code": 0
+                      }
+                    ]
+                  }
                 }
               }
             ],
@@ -694,21 +718,7 @@
               "results": [
                 {
                   "source_call_id": "call_16",
-                  "content": "redacted 53dc0937 (len 47)\nredacted 8f6468fa (len 16426)\nredacted c750769e (len 9185)",
-                  "extra": {
-                    "record": {
-                      "executions": [
-                        {
-                          "command": "redacted-86f49d48",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-29aacf7d",
-                          "exit_code": 0
-                        }
-                      ]
-                    }
-                  }
+                  "content": "redacted 53dc0937 (len 47)\nredacted 8f6468fa (len 16426)\nredacted c750769e (len 9185)"
                 }
               ]
             },
@@ -730,6 +740,22 @@
                 "function_name": "exec",
                 "arguments": {
                   "input": "/* redacted exec source f0c60c8b */ tools.exec_command(/* redacted */); tools.exec_command(/* redacted */);"
+                },
+                "extra": {
+                  "record": {
+                    "executions": [
+                      {
+                        "tool": "exec_command",
+                        "command": "redacted-6316ba32",
+                        "exit_code": 0
+                      },
+                      {
+                        "tool": "exec_command",
+                        "command": "redacted-12732e35",
+                        "exit_code": 0
+                      }
+                    ]
+                  }
                 }
               }
             ],
@@ -737,21 +763,7 @@
               "results": [
                 {
                   "source_call_id": "call_17",
-                  "content": "redacted 8b110006 (len 47)\nredacted ca46ee85 (len 9500)\nredacted 3f63fc45 (len 14049)",
-                  "extra": {
-                    "record": {
-                      "executions": [
-                        {
-                          "command": "redacted-6316ba32",
-                          "exit_code": 0
-                        },
-                        {
-                          "command": "redacted-12732e35",
-                          "exit_code": 0
-                        }
-                      ]
-                    }
-                  }
+                  "content": "redacted 8b110006 (len 47)\nredacted ca46ee85 (len 9500)\nredacted 3f63fc45 (len 14049)"
                 }
               ]
             },

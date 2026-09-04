@@ -14,7 +14,7 @@
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
 import { SPEECH_ACT_RULE } from './fence.mjs';
-import { BreachDigest, clip, rowLine, pullPointer } from './breach-digest.mjs';
+import { BreachDigest, JUDGMENT, clip, rowLine, pullPointer } from './breach-digest.mjs';
 
 /** The board's scope, spoken once: the folder lens, or the whole machine (R-BOARD-SCOPE). */
 export const MACHINE_SCOPE_LABEL = 'all workspaces';
@@ -70,8 +70,8 @@ export async function renderBoard({ client, identity, workspace, config, synthet
     lines.push('');
   }
   if (asserted.length > 0) {
-    lines.push('**Asserted (completion claimed — awaiting a non-author verdict; `oathe verify` runs it):**');
-    for (const r of asserted) lines.push(`- [${r.task_id}] ${r.objective}`, ...spawned(r));
+    lines.push('**Asserted (completion claimed — a non-author verdict settles or reopens it; `oathe verify` runs it):**');
+    for (const r of asserted) lines.push(`- [${r.task_id}] ${r.objective} — ${judgmentWord(r)}`, ...spawned(r));
     lines.push('');
   }
   if (held.length > 0) {
@@ -91,6 +91,9 @@ export async function renderBoard({ client, identity, workspace, config, synthet
   // render it verbatim.
   return { context: lines.join('\n'), message: digest.push, sections, lens };
 }
+
+/** The judgment an asserted row awaits, in the one table's words (UX rule 22). */
+const judgmentWord = (r) => JUDGMENT[r.judgment]?.word ?? JUDGMENT.awaiting.word;
 
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
@@ -128,7 +131,7 @@ export function renderSplash({ digest = null, sections, workspace }) {
     ? `last: ${r.last_progress.slice(0, 26)}`
     : `lease until ${r.lease_until}`));
   section('OPEN', open, (r) => (r.state === 'reopened' ? 'back — incomplete, actionable' : (r.state ?? 'unclaimed')));
-  section('ASSERTED', asserted, () => 'awaiting verdict');
+  section('ASSERTED', asserted, judgmentWord);
   section('HELD', held, (r) => r.principal_id);
   section(`BREACHED PROMISES (${MACHINE_SCOPE_LABEL})`, digest.rows,
     (b) => `${b.kind_word}: ${rowLine(b)} · ${b.home}`, pullPointer('splash', digest.more));

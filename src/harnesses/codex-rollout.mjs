@@ -55,9 +55,45 @@ export class ExecCallReader {
     while ((match = opener.exec(src))) {
       const argText = this.#balanced(src, opener.lastIndex - 1);
       if (argText === null) continue;
-      calls.push({ tool: match[1], args: this.#parseArgs(argText) });
+      const args = this.#parseArgs(argText);
+      // A literal that is not pure data (a variable, a template) still STATES its string
+      // fields — task_id, proposition — and the record names them, never the rest.
+      calls.push({ tool: match[1], args, ...(args === null ? { literals: this.#literalFields(argText) } : {}) });
     }
     return calls;
+  }
+
+  /**
+   * The top-level `key: "string"` fields of an object literal that is not pure data — the
+   * fields the source states outright. Nothing is invented: a value that is not a string
+   * literal (a variable, a call, a nested literal) is left out.
+   * @returns {object|null} the fields, or null when none are stated
+   */
+  #literalFields(argText) {
+    const text = this.#quoteBareKeys(argText.trim());
+    const body = text.startsWith('{') && text.endsWith('}') ? text.slice(1, -1) : text;
+    const fields = {};
+    const pair = /"([^"\\]+)"\s*:\s*("(?:[^"\\]|\\.)*")/g;
+    let depth = 0;
+    let inString = null;
+    let from = 0;
+    const takePair = (chunk) => {
+      pair.lastIndex = 0;
+      const m = pair.exec(chunk.trim());
+      if (m && m.index === 0) {
+        try { fields[m[1]] = JSON.parse(m[2]); } catch { /* not a string literal after all */ }
+      }
+    };
+    for (let i = 0; i < body.length; i += 1) {
+      const ch = body[i];
+      if (inString) { if (ch === '\\') i += 1; else if (ch === inString) inString = null; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue; }
+      if (ch === '{' || ch === '[' || ch === '(') depth += 1;
+      else if (ch === '}' || ch === ']' || ch === ')') depth -= 1;
+      else if (ch === ',' && depth === 0) { takePair(body.slice(from, i)); from = i + 1; }
+    }
+    takePair(body.slice(from));
+    return Object.keys(fields).length > 0 ? fields : null;
   }
 
   /** The text between the paren at `openAt` and its balanced closer — string-aware. */
@@ -116,6 +152,11 @@ export class ExecCallReader {
     return out;
   }
 }
+
+/** The inner tools whose item is a CommandExecution — what a ledger entry named `exec_command` completes to. */
+const COMMAND_TOOLS = new Set(['exec_command', 'write_stdin']);
+/** Code mode names an MCP act `mcp__<server>__<tool>` — the McpToolCall item completes it. */
+const MCP_PREFIX = 'mcp__';
 
 export class CodexAtifProjector extends AtifProjector {
   #execReader = new ExecCallReader();
@@ -307,10 +348,23 @@ export class CodexAtifProjector extends AtifProjector {
    * `inner` is how many calls an exec source names (the reader's count): one may be recovered
    * from its item, several stay one exec whose record lists what ran inside.
    */
-  #pushCall(step, call, { inner = 1 } = {}) {
+  #pushCall(step, call, { inner = 1, executions = [] } = {}) {
     step.tool_calls = [...(step.tool_calls ?? []), call];
-    this.awaiting.push({ call, turn: this.turnId, inner, enrich: null, executions: [] });
+    const entry = { call, turn: this.turnId, inner, enrich: null, executions };
+    if (executions.length > 0) this.#ledger(entry);
+    this.awaiting.push(entry);
     this.callsById.set(call.tool_call_id, call);
+  }
+
+  /**
+   * What ran INSIDE a call belongs to the call and is on the record the moment it is known
+   * (ruling 2026-09-04): the source names the inner calls at call-start; the items complete
+   * them. One array, shared by the entry and the call — a completion is visible at once, and
+   * a call whose cell is still running (a blocking done inside it) already shows its acts.
+   */
+  #ledger(entry) {
+    entry.call.extra = { ...(entry.call.extra ?? {}), record: { ...(entry.call.extra?.record ?? {}), executions: entry.executions } };
+    return entry.executions;
   }
 
   /**
@@ -337,14 +391,38 @@ export class CodexAtifProjector extends AtifProjector {
    * Rebuilt whole each time, so a late completion never leaves a stale single exit code.
    */
   #stampResult(entry) {
+    // Outcomes on the result: exactly one command → its exit_code, plus whatever an item
+    // enriched (files_changed). The ledger of what ran is the CALL's (#ledger).
     const record = { ...(entry.enrich ?? {}) };
     const [only] = entry.executions;
-    if (entry.executions.length === 1 && 'command' in only) {
-      if (Number.isInteger(only.exit_code)) record.exit_code = only.exit_code;
-    } else if (entry.executions.length > 0) {
-      record.executions = entry.executions;
+    if (entry.executions.length === 1 && only && 'command' in only && Number.isInteger(only.exit_code)) {
+      record.exit_code = only.exit_code;
     }
     if (Object.keys(record).length > 0) entry.result.extra = { ...(entry.result.extra ?? {}), record };
+  }
+
+  /** The next ledger entry still awaiting its item that `accepts`, else null. */
+  #pending(entry, accepts) {
+    return entry.executions.find((ran) => ran.pending === true && accepts(ran)) ?? null;
+  }
+
+  /** Whether an item will complete an inner call's ledger entry: commands (CommandExecution) and MCP acts (McpToolCall). */
+  #expectsItem(tool) {
+    return COMMAND_TOOLS.has(tool) || tool.startsWith(MCP_PREFIX);
+  }
+
+  /**
+   * An item completes the entry the source named for it — or, when the source named none, is
+   * appended. The ledger rides the call only when there is genuinely more than one thing inside
+   * it (the source names several, or the items reveal several): one command IS the call, and
+   * its exit code is the result's.
+   */
+  #complete(entry, accepts, fields) {
+    const slot = this.#pending(entry, accepts);
+    const done = slot ? Object.assign(slot, fields) : { ...fields };
+    if (slot) delete slot.pending; else entry.executions.push(done);
+    if (entry.inner > 1 || entry.executions.length > 1) this.#ledger(entry);
+    return done;
   }
 
   /** The most recent call in the current turn still awaiting its output that `matches`. */
@@ -391,12 +469,13 @@ export class CodexAtifProjector extends AtifProjector {
         const tail = Array.isArray(item.command) ? item.command.at(-1) : undefined;
         const entry = this.#commandHome(tail);
         if (!entry) return this.#uncorrelated(item);
-        entry.executions.push({ command: tail, ...(Number.isInteger(item.exit_code) ? { exit_code: item.exit_code } : {}) });
+        this.#complete(entry, (ran) => COMMAND_TOOLS.has(ran.tool),
+          { command: tail, ...(Number.isInteger(item.exit_code) ? { exit_code: item.exit_code } : {}) });
         if (entry.result) this.#stampResult(entry); // a late completion lands on the answered call
         return;
       }
       case 'McpToolCall': {
-        const name = `mcp__${item.server}__${item.tool}`;
+        const name = `${MCP_PREFIX}${item.server}__${item.tool}`;
         const names = (call) => call.function_name === name
           || (typeof call.arguments?.input === 'string' && call.arguments.input.includes(`tools.${name}`));
         // Awaiting first; an item can also complete after the output row (measured) — then it
@@ -405,17 +484,17 @@ export class CodexAtifProjector extends AtifProjector {
           ?? [...this.completed].reverse().find((e) => e.turn === this.turnId && names(e.call))
           ?? null;
         if (!entry) return this.#uncorrelated(item);
-        if (entry.call.function_name === name) return; // the parsed call already IS this act
         if (entry.inner === 1) {
-          // One inner call whose source could not be parsed into arguments: the record knows
-          // the server, the tool and the arguments — never {input: raw} when it knows better.
+          // One inner call: the exec IS this act. The source named it at call-start (with the
+          // literal fields it stated); the item knows the whole argument set — the record ends
+          // complete, never {input: raw} when it knows better.
           entry.call.function_name = name;
           entry.call.arguments = item.arguments ?? {};
-        } else {
-          // Several inner calls: the exec stays one call; the record lists what ran inside.
-          entry.executions.push({ tool: name, arguments: item.arguments ?? {} });
-          if (entry.result) this.#stampResult(entry);
+          return;
         }
+        // Several inner calls: the exec stays one call; the item completes the ledger entry
+        // the source named for it (or appends, when the source named none).
+        this.#complete(entry, (ran) => ran.tool === name, { tool: name, arguments: item.arguments ?? {}, status: item.status ?? 'completed' });
         return;
       }
       case 'FileChange': {
@@ -551,15 +630,25 @@ export class CodexAtifProjector extends AtifProjector {
             + 'action this projector relies on is unreadable, not empty', { file, call_id: payload.call_id });
         }
         const inner = this.#execReader.read(payload.input);
-        // Exactly one inner call with data arguments → that call IS the action (and oathe
-        // speech acts surface by their real names); anything else keeps the raw source.
-        const single = inner.length === 1 && inner[0].args !== null ? inner[0] : null;
+        // Exactly one inner call → that call IS the action, named the moment the cell is
+        // written (oathe speech acts surface by their real names): data arguments ride whole;
+        // a literal that is not pure data rides the fields it states beside the raw source, and
+        // the item completes it. Several inner calls → the exec stays one call and its ledger
+        // names every inner call from the source, in dispatch order, for the items to complete.
+        const single = inner.length === 1 ? inner[0] : null;
         const execStep = this.#agentStep(row);
         this.#pushCall(execStep, this.buildToolCall({
           id: payload.call_id,
           name: single ? single.tool : (payload.name ?? payload.type),
-          args: single ? single.args : { input: payload.input },
-        }), { inner: inner.length });
+          args: single
+            ? (single.args ?? { ...(single.literals ?? {}), input: payload.input })
+            : { input: payload.input },
+        }), {
+          inner: inner.length,
+          executions: inner.length > 1
+            ? inner.map(({ tool, args, literals }) => ({ tool, ...((args ?? literals) ? { arguments: args ?? literals } : {}), ...(this.#expectsItem(tool) ? { pending: true } : {}) }))
+            : [],
+        });
         this.landed(execStep, payload.id);
         break;
       }

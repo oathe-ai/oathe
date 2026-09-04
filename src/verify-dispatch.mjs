@@ -12,7 +12,7 @@ import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 
 import { isVerificationTask, verificationTaskId } from './plans.mjs';
-import { isEngineFailureSql } from './statements.mjs';
+import { isVerifyStallSql } from './statements.mjs';
 import { pidAlive } from './sessions.mjs';
 
 export class VerifyDispatchError extends Error {
@@ -136,7 +136,7 @@ export async function awaitVerdict({
       const { rows: fail } = await query(
         `SELECT proposition FROM cell.agent_statement
           WHERE org_id = $1 AND task_id = $2 AND asserted_at > $3
-            AND ${isEngineFailureSql('evidence_refs')}
+            AND ${isVerifyStallSql('evidence_refs')}
           ORDER BY asserted_at DESC LIMIT 1`,
         [orgId, verificationTask, since]);
       if (fail[0]) return { failed: true, reason: fail[0].proposition };

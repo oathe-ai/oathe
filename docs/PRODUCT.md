@@ -110,7 +110,32 @@ harness wired with the files that landed, or skipped with the reason as a senten
 verifier and where it is recorded, substrate, principal, surfaces, and the `Next:` line. The
 verifier choice is machine-wide (the global config layer alone decides whether it was made; a
 per-folder `.oathe.json` never silences the question). Each adapter owns its harness's ONE
-sanctioned install path:
+sanctioned install path — and every MCP entry and hook command addresses **the shim**,
+`$HOME/.oathe/bin/oathe` (`src/shim.mjs`): init materializes it with the running node and
+package baked in and re-stamps it on every init/update, so a GUI-launched session (launchd's
+bare PATH, no nvm) and a machine whose node moved both still resolve oathe. Harnesses hold an
+address, never a recipe (connection-lane plan, 2026-09-04 — the day claims silently never
+landed while the notch honestly showed 0). Update and uninstall also SWEEP live `oathe mcp`
+server processes: an instance that outlives its install serves stale modules or raw ENOENT.
+
+**The serve daemon (phase 2)** is the device's ONE oathe presence: `oathe serve`, run by
+launchd through the shim (per-home hashed label `ai.oathe.serve.<hash>`, wired by init beside
+the notch through the shared machinery in `src/launchd.mjs`), listening on a 0600 unix socket
+under the oathe home (`serveSocket`/`serveConnectMs`/`serveRestart*` in `OatheConfig`; fs
+perms are the auth — ports return at the cloud seam). Every `oathe mcp` stays the harness's
+per-session child but becomes a THIN FORWARDER when the daemon answers — one connect attempt,
+a measured fact, standalone otherwise: it speaks a one-line hello naming its pid, cwd, and
+the resolution env slice, then pipes frames verbatim. The daemon serves each connection with
+the SAME `McpConnection` (a socket is a duplex stream — one implementation, two transports)
+and resolves the speaker by walking the hello pid's ancestry on this machine. Exactly what is
+measured and what is taken on trust: the ancestry walk and the session-registry match are
+measured; the starting pid is the forwarder's own word, accepted because the socket is 0600
+(same OS user; no `SO_PEERCRED`/`getpeereid` is read); a hello with no usable pid is served with
+nothing walked and its claims are refused at the gate. The linkTrace lane survives the socket (pinned in
+tests/integration.test.mjs). An upgrade restarts the daemon through launchd; every
+forwarder's pipe ends with it and sessions respawn against the new one. `oathe doctor`
+carries the daemon's launch-agent liveness row AND a socket probe (`daemon.answering`);
+`oathe update`'s last word reads both services from launchd.
 
 - **Claude**: two owned keys in `~/.claude/settings.json`
   (`extraKnownMarketplaces.oathe = {source: {source: "directory", path: <pkg>}}` — note:
@@ -119,10 +144,14 @@ sanctioned install path:
   materialized via the CLI (`claude plugin marketplace add` + `claude plugin install`),
   **verified against `~/.claude/plugins/installed_plugins.json`** with version-mismatch
   eviction (the plugin is CACHED BY COPY, keyed by version — a content change requires a
-  version bump to propagate; hook/MCP *scripts* are live because the plugin calls the bin).
+  version bump to propagate; hook *scripts* are live because the hook commands call the shim).
+  The MCP entry is NOT plugin cargo: `claude mcp add -s user oathe -- <shim> mcp` writes the
+  user-scope entry into `~/.claude.json`, verified by parsing the entry back (a stale or bare
+  address is removed and re-added; the doctor row parses, never substring-matches).
 - **Codex**: sanctioned CLIs only (`codex plugin marketplace add <pkg>`, `codex plugin add
-  oathe@oathe`, `codex mcp add oathe -- oathe mcp`), each **verified** by the stanza it must
-  leave in `~/.codex/config.toml` — an install that can't be proven is refused. Codex reads
+  oathe@oathe`, `codex mcp add oathe -- <shim> mcp` — the literal shim path: config.toml has
+  no interpolation, and the ChatGPT desktop app reads this same config), each **verified** by
+  the stanza it must leave in `~/.codex/config.toml` — an install that can't be proven is refused. Codex reads
   the same `.claude-plugin/marketplace.json` (source-verified fallback) — one marketplace
   file at the package root serves both CLI harnesses. The standing rule for folderless sessions
   (ChatGPT desktop) is a global fence in `~/.codex/AGENTS.override.md` when that file exists,
@@ -130,8 +159,8 @@ sanctioned install path:
 - **Cursor**: installer-written owned entries — `mcpServers.oathe` in `~/.cursor/mcp.json`
   (JSON owned path) and three owned ARRAY elements among the user's own hooks in
   `~/.cursor/hooks.json` (`JsonArrayEntries`: append-if-absent by ownership predicate, remove
-  exactly ours). Commands are ABSOLUTE (the resolved `oathe` bin, else `<node> <pkg>/bin/
-  oathe.mjs` — Cursor runs user hooks from `~/.cursor` and GUI apps read no shell rc), every
+  exactly ours). Commands are the shim (Cursor runs user hooks from `~/.cursor` and GUI apps
+  read no shell rc — the old PATH scan answered differently per environment), every
   write verified after landing (`CURSOR_VERIFICATION_FAILED`), byte-reversible. Detection is
   structured: the config home `~/.cursor` is the IDE (enough to wire — the IDE leaves no bin
   on PATH); the `agent` CLI on PATH is what makes Cursor a verifier
@@ -168,13 +197,16 @@ sanctioned install path:
 
 ## 4. The plugin (`plugin/`) — one tree, thin manifest adapters per harness
 
-Path-free (the bin on PATH is the only address — cache-proof in every harness):
-`hooks.json` commands are `oathe hook render-board|heartbeat|frame-note`; `.mcp.json` is
-`{command: "oathe", args: ["mcp"]}` — **no env block**: the server's resolution ladder owns
-workspace discovery (§6), and a `${...}` a harness never expands must have nothing to poison.
+Machine-path-free, shim-addressed (the plugin is cached by copy, so its files can only speak
+machine-independent forms of the ONE address): `hooks.json` commands are shell-form
+`"$HOME/.oathe/bin/oathe" hook render-board|heartbeat|frame-note` (shell form is load-bearing —
+an `args` array would exec directly and `$HOME` would never expand); the plugin carries **no
+`.mcp.json`** — the connection is an init-written user-scope entry, never plugin cargo (a
+plugin server beside it would double-register under `plugin:oathe:oathe`).
 `.claude-plugin/plugin.json` serves Claude and Codex; `.cursor-plugin/plugin.json` is the
-Cursor adapter in the SAME tree (inline cursor-dialect hooks + mcpServers — one tree, N thin
-root manifests). The three lifecycle moments (`SessionStart`, `Stop`, `PreCompact`; Cursor:
+Cursor adapter in the SAME tree (inline cursor-dialect hooks + `${userHome}`-interpolated
+mcpServers; its hook commands stay bare-PATH — interpolation is undocumented for Cursor hooks,
+an accepted exception recorded in tests/plugin.test.mjs — one tree, N thin root manifests). The three lifecycle moments (`SessionStart`, `Stop`, `PreCompact`; Cursor:
 `sessionStart`, `stop`, `preCompact`) exist verbatim in every wired harness.
 
 Hook payloads arrive in each harness's own **dialect** (`src/harnesses/dialects.mjs`):
@@ -285,9 +317,10 @@ preference — a config file must never pin every session to one folder.
 
 | tool / verb | semantics |
 |---|---|
-| `oathe_claim` | mints the task if new (`plan_status: "unknown"` — NEVER fabricated) + `cell.claim_work` (lease `leaseHours`); **assigns the verifier engine on the record** (statement `verifier:<engine>`); a task with `origin='reopened'` routes through `cell.reclaim_reopened_task` (R8's second half — the PRIOR principal is re-seated; plain claim_work is FC130-refused) |
+| `oathe_claim` | mints the task if new (`plan_status: "unknown"` — NEVER fabricated) + `cell.claim_work` (lease `leaseHours`); **assigns the verifier engine on the record** (statement `verifier:<engine>` — the RECORD of the assignment; at verify, current config wins, ruling 2026-09-04); a task with `origin='reopened'` routes through `cell.reclaim_reopened_task` (R8's second half — the PRIOR principal is re-seated, and only that principal may ask: anyone else is `OATHE_RECLAIM_FOREIGN`, told who owns it; plain claim_work is FC130-refused). The reported `lease` is the seated row's (`until <verify_by>`), and the `rejection` bundle rides only when the task's latest verdict is a rejection |
 | `oathe_board` | ONE classification serving every surface: `mine` (active, yours) / `held` (active, others) / `asserted` (completion_asserted, unsettled) / `open` (everything else, incl. `reopened`); **settled rows are off the board**. Scoped by the HOME rule below — this folder's tasks + homeless ones; the full board for `all:true` or a synthetic surface (`workspace: null`) |
 | `oathe_statement` | progress statement against your active claim — "a statement, not truth" |
+| *(every act: statement, done, yield, amend, pickup)* | **the verdict hands the work back** (founder ruling 2026-09-04). Locally `done`/`verify` BLOCK, and a rejection returned in the asserter's own exchange re-seats the asserter inside that response (`reclaimed: true`, the new `work_claim_id`, `judged_claim_id`, the `rejection` bundle) — the done IS the principal speaking (R-PAGER), the re-seat completes that act; the next statement lands with no refusal. A verdict rendered elsewhere (a teammate's machine, the cloud) arrives later: the owner's NEXT act on the task resumes it the same way. The fact is read off the substrate (`rejectedIntervalSql` — this interval's own verdict by the statement link, never a clock), never off the seam's word. A yield is a deliberate stop: nothing resumes after one but an explicit claim. Anyone else's act on that work is `OATHE_RECLAIM_FOREIGN`, naming the owner |
 | `oathe_done` | three acts: (1) if the plan is unknown, **bind the policy-standard plan** via `cell.amend_verification_contract` (G2-b policy binder; FC161 allows amendment only under an ACTIVE claim, i.e. exactly now); (2) completion statement + `cell.assert_claim_completion` (the statement must be `statement_type='completion'`); (3) **mint `verify:<task>`** on the board carrying the assigned engine (verification tasks mint no verifier for themselves — the regress ends at the deterministic bar). The result coaches FC010: you cannot verify your own work, including via your own sub-agents |
 | `oathe_yield` | `cell.oathe_yield_operator` — the obligation returns to the board with a declared cause |
 | `oathe_verify` | the verification lane (below); also `oathe verify` CLI |
@@ -329,7 +362,8 @@ and the board render states the rule on every render, not only the empty state.
 
 **The breach pager (R-PAGER — `src/pager.mjs`) and its digest (`src/breach-digest.mjs`).**
 The pager reads four conditions machine-wide, in sharpness order: a rejection nobody
-reclaimed (`reopened` — the latest claim predating the latest rejected verification); a
+reclaimed (`reopened` — no live owner, and no asserted interval the rejection was not over:
+`rejectedIntervalSql`, interval-exact); a
 verification that died before a verdict and released its claim (`stalled`); a completion
 asserted and unverified past its `verify_by` (`overdue` — `cell.unverified_past_verify_by`,
 the R2 clock leg); an active claim silent past `pagerQuietHours` (`quiet` — its last word =
@@ -345,8 +379,12 @@ terminal (uncapped, no flag), the glass's own count. The SessionStart context, t
 splash, tool attention (this board's rejected and verify-failed work only) and the notch
 frame render the same digest, and every word about a kind lives in its `KINDS` table. The
 hook computes it in its own fail-soft try (a broken pager reaches stderr; the board still
-renders). The system only SHOWS — no auto-yield; only a principal speaks. UX rules 17–20
-hold this.
+renders). The system only SHOWS — no auto-yield; only a principal speaks. UX rules 17–22
+hold this. Between done and verdict a claim is never invisible (rule 22): the board's
+`judgment` (`verifying` while a judge holds the verify claim inside its lease — the pager's
+`judgesInFlight(asOf)` is the one map, and the board's row agrees with it through the same
+SQL fragment, `judgeHoldSql` — else `awaiting`) rides
+every asserted row, and the frame's `judged` rows carry the `JUDGMENT` words to the glass.
 
 **Lineage (ruling 2026-09-01: provenance now, delegation later — `src/statements.mjs`).**
 Work claimed while a session holds a claim is recorded as SPAWNED under it: one observation
@@ -409,6 +447,23 @@ on this device" is answered by construction: the session resolves in MY registry
 doesn't. Known gap: a desktop surface with no hooks (ChatGPT) attributes only while its
 process lives — durable binding is the `chatgpt-desktop-workspace-binding` task.
 
+**The gate (founder ruling 2026-09-04): a claim needs a session behind it.** One check, in the
+tools' activation wrapper, for `oathe_claim` only, before the tool body runs — every surface
+(MCP or CLI) builds the same tools, so there is no CLI-vs-MCP special case. By what the speaker
+resolves to: a registered session → admitted and linked; no session on a surface whose adapter
+declares `attestation: 'hooks'` (claude, codex, cursor) → `OATHE_SESSION_UNREGISTERED`, told to run
+`oathe init` and start a new session; no session on a surface declared `'hookless'` (`chatgpt`, the
+desktop app that embeds codex and runs no hooks) → admitted, with `trace_link.why` saying its
+evidence is discovered by fingerprint; nobody's process and no client label (a bare shell) or a
+connection that named no pid to walk → `OATHE_SPEAKER_UNKNOWN`, told to speak through the MCP
+tools from a harness session; a client label that disagrees with the measured process →
+`OATHE_SPEAKER_MISMATCH`. The walk is `ps` on darwin and `/proc` on Linux; on a platform with
+neither, the client's label stands in (admitted with the disclosure — a stated limitation). Later
+acts on an admitted claim link when they can and never refuse on attribution. Every act's
+`spoken_from` carries the device id (`~/.oathe/device.json`, `src/device.mjs`) — the trust unit
+anything outside this machine will sign against. The messages are instructions the model can act
+on: fail loud so the model does the right thing.
+
 ## 7. The trace layer (`src/traces.mjs`, `docs/traces.md`)
 
 Ground truth, discovered by experiment and PINNED (both vendors disclaim schema stability):
@@ -437,7 +492,8 @@ structurally (`message` / `reasoning_content` / `tool_calls` / `observation.resu
   Harbor converter could also emit, with the raw-record facts ATIF has no field for
   (`source_path`, `session_title`, `files_touched`, `unrecognized_rows`; codex's
   `step_boundary`, `orphan_token_counts`, `uncorrelated_items`; the inter-agent `inbound` on a
-  step; structural `exit_code` / `executions` / `files_changed` on a result; `subagent_meta`
+  step; the `executions` ledger on a tool call (what ran inside, from the source at call-start,
+  completed by the items); structural `exit_code` / `files_changed` on a result; `subagent_meta`
   on an embedded child). No oathe concept appears in a converter output.
 - **`extra.oathe` — the annotator's.** `OatheAnnotator` applies the claims-vs-actions layer
   over any valid trajectory: root `oathe_convention` and, on export, the obligation linkage
@@ -493,8 +549,17 @@ is signed by a deterministic lane under a non-author seat.**
 Per `oathe verify [task] [--all] [--engine claude|codex|cursor]`:
 
 1. Claims `verify:<task>` as `oathe-verifier` (visible lease on the board).
-2. Gathers: objective + bound plan, the completion statement, the linked traces projected to
-   ATIF (fan-outs embedded; contract failures refuse — never less evidence than recorded).
+2. Gathers: objective + bound plan, the completion statement, and the task's evidence —
+   recorded trace links ∪ fingerprint discovery (`src/evidence-discovery.mjs`: tool results
+   echo each claim's UUID into the harness transcript, so the record self-fingerprints;
+   discovered files must PERFORM the task — claim intervals naming it — never merely mention
+   it), projected to ATIF (fan-outs embedded; contract failures refuse — never less evidence
+   than recorded). Evidence spans every claim on the task (a re-claim is never judged blind
+   to its prior interval), and an empty record stalls in the evidence lane before any engine
+   (`OATHE_EVIDENCE_EMPTY`) — an engine never improvises a verdict from nothing. A store file
+   the byte scan cannot read is reported (path and cause, in the stall note and `oathe trace`),
+   never a stall: an unrelated unreadable file does not block the task's own evidence; a file
+   that names the claim and cannot project still refuses typed.
 3. ONE fresh headless engine run (each adapter's declared `headless` command — `claude -p
    --output-format json`, `codex exec --skip-git-repo-check`, `agent -p --trust
    --output-format json`) — fresh context, different eyes ("same-harness verification is
@@ -510,8 +575,11 @@ Per `oathe verify [task] [--all] [--engine claude|codex|cursor]`:
    provenance in the substrate.
    Accepted → `cell.verification` row (`verified | seat | acceptance_package`, FC010-clean)
    + `cell.settle_work_claim` in ONE transaction (FC113/FC114 hold by construction).
-   Rejected → rejected verification row + `cell.reopen_rejected_task` (R8) — the task shows
-   `[reopened]`, and the next `oathe_claim` resumes it via `reclaim_reopened_task`.
+   Rejected → rejected verification row + `cell.reopen_rejected_task` (R8). The verdict
+   hands the work back (ruling 2026-09-04): returned in the asserter's own blocking `done`,
+   the tools re-seat the asserter via `reclaim_reopened_task` inside that same response;
+   rendered elsewhere, the owner's next act does the same. Until then the task shows
+   `[reopened]` and pages `rejected · continue`.
 6. The review itself settles under the OPERATOR seat (non-author of the verdict statement) —
    non-author all the way down, the a2a review-task shape.
 
@@ -592,8 +660,8 @@ never a silently-wrong config root. `OATHE_WORKSPACE_DIR` is deliberately NOT a 
 ## 11. CLI reference
 
 `init [--harness a,b] [--yes]` (a setup plan rendered by a prompter — `docs/UX.md`) `· claude · codex · cursor · claim · amend · ls · note · done · verify · trace [--pure] ·
-notch [--welcome] · yield · config · doctor [--surface] · status · version · update [--yes] · uninstall [--purge-db] · hook <name> · mcp`
-(last two are the plugin's bin-addressed entry points; `doctor --surface` prints the
+notch [--welcome] · yield · config · doctor [--surface] · status · version · update [--yes] · uninstall [--purge-db] · hook <name> · mcp · serve`
+(last two are the plugin's shim-addressed entry points; `doctor --surface` prints the
 resolution report — ladder inputs as received, winning rung, registry status — with no
 substrate contact, the probe the unknown surfaces get pointed at alongside
 `scripts/surface-canary.mjs`). Every run ends with the machine-parseable
@@ -697,7 +765,7 @@ src/manifest.mjs         install manifest + pre-first-write backups (atomic writ
 src/fslock.mjs           atomic temp-then-rename JSON + bounded advisory lock
 src/registry.mjs         the central workspace registry (~/.oathe/workspaces.json)
 src/sessions.mjs         the device session registry (~/.oathe/sessions.json): which living process speaks for a session
-src/speaker.mjs          the SPEAKER primitive: {surface, app, session} resolved from process ancestry
+src/speaker.mjs          the SPEAKER primitive: {surface, app, session, walked, client, device} resolved from process ancestry
 src/harnesses/           the adapter catalog: base, dialects, claude/codex/cursor, surfaces; the rosters
                          (claude-roster, codex-roster), the projectors (claude-transcript, codex-rollout), the fidelity probes
 src/workspace-resolver.mjs  the ONE resolution ladder (env → adapters' vars → roots → cwd)
@@ -722,6 +790,12 @@ src/launch.mjs           preflight (via activation), splash, cage, runHarness
 src/session-host.mjs     liveness observation for a launched session: nothing on a kill, one exit statement per held claim on a clean exit (R1, R10)
 src/mcp/oathe-tools.mjs  the speech-act MCP server + tool implementations
 src/mcp/connection.mjs   the transport: lazy context, roots requests, list_changed
+src/shim.mjs             the durable address: $HOME/.oathe/bin/oathe materialized by init; the stale-server sweep
+src/device.mjs           the device identity: a random id + ed25519 pair in ~/.oathe/device.json (0600), minted once by init, one manifest row, doctor-verified, removed by uninstall
+src/launchd.mjs          the ONE launchd machinery: per-home labels, escaped plists, bootstrap-with-retry, the job probe
+src/serve.mjs            the serve daemon's install lifecycle (wire/unwire/status) + the socket path
+src/mcp/daemon.mjs       OatheDaemon: the 0600-socket MCP server, one McpConnection per session, speaker measured from the hello pid
+src/mcp/forwarder.mjs    the per-session thin pipe: hello (pid, cwd, env slice) then verbatim frames; connectDaemon probe
 src/plans.mjs            the G2-b policy-standard plan + verification-task naming
 src/traces.mjs           TraceStore family (ground-truth readers, drift refusals, transcriptFor)
 src/trace-census.mjs     the store sweep behind `oathe doctor` and `npm run trace-census`
@@ -733,8 +807,8 @@ src/verify-dispatch.mjs  verifierSeam: oathe_verify dispatches the bin verb deta
 src/successor.mjs        the pickup successor sequence (delegates to oathe-runtime/seam, or refuses typed)
 src/runtime/provider.mjs the runtime seam: OatheRuntimeProvider | StandaloneRuntimeProvider (cage, settlement, pickup)
 src/runtime/simple-cage.mjs / sql-acceptance-lane.mjs / discharge.mjs   the standalone cage and lane, and the clause discharge both providers share
-plugin/                  hooks (bin-addressed, dialect-aware), the oathe-work skill, the verify command, .mcp.json,
-                         .claude-plugin/plugin.json + .cursor-plugin/plugin.json (adapters)
+plugin/                  hooks (shim-addressed, dialect-aware), the oathe-work skill, the verify command,
+                         .claude-plugin/plugin.json + .cursor-plugin/plugin.json (adapters; no .mcp.json — the connection is init-written)
 .claude-plugin/marketplace.json   one marketplace, both CLI harnesses
 notch/                   the macOS glass (Swift): Feed.swift decodes the frame; make-app.sh assembles the signed universal app
 scripts/pull-harness-docs.mjs / surface-canary.mjs   dev-only: docs snapshot + surface probe
@@ -753,7 +827,7 @@ tests/                   two lanes (test:unit / test:heavy) incl. live-store con
 
 ## 16. Key refusal codes (a working vocabulary)
 
-`OATHE_NO_ACTIVE_CLAIM` · `OATHE_OBJECTIVE_REQUIRED` · `OATHE_RECLAIM_REFUSED` ·
+`OATHE_NO_ACTIVE_CLAIM` · `OATHE_OBJECTIVE_REQUIRED` · `OATHE_RECLAIM_REFUSED` · `OATHE_RECLAIM_FOREIGN` ·
 `OATHE_PICKUP_UNAVAILABLE` · `OATHE_NOTHING_TO_VERIFY` · `OATHE_NO_COMPLETION` ·
 `OATHE_VERDICT_MALFORMED` · `OATHE_SETTLEMENT_BLOCKED` · `OATHE_REVIEW_UNSETTLED` ·
 `OATHE_ENGINE_UNKNOWN/FAILED` · `TRACE_*` (contract drift) · `ATIF_UNMAPPABLE/INVALID` ·

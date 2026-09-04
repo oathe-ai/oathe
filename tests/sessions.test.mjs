@@ -61,7 +61,18 @@ test('the ancestry walk is ONE ps snapshot — pid→1 over injected exec, depth
   assert.equal(chain[1].exec, '/Applications/ChatGPT.app/Contents/MacOS/ChatGPT');
   const broken = processAncestry({ pid: 100, exec: { run: () => ({ status: 1, stdout: '', stderr: 'no' }) }, platform: 'darwin' });
   assert.deepEqual(broken, [], 'a ps failure costs the facts, never a throw');
-  assert.deepEqual(processAncestry({ pid: 100, exec, platform: 'linux' }), [], 'the walk is a darwin fact');
+  assert.deepEqual(processAncestry({ pid: 100, exec, platform: 'freebsd' }), [], 'a platform with neither ps-as-darwin nor /proc yields nothing — never a guess');
+  // Linux walks /proc (ruling 2026-09-04: measured on every platform that can be measured — the
+  // claim gate refuses an unwalked speaker, so CI's Linux lanes must resolve sessions too).
+  const proc = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-proc-'));
+  const status = (pid, name, ppid) => { fs.mkdirSync(path.join(proc, String(pid)), { recursive: true }); fs.writeFileSync(path.join(proc, String(pid), 'status'), `Name:\t${name}\nPPid:\t${ppid}\n`); };
+  status(300, 'node', 200); status(200, 'claude', 100); status(100, 'bash', 1); status(1, 'systemd', 0);
+  fs.symlinkSync('/usr/local/bin/claude', path.join(proc, '200', 'exe'));
+  fs.symlinkSync('/usr/bin/node', path.join(proc, '300', 'exe'));
+  assert.deepEqual(processAncestry({ pid: 300, platform: 'linux', procRoot: proc }), [
+    { pid: 300, exec: '/usr/bin/node' }, { pid: 200, exec: '/usr/local/bin/claude' }, { pid: 100, exec: 'bash' }, { pid: 1, exec: 'systemd' },
+  ], 'exe when readable, the Name line otherwise; the chain ends at pid 1');
+  assert.deepEqual(processAncestry({ pid: 999, platform: 'linux', procRoot: proc }), [], 'a pid /proc does not know walks nothing');
 });
 
 test('nearestAppBundle picks the FOCUSABLE app process — a nested helper bundle is skipped for its host app', () => {

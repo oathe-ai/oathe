@@ -43,9 +43,13 @@ test('hooks.json uses only events Claude Code and Codex both know, with plugin-r
     for (const group of hooks[event]) {
       for (const hook of group.hooks) {
         assert.equal(hook.type, 'command');
-        // The plugin tree carries NO paths: the plugin is COPIED to each harness's cache on
-        // install, so the one stable machine-independent address is the npm bin on PATH.
-        assert.match(hook.command, /^oathe hook [a-z-]+$/, hook.command);
+        // The plugin tree carries no MACHINE paths — but a bare bin on PATH dies in every
+        // GUI-launched session (launchd's PATH has no nvm; measured 2026-09-04, the claims
+        // that never landed). The one machine-independent durable address is the shim the
+        // installer materializes under $HOME/.oathe/bin, reached via SHELL-FORM expansion.
+        assert.match(hook.command, /^"\$HOME\/\.oathe\/bin\/oathe" hook [a-z-]+$/, hook.command);
+        assert.ok(!('args' in hook),
+          'shell form is load-bearing: an args array makes the harness exec directly and "$HOME" never expands');
         assert.ok(Number.isInteger(hook.timeout) && hook.timeout <= 10, 'timeout in seconds, snappy');
       }
     }
@@ -66,29 +70,35 @@ test('the skill obeys the Agent Skills spec: name equals its directory, bounded 
   assert.ok(fm[2].split('\n').length < 500, 'body under 500 lines');
 });
 
-test('.mcp.json registers the oathe server through the bin — no paths, NO env block', () => {
-  const mcp = JSON.parse(fs.readFileSync(path.join(paths.pluginDir, '.mcp.json'), 'utf8'));
-  const server = mcp.mcpServers?.oathe ?? mcp.oathe;
-  assert.equal(server.command, 'oathe');
-  assert.deepEqual(server.args, ['mcp']);
-  assert.equal(server.env, undefined,
-    'the server ladder owns workspace resolution — CLAUDE_PROJECT_DIR arrives in the spawned '
-    + 'env natively, and a ${...} the harness never expands must have nothing to poison');
+test('the plugin carries NO MCP server — the connection is init-written at user scope, on the shim', () => {
+  // A plugin-carried server is a RECIPE cached by copy: it can never hold a machine address,
+  // so it rode PATH and died in GUI sessions (2026-09-04). The connection is an ADDRESS now —
+  // `claude mcp add -s user` written by init — and a plugin entry beside it would register a
+  // second server under a different name (plugin:oathe:oathe). The plugin keeps the session
+  // surfaces (hooks, skill, commands); it carries no connection at all.
+  assert.ok(!fs.existsSync(path.join(paths.pluginDir, '.mcp.json')),
+    'plugin/.mcp.json must not exist — the MCP entry is init-written, never plugin-carried');
 });
 
-test('the .cursor-plugin manifest adapter mirrors the plugin: version-locked, inline cursor-dialect hooks, PATH-addressed', () => {
+test('the .cursor-plugin manifest adapter mirrors the plugin: version-locked, shim-addressed MCP, inline cursor-dialect hooks', () => {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(paths.pluginDir, '.cursor-plugin/plugin.json'), 'utf8'));
   assert.equal(manifest.name, 'oathe');
   assert.equal(manifest.version, pkg.version);
-  assert.deepEqual(manifest.mcpServers.oathe, { command: 'oathe', args: ['mcp'] });
+  // ${userHome} interpolation is documented for mcp.json's command field (cursor/mcp.md,
+  // pinned) — the one machine-independent way a COPIED manifest can say the shim.
+  assert.deepEqual(manifest.mcpServers.oathe,
+    { command: '${userHome}/.oathe/bin/oathe', args: ['mcp'] });
   const events = Object.keys(manifest.hooks.hooks);
   assert.deepEqual(events.sort(), ['preCompact', 'sessionStart', 'stop'].sort(),
     'the same three lifecycle moments, in Cursor vocabulary');
   for (const event of events) {
     for (const hook of manifest.hooks.hooks[event]) {
+      // ACCEPTED EXCEPTION (2026-09-04): interpolation is documented for mcpServers fields,
+      // NOT for hook commands — a marketplace install without `oathe init` keeps PATH hooks
+      // (fail-soft surface); the init-written ~/.cursor hooks carry the absolute address.
       assert.match(hook.command, /^oathe hook [a-z-]+$/,
-        'plugin-distributed commands ride PATH — no machine paths in the tree');
+        'hook commands stay bare until Cursor documents interpolation for them');
     }
   }
 });
@@ -155,6 +165,23 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
     // the restored-state banner belongs to the actual pickup. The board rides the model channel.
     assert.ok(!('systemMessage' in payload), 'no ambient banner for held tasks');
     assert.doesNotMatch(context, /github\.com\/oathe-ai\/oathe/, 'the star ask left the product surface');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a session-less payload says so on stderr and still exits 0 — silence here was the ChatGPT-desktop failure mode', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-nosess-'));
+  try {
+    const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
+      { OATHE_PRINCIPAL: 'founder' });
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stderr, /no session_id/,
+      'a payload without session identity is reported visibly — fail-soft, never silent');
+    const context = JSON.parse(out.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /cannot be attributed/,
+      'the SESSION reads it too (ruling 2026-09-04: fail loud so the model does the right thing) — its claims will be refused');
+    assert.match(context, /oathe init/, 'and is told the fix');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -269,14 +296,15 @@ test('SessionStart registers the session — the DURABLE harness pid (nearest ow
     const doc = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'sessions.json'), 'utf8'));
     const row = doc.sessions['sess-hook-1'];
     assert.ok(row, 'the session registered');
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' || process.platform === 'linux') {
+      // Measured on every platform that can be (ps on darwin, /proc on linux — ruling 2026-09-04).
       const expected = await expectedHookPid();
       assert.equal(row.pid, expected, 'the row keys on the durable harness process, never an interposer');
       assert.equal(row.ancestry[0]?.pid, expected, 'ancestry starts at that process');
     } else {
-      // Ancestry is a darwin fact (processAncestry gives [] elsewhere, by design): the
-      // session still registers, keyed on a real pid, with the degradation visible.
-      assert.deepEqual(row.ancestry, [], 'off darwin the recorded degradation is an EMPTY ancestry');
+      // A platform with neither: the session still registers, keyed on a real pid, with the
+      // degradation visible as an EMPTY ancestry.
+      assert.deepEqual(row.ancestry, [], 'without a walk the recorded degradation is an EMPTY ancestry');
       assert.ok(Number.isInteger(row.pid) && row.pid > 0, 'still keyed on a real pid');
     }
     assert.ok(row.transcript_path.endsWith('t.jsonl'));
@@ -367,12 +395,12 @@ test('the heartbeat REGISTERS a session the registry has never seen — a living
     const row = JSON.parse(fs.readFileSync(path.join(hookSb.env.OATHE_HOME, 'sessions.json'), 'utf8'))
       .sessions['sess-hook-heal'];
     assert.ok(row, 'no SessionStart ever ran for this session — the heartbeat converges it');
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' || process.platform === 'linux') {
       const expected = await expectedHookPid();
       assert.equal(row.pid, expected, 'the durable harness pid — a real, live process');
       assert.equal(row.ancestry[0]?.pid, expected, 'the full facts land, not a bare beat');
     } else {
-      assert.deepEqual(row.ancestry, [], 'off darwin the heartbeat converges the row with the recorded empty-ancestry degradation');
+      assert.deepEqual(row.ancestry, [], 'without a walk the heartbeat converges the row with the recorded empty-ancestry degradation');
       assert.ok(Number.isInteger(row.pid) && row.pid > 0, 'still keyed on a real pid');
     }
     assert.ok(row.transcript_path.endsWith('th.jsonl'));

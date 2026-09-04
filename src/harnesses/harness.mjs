@@ -57,6 +57,11 @@ export class Harness {
    *  recorded at SessionStart; naming happens at READ, so it evolves without rewriting
    *  history. null: no local process of ours to meet in an ancestry walk. */
   static surfaces = null;
+  /** Attestation (ruling 2026-09-04) — per owned surface NAME: 'hooks' when the harness's
+   *  sessions register through the lifecycle hooks (a claim with no registered session is
+   *  refused), 'hookless' when the surface never runs hooks by design (the claim is admitted
+   *  and its evidence is discovered). A surface that never speaks declares null. */
+  static attestation = null;
 
   /**
    * @param {{name?: string, home: string, envPath?: string, paths: object,

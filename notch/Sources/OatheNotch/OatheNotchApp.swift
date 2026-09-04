@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.seat()
         }
         feed.onFrame = { [weak self] frame in self?.model.apply(frame) }
+        model.send = { [weak self] line in self?.feed.send(line) }
         feed.onFailure = { [weak self] line in self?.model.fail(line) }
         feed.start()
         NotificationCenter.default.addObserver(

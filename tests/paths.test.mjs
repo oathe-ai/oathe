@@ -54,6 +54,7 @@ test('buildPaths honours OATHE_HOME override and derives dependents from it', ()
   assert.equal(p.artifactDir, '/tmp/oathe-home/artifacts');
   assert.equal(p.sessionsPath, '/tmp/oathe-home/sessions.json', 'device-local session liveness lives beside the registry');
   assert.equal(p.welcomePath, '/tmp/oathe-home/welcome-pending.json', 'the one-shot welcome marker lives at the home root — the notch dir is pruned by wireNotch');
+  assert.equal(p.devicePath, '/tmp/oathe-home/device.json', 'the device identity (id + key pair, 0600) lives beside the registry');
 });
 
 test('buildPaths defaults oatheHome to the user home directory', () => {
@@ -62,6 +63,7 @@ test('buildPaths defaults oatheHome to the user home directory', () => {
   assert.equal(p.manifestPath, path.join(p.oatheHome, 'install-manifest.json'));
   assert.equal(p.backupsDir, path.join(p.oatheHome, 'backups'));
   assert.equal(p.artifactDir, path.join(p.oatheHome, 'artifacts'));
+  assert.equal(p.devicePath, path.join(p.oatheHome, 'device.json'));
 });
 
 test('buildPaths locates the package root and the plugin tree it ships', () => {

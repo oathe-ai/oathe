@@ -45,6 +45,20 @@ test('UX rule 16 applied: the copy promises what the code does — verify blocks
   assert.match(product, /src\/notch-frame\.mjs/, 'and the frame builder');
 });
 
+test('UX rule 16 applied to the trust boundary (ruling 2026-09-04): the copy says what is measured and what is taken on the forwarder\'s word — never that identity is not client-asserted', () => {
+  const walk = (dir) => fs.readdirSync(path.join(root, dir), { recursive: true })
+    .filter((f) => /\.(mjs|md)$/.test(f)).map((f) => path.join(root, dir, f));
+  for (const file of [...walk('src'), ...walk('docs'), ...walk('plugin')]) {
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /never client-asserted|asserts nothing the daemon cannot check|never taken on the client's word/,
+      `${path.relative(root, file)}: the starting pid IS the client's word — the copy may not say otherwise`);
+  }
+  const privacy = fs.readFileSync(path.join(root, 'docs/PRIVACY.md'), 'utf8');
+  assert.match(privacy, /unix socket/, 'PRIVACY names the daemon and its socket');
+  assert.match(privacy, /0600/, 'and the permission that IS the boundary');
+  assert.match(privacy, /device\.json/, 'and the device identity file');
+  assert.doesNotMatch(privacy, /no telemetry, no server/, 'there is a local server now — the sentence must say so');
+});
+
 test('PRODUCT.md §3 names every file a wiring adapter says init writes — the handoff cannot lag describe()', async () => {
   const product = fs.readFileSync(path.join(root, 'docs/PRODUCT.md'), 'utf8');
   const section3 = product.slice(product.indexOf('\n## 3.'), product.indexOf('\n## 4.'));

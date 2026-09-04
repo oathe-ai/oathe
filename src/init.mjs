@@ -124,6 +124,18 @@ export async function runInit({
         actions.push({ harness: name, ...action });
       }
     }
+    // The shim FIRST: every adapter's wiring, the plugin's hooks, and the notch-frame acts
+    // address $HOME/.oathe/bin/oathe — the one durable address (connection-lane plan,
+    // 2026-09-04). Re-stamped every init, so node moves never strand a harness config.
+    const { writeShim } = await import('./shim.mjs');
+    for (const action of writeShim({ home: ctx.home, manifest, version, packageRoot: ctx.paths.packageRoot })) {
+      actions.push({ harness: 'shim', ...action });
+    }
+    // The device identity (ruling 2026-09-04): minted once, kept forever, one row — the
+    // trust unit anything outside this machine will sign against (src/device.mjs).
+    const { writeDevice } = await import('./device.mjs');
+    const [deviceAction] = writeDevice({ devicePath: ctx.paths.devicePath, manifest, version });
+    actions.push({ harness: 'device', ...deviceAction });
     for (const step of plan.steps) {
       if (!step.installed) {
         actions.push({ harness: step.name, action: 'skipped-not-installed' });
@@ -144,6 +156,12 @@ export async function runInit({
     for (const action of wireNotch({ home: ctx.home, manifest, config: ctx.config, version, packageRoot: ctx.paths.packageRoot, ...(exec ? { exec } : {}) })) {
       actions.push({ harness: 'notch', ...action });
     }
+    // The serve daemon (connection-lane phase 2): launchd runs the shim written above; every
+    // `oathe mcp` forwards to it when it answers, and the device holds ONE substrate presence.
+    const { wireServe } = await import('./serve.mjs');
+    for (const action of wireServe({ home: ctx.home, manifest, config: ctx.config, version, ...(exec ? { exec } : {}) })) {
+      actions.push({ harness: 'serve', ...action });
+    }
     // This run took as long as its CLI calls did; a hook or a server may have saved a row in
     // the meantime. Under the lock, merge what landed on disk, then record this run — never a
     // snapshot over a living file (B4, 2026-09-03).
@@ -155,7 +173,8 @@ export async function runInit({
       census: seen,
       surfaces,
       substrate: await substrate.status(),
-      principal: { org_id: identity.orgId, principal_id: identity.principalId, role: 'ceo' },
+      device: { device_id: deviceAction.device_id, minted: deviceAction.action === 'device-minted' },
+    principal: { org_id: identity.orgId, principal_id: identity.principalId, role: 'ceo' },
       verifier: { principal_id: verifierPrincipal, seats },
       verifier_engine: {
         chosen: v.chosen,

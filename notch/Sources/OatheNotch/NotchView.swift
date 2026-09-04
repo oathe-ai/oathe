@@ -327,22 +327,33 @@ struct NotchView: View {
         switch entry {
         case .breach(let breach):
             // The kind word and the act word are the frame's (Node's one table) — the glass
-            // composes no sentence.
-            rowLine(title: breach.task_id, tone: Glass.amber,
+            // composes no sentence. A judgment in flight (busy) reads `verifying` from the
+            // frame; the glass adds the spinner, drops the amber, and offers no act. Every act
+            // the package decides is a button — a copy-only act copies its line and flashes
+            // `copied` — so no row dead-ends (ruling 2026-09-04).
+            let busy = breach.busy == true
+            rowLine(title: breach.task_id, tone: busy ? Glass.ink : Glass.amber,
                     meta: "\(breach.kind_word) · \(NotchModel.age(from: breach.at))",
-                    actFor: breach.act?.kind == "spawn-terminal" ? breach.task_id : nil,
+                    busy: busy,
+                    actFor: breach.act != nil ? breach.task_id : nil,
                     actWord: breach.act?.word ?? "") { model.breachAct(breach) }
         case .work(let row):
+            // A claim under judgment (frame.judged) wears the judgment it awaits as its meta —
+            // Node's word — and spins while a judge holds it, exactly as a busy breach does.
             rowLine(title: row.id, tone: row.amber ? Glass.amber : Glass.ink,
-                    meta: "\(row.holder) · \(row.age)", actFor: nil, actWord: "") {}
+                    meta: row.judgment.map { "\($0) · \(row.age)" } ?? "\(row.holder) · \(row.age)",
+                    busy: row.busy, actFor: nil, actWord: "") {}
         }
     }
 
-    private func rowLine(title: String, tone: Color, meta: String,
+    private func rowLine(title: String, tone: Color, meta: String, busy: Bool = false,
                          actFor: String?, actWord: String, act: @escaping () -> Void) -> some View {
         HStack(spacing: 10) {
             Text(title).font(rounded(12)).foregroundStyle(tone).lineLimit(1)
             Spacer(minLength: 12)
+            if busy {
+                ProgressView().controlSize(.mini).tint(Glass.muted)
+            }
             Text(meta).font(rounded(10.5)).foregroundStyle(Glass.muted)
             if let id = actFor {
                 Button(model.flashTask == id ? model.flashWord : actWord, action: act)

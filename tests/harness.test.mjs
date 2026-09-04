@@ -7,6 +7,7 @@ import path from 'node:path';
 import { ClaudeHarness, CodexHarness, census } from '../src/harnesses/catalog.mjs';
 import { InstallManifest } from '../src/manifest.mjs';
 import { buildPaths } from '../src/paths.mjs';
+import { shimPath } from '../src/shim.mjs';
 
 const CLOCK = () => '2026-08-25T00:00:00.000Z';
 
@@ -45,9 +46,12 @@ function fakeExec(script = {}) {
 }
 
 
-/** An exec fake that mirrors the claude CLI's registry writes on install. */
+/** An exec fake that mirrors the claude CLI's writes: the plugin registry on install, and the
+ *  user-scope MCP entry in ~/.claude.json on `claude mcp add -s user` (claude-code/mcp.md). */
 function registryExec(home, version) {
   const installedFile = path.join(home, '.claude/plugins/installed_plugins.json');
+  const claudeJson = path.join(home, '.claude.json');
+  const readClaudeJson = () => (fs.existsSync(claudeJson) ? JSON.parse(fs.readFileSync(claudeJson, 'utf8')) : {});
   return {
     calls: [],
     run(cmd, args) {
@@ -60,6 +64,17 @@ function registryExec(home, version) {
       }
       if (cmd === 'claude' && args[1] === 'uninstall') {
         fs.writeFileSync(installedFile, JSON.stringify({ version: 2, plugins: {} }));
+      }
+      if (cmd === 'claude' && args[0] === 'mcp' && args[1] === 'add') {
+        const doc = readClaudeJson();
+        const sep = args.indexOf('--');
+        doc.mcpServers = { ...doc.mcpServers, [args[sep - 1]]: { command: args[sep + 1], args: args.slice(sep + 2) } };
+        fs.writeFileSync(claudeJson, JSON.stringify(doc));
+      }
+      if (cmd === 'claude' && args[0] === 'mcp' && args[1] === 'remove') {
+        const doc = readClaudeJson();
+        delete doc.mcpServers?.[args[2]];
+        fs.writeFileSync(claudeJson, JSON.stringify(doc));
       }
       return { status: 0, stdout: '', stderr: '' };
     },
@@ -138,7 +153,7 @@ test('ClaudeHarness.onboard twice is byte-idempotent', () => {
   const first = fs.readFileSync(settingsPath, 'utf8');
   h.onboard({ manifest, version: '0.1.0' });
   assert.equal(fs.readFileSync(settingsPath, 'utf8'), first);
-  assert.equal(manifest.rows.filter((r) => r.harness === 'claude').length, 2); // settings + cli install
+  assert.equal(manifest.rows.filter((r) => r.harness === 'claude').length, 3); // settings + cli install + mcp entry
   assert.equal(manifest.backups.filter((b) => b.file === settingsPath).length, 1);
 });
 
@@ -155,6 +170,8 @@ test('ClaudeHarness.offboard removes exactly the owned keys and drops its manife
   const offFlat = offExec.calls.map((c) => c.join(' '));
   assert.ok(offFlat.some((c) => c.startsWith('claude plugin uninstall oathe@oathe')), offFlat.join('|'));
   assert.ok(offFlat.some((c) => c.startsWith('claude plugin marketplace remove oathe')));
+  assert.ok(offFlat.some((c) => c === 'claude mcp remove oathe -s user'),
+    'the user-scope MCP entry is undone with the install');
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
   assert.equal(settings.theme, 'dark');
   assert.deepEqual(settings.enabledPlugins, { 'x@y': true });
@@ -167,27 +184,22 @@ test('ClaudeHarness.onboard MATERIALIZES the install via the claude CLI and veri
   fs.mkdirSync(path.join(home, '.claude'));
   const installedFile = path.join(home, '.claude/plugins/installed_plugins.json');
   const pkgVersion = JSON.parse(fs.readFileSync(path.join(paths.packageRoot, 'package.json'), 'utf8')).version;
-  const exec = {
-    calls: [],
-    run(cmd, args) {
-      this.calls.push([cmd, ...args]);
-      if (cmd === 'claude' && args[1] === 'install') {
-        fs.mkdirSync(path.dirname(installedFile), { recursive: true });
-        fs.writeFileSync(installedFile, JSON.stringify({
-          version: 2, plugins: { 'oathe@oathe': [{ scope: 'user', version: pkgVersion }] },
-        }));
-      }
-      return { status: 0, stdout: '', stderr: '' };
-    },
-  };
+  const exec = registryExec(home, pkgVersion);
   const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec });
   h.onboard({ manifest, version: pkgVersion });
   const flat = exec.calls.map((c) => c.join(' '));
   assert.ok(flat.some((c) => c.startsWith(`claude plugin marketplace add ${paths.packageRoot}`)), flat.join('|'));
   assert.ok(flat.some((c) => c.startsWith('claude plugin install oathe@oathe')));
-  const cliRow = manifest.rows.find((r) => r.harness === 'claude' && r.kind === 'cli-managed');
+  const cliRow = manifest.rows.find((r) => r.harness === 'claude' && r.kind === 'cli-managed' && r.detail?.id === 'plugin-install');
   assert.ok(cliRow, 'the materialized install is manifest-recorded');
   assert.equal(cliRow.file, installedFile);
+  // The connection is an ADDRESS: the user-scope entry points at the shim — the one path a
+  // GUI-launched session can still resolve (connection-lane plan, 2026-09-04).
+  assert.ok(flat.some((c) => c === `claude mcp add -s user oathe -- ${shimPath(home)} mcp`), flat.join('|'));
+  const claudeJson = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+  assert.deepEqual(claudeJson.mcpServers.oathe, { command: shimPath(home), args: ['mcp'] });
+  const mcpRow = manifest.rows.find((r) => r.harness === 'claude' && r.detail?.id === 'mcp-server');
+  assert.ok(mcpRow, 'the MCP entry is manifest-recorded with its undo');
 });
 
 test('ClaudeHarness.onboard skips the CLIs when the registry already holds the right version, and REFRESHES on a version mismatch', () => {
@@ -198,6 +210,9 @@ test('ClaudeHarness.onboard skips the CLIs when the registry already holds the r
   fs.writeFileSync(installedFile, JSON.stringify({
     version: 2, plugins: { 'oathe@oathe': [{ scope: 'user', version: pkgVersion }] },
   }));
+  // The user-scope MCP entry already carries the shim — a current world means NO CLI churn.
+  fs.writeFileSync(path.join(home, '.claude.json'),
+    JSON.stringify({ mcpServers: { oathe: { command: shimPath(home), args: ['mcp'] } } }));
   const exec = fakeExec();
   const h = new ClaudeHarness({ home, envPath: '/nonexistent', paths, exec });
   h.onboard({ manifest, version: pkgVersion });
@@ -247,7 +262,7 @@ test('CodexHarness.onboard runs the sanctioned CLIs, verifies config.toml, and r
       fs.writeFileSync(configPath, [
         '[marketplaces.oathe]', 'source_type = "local"', `source = "${paths.packageRoot}"`,
         '[plugins."oathe@oathe"]', 'enabled = true',
-        '[mcp_servers.oathe]', 'command = "node"',
+        '[mcp_servers.oathe]', `command = "${path.join(home, '.oathe/bin/oathe')}"`,
       ].join('\n'));
       return { status: 0, stdout: '', stderr: '' };
     },
@@ -258,11 +273,18 @@ test('CodexHarness.onboard runs the sanctioned CLIs, verifies config.toml, and r
   const flat = exec.calls.map((c) => c.join(' '));
   assert.ok(flat.some((c) => c.startsWith(`codex plugin marketplace add ${paths.packageRoot}`)), flat.join('|'));
   assert.ok(flat.some((c) => c.startsWith('codex plugin add oathe@oathe')));
-  assert.ok(flat.some((c) => c.startsWith('codex mcp add oathe -- oathe mcp')), flat.join('|'));
+  // config.toml has no interpolation (codex/config-reference.md, pinned) — the literal shim
+  // path is written; the ChatGPT desktop app reads this same config (codex/mcp.md).
+  assert.ok(flat.some((c) => c === `codex mcp add oathe -- ${shimPath(home)} mcp`), flat.join('|'));
 
   const rows = manifest.rows.filter((r) => r.harness === 'codex');
   assert.equal(rows.length, 3);
   assert.ok(rows.every((r) => r.kind === 'cli-managed'));
+  // Review F3 (2026-09-04): a stanza-presence proof read the live bare-address stomp as ok.
+  // The proof is the COMMAND LINE — doctor sees a drifted address as drift.
+  const mcpRow = rows.find((r) => r.detail?.id === 'mcp-server');
+  assert.equal(mcpRow.detail.proof, `command = "${shimPath(home)}"`,
+    'the recorded proof pins the address, not just the stanza');
   assert.ok(manifest.backups.find((b) => b.file === configPath), 'config.toml backed up before the CLIs touch it');
 });
 
@@ -284,7 +306,7 @@ test('CodexHarness.offboard runs the inverse CLIs and drops its rows', () => {
     run(cmd, args) {
       this.calls.push([cmd, ...args]);
       fs.writeFileSync(configPath, [
-        '[marketplaces.oathe]', '[plugins."oathe@oathe"]', '[mcp_servers.oathe]',
+        '[marketplaces.oathe]', '[plugins."oathe@oathe"]', '[mcp_servers.oathe]', `command = "${path.join(home, '.oathe/bin/oathe')}"`,
       ].join('\n'));
       return { status: 0, stdout: '', stderr: '' };
     },
@@ -307,7 +329,7 @@ test('CodexHarness.offboard clears the hooks.state entries codex keyed by our pl
   const exec = {
     run() {
       fs.writeFileSync(configPath, [
-        '[marketplaces.oathe]', '[plugins."oathe@oathe"]', '[mcp_servers.oathe]',
+        '[marketplaces.oathe]', '[plugins."oathe@oathe"]', '[mcp_servers.oathe]', `command = "${path.join(home, '.oathe/bin/oathe')}"`,
       ].join('\n'));
       return { status: 0, stdout: '', stderr: '' };
     },

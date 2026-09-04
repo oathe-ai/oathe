@@ -30,8 +30,8 @@ export class TraceStore {
     this.home = home || os.homedir();
   }
 
-  /** Raw lines of a trace file; handles .zst transparently; refuses unreadable files. */
-  readLines(file) {
+  /** Raw bytes of a trace file; handles .zst transparently; refuses unreadable files. */
+  #bytes(file) {
     let bytes;
     try {
       bytes = fs.readFileSync(file);
@@ -47,7 +47,21 @@ export class TraceStore {
       }
       bytes = zlib.zstdDecompressSync(bytes);
     }
-    return bytes.toString('utf8').split('\n').filter((l) => l.trim() !== '');
+    return bytes;
+  }
+
+  /** Raw lines of a trace file; handles .zst transparently; refuses unreadable files. */
+  readLines(file) {
+    return this.#bytes(file).toString('utf8').split('\n').filter((l) => l.trim() !== '');
+  }
+
+  /**
+   * Does this file's record carry the needle (a claim UUID — tool results echo it into the
+   * transcript, so the record self-fingerprints)? A raw-byte scan: the cheap pre-filter
+   * before projection, never a judgment — performing vs mentioning is the projector's call.
+   */
+  contains(file, needle) {
+    return this.#bytes(file).includes(needle);
   }
 
   /** Parsed entries; a malformed line is a typed refusal, never a silent drop. */
@@ -72,29 +86,8 @@ export class TraceStore {
     }
   }
 
-  #newestIn(dir, matches) {
-    if (!fs.existsSync(dir)) return null;
-    let best = null;
-    for (const entry of fs.readdirSync(dir, { recursive: true })) {
-      const full = path.join(dir, String(entry));
-      if (!matches(String(entry))) continue;
-      const stat = fs.statSync(full, { throwIfNoEntry: false });
-      if (stat?.isFile() && (!best || stat.mtimeMs > best.mtimeMs)) best = { full, mtimeMs: stat.mtimeMs };
-    }
-    return best?.full ?? null;
-  }
-
-  /** Protected helper for subclasses. */
-  newestFileIn(dir, matches) {
-    return this.#newestIn(dir, matches);
-  }
-
-  /**
-   * Protected: matched files whose mtime falls inside the window, newest first, capped at
-   * maxFiles — and the newest match is ALWAYS included, so an idle store still yields its
-   * latest record instead of an empty (and therefore silently green) sweep.
-   */
-  recentFilesIn(dir, matches, { days, maxFiles, now = Date.now() }) {
+  /** ONE walk for every asker: matched files with their mtimes, unordered. */
+  #matched(dir, matches) {
     if (!fs.existsSync(dir)) return [];
     const hits = [];
     for (const entry of fs.readdirSync(dir, { recursive: true })) {
@@ -103,10 +96,41 @@ export class TraceStore {
       const stat = fs.statSync(full, { throwIfNoEntry: false });
       if (stat?.isFile()) hits.push({ full, mtimeMs: stat.mtimeMs });
     }
-    hits.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return hits;
+  }
+
+  /** Protected helper for subclasses. */
+  newestFileIn(dir, matches) {
+    let best = null;
+    for (const hit of this.#matched(dir, matches)) {
+      if (!best || hit.mtimeMs > best.mtimeMs) best = hit;
+    }
+    return best?.full ?? null;
+  }
+
+  /**
+   * Protected: matched files whose mtime falls inside the window, newest first, capped at
+   * maxFiles — and the newest match is ALWAYS included, so an idle store still yields its
+   * latest record instead of an empty (and therefore silently green) sweep.
+   */
+  recentFilesIn(dir, matches, { days, maxFiles, now = Date.now() }) {
+    const hits = this.#matched(dir, matches).sort((a, b) => b.mtimeMs - a.mtimeMs);
     const windowed = hits.filter((h) => h.mtimeMs >= now - days * 86_400_000).slice(0, maxFiles);
     if (windowed.length === 0 && hits.length > 0) return [hits[0].full];
     return windowed.map((h) => h.full);
+  }
+
+  /**
+   * Protected: matched files whose mtime is at or after sinceMs, path-ascending (a stable,
+   * clock-free order for evidence discovery). The mtime is the ONLY filter on purpose: a
+   * long-lived session's file lives in the date partition of its BIRTH and carries today's
+   * work (live 2026-09-04) — pruning by path date drops real evidence.
+   */
+  filesSince(dir, matches, { sinceMs }) {
+    return this.#matched(dir, matches)
+      .filter((h) => h.mtimeMs >= sinceMs)
+      .map((h) => h.full)
+      .sort();
   }
 }
 
@@ -210,6 +234,11 @@ export class ClaudeTraceStore extends TraceStore {
 
   recentTranscripts({ days, maxFiles }) {
     return this.recentFilesIn(this.projectsRoot, ClaudeTraceStore.#isTranscript, { days, maxFiles });
+  }
+
+  /** Evidence-discovery candidates: root transcripts written since the window opened. */
+  evidenceFiles({ sinceMs }) {
+    return this.filesSince(this.projectsRoot, ClaudeTraceStore.#isTranscript, { sinceMs });
   }
 }
 
@@ -326,6 +355,11 @@ export class CodexTraceStore extends TraceStore {
 
   newestRollout() {
     return this.newestFileIn(this.sessionsRoot, CodexTraceStore.#isRollout);
+  }
+
+  /** Evidence-discovery candidates: rollouts written since the window opened. */
+  evidenceFiles({ sinceMs }) {
+    return this.filesSince(this.sessionsRoot, CodexTraceStore.#isRollout, { sinceMs });
   }
 
   recentRollouts({ days, maxFiles }) {

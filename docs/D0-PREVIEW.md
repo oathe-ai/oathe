@@ -44,6 +44,13 @@ enforcement phase's exit (staging record of 2026-08-22, §3.6; product-record de
   (department `operator`; principal from `OATHE_PRINCIPAL` or the OS user).
 - **Verifier execution posture** (uncaged, ambient environment, argv-visible prompt) is
   disclosed in `docs/PRIVACY.md`; curation is a tracked limit.
+- **Attestation boundary** (ruling 2026-09-04): a session is resolved by a measured process
+  ancestry walk; over the local daemon's socket the starting pid is the forwarder's own word,
+  inside the same-OS-user boundary the 0600 socket draws (no peer credentials are read).
+  A claim with no resolvable session is refused at the act unless its surface runs no hooks
+  by design. Peer-credential binding is out of scope for D0; the device identity
+  (`~/.oathe/device.json`, id + ed25519 pair) is minted for a future enrollment and signs
+  nothing today.
 - **DDL provenance**: the public drop is exported born-clean (comment-level private markers
   and internal wording transformed to generic language; executable SQL byte-exact) with
   two-sided provenance in `vendor/ddl/manifest.json` — source commit, per-file source and
@@ -112,3 +119,17 @@ enforcement phase's exit (staging record of 2026-08-22, §3.6; product-record de
     toolchain's home-relative paths into them, they are gitignored, and the shipped binary is
     stripped and self-checked. Nothing in the tarball or the committed tree names a person, a
     real home path, or a session.
+- **0.4.5 (recorded 2026-09-04).** The release tree assembled per the handoff (fresh clone,
+  tree replacement, overlay synced from public `main` first, built notch app, production
+  dependencies): gitleaks clean; `npm test` on the assembled tree unit 469 / heavy 301, zero
+  failures; 15 packages, licenses MIT/ISC/Apache-2.0 only; workflow policy 7 files. Marker
+  sweep: every hit in the classes above, plus two accepted here — a synthetic `/Users/a`
+  home in `tests/launchd.test.mjs` (the launchd module's per-home label test; no real path),
+  and `restates` in `tests/atif.test.mjs` (plain English, as in the DDL). The upgrade leg on
+  the release machine: `oathe init --yes` twice, notch and daemon each time with the pid
+  launchd reports; the leg's closing `oathe doctor` ended `attention` on one row —
+  `traces: codex DRIFT — undeclared line.token_usage_record`: the ChatGPT desktop app's
+  embedded codex moved to 0.153.1 that day (the CLI: 0.150.0) and writes a line the trace
+  contract does not declare. The contract fails loud on drift by design; public `main` carries
+  the same check and the same gap. Declaring the line is its own change, recorded here as the
+  gate's honest answer, not folded into the release.

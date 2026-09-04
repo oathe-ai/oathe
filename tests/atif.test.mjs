@@ -690,10 +690,17 @@ test('Codex items: one exec source can run SEVERAL commands (measured up to 9) �
     item('CommandExecution', { id: 'exec-2', command: ['bash', '-lc', 'two'], cwd: '/w', status: 'failed', exit_code: 1, stdout: '', stderr: '' }),
     output('c1', 'one ok; two failed'), usage(10, 1),
   ]);
+  // What ran INSIDE the call belongs to the call (ruling 2026-09-04: acts are call-level facts,
+  // known the moment the source is written); what came back belongs to the result.
+  const call = multi.steps[0].tool_calls[0];
+  assert.deepEqual(call.extra.record.executions, [
+    { tool: 'exec_command', arguments: { cmd: 'one' }, command: 'one', exit_code: 0 },
+    { tool: 'exec_command', arguments: { cmd: 'two' }, command: 'two', exit_code: 1 },
+  ], 'born from the source (the tool and the arguments it states), completed by the items (the command and its exit code)');
   const result = multi.steps[0].observation.results[0];
-  assert.deepEqual(result.extra.record, { executions: [{ command: 'one', exit_code: 0 }, { command: 'two', exit_code: 1 }] });
+  assert.equal(result.extra?.record?.executions, undefined, 'the result carries outcomes, never the dispatch ledger');
   assert.equal(multi.extra.record.uncorrelated_items, undefined);
-  assert.equal(new OatheAnnotator().annotate(multi).steps[0].observation.results[0].extra.oathe, undefined, 'no single exit code to observe — nothing invented');
+  assert.equal(new OatheAnnotator().annotate(multi).steps[0].observation.results[0].extra?.oathe, undefined, 'no single exit code to observe — nothing invented');
 
   // A command passed through a variable: the reader keeps the raw source; the one
   // CommandExecution under it is the record's decode of what ran — its exit code rides.
@@ -704,6 +711,7 @@ test('Codex items: one exec source can run SEVERAL commands (measured up to 9) �
     output('c2', 'files'), usage(10, 1),
   ]);
   assert.deepEqual(variable.steps[0].observation.results[0].extra.record, { exit_code: 0 });
+  assert.equal(variable.steps[0].tool_calls[0].extra?.record?.executions, undefined, 'one command IS the call — no ledger restates it');
   assert.equal(variable.extra.record.uncorrelated_items, undefined);
 });
 
@@ -751,16 +759,101 @@ test('Codex items: an exec source that runs SEVERAL inner calls (an MCP act and 
   const call = t.steps[0].tool_calls[0];
   assert.equal(call.function_name, 'exec', 'two inner calls — the exec is not any one of them');
   assert.ok(typeof call.arguments.input === 'string', 'the raw source stays the argument');
-  assert.deepEqual(t.steps[0].observation.results[0].extra.record, {
-    executions: [
-      { tool: 'mcp__oathe__oathe_claim', arguments: { task_id: 'task-m', objective: 'two things in one exec' } },
-      { command: 'make', exit_code: 0 },
-    ],
-  });
+  assert.deepEqual(call.extra.record.executions, [
+    { tool: 'mcp__oathe__oathe_claim', arguments: { task_id: 'task-m', objective: 'two things in one exec' }, status: 'completed' },
+    { tool: 'exec_command', arguments: { cmd: 'make' }, command: 'make', exit_code: 0 },
+  ], 'the ledger of what ran inside rides the CALL — named from the source, completed by the items');
   assert.equal(t.extra.record.uncorrelated_items, undefined);
   const annotated = new OatheAnnotator().annotate(t);
   assert.deepEqual(annotated.steps[0].extra.oathe.claim_events, [{ verb: 'oathe_claim', task_id: 'task-m' }],
-    'the speech act inside a multi-call exec is still on the record — the annotator reads the executions too');
+    'the speech act inside a multi-call exec is on the record — the annotator reads the call');
+});
+
+test('Codex ledger: pending only where an item will complete it; a loop lands two items on one named act — the second is appended WITH its name; one command inside a cell is the call itself — no ledger', () => {
+  const t = codexRollout([
+    reasoning('rs_1'),
+    { timestamp: 't', type: 'response_item', payload: { type: 'custom_tool_call', id: 'ctc_1', status: 'completed', call_id: 'c1', name: 'exec', input: 'await tools.apply_patch("*** Begin Patch\\n*** End Patch");\nfor (const p of ["one", "two"]) await tools.mcp__oathe__oathe_statement({task_id: "task-p", proposition: p});\n' } },
+    item('FileChange', { id: 'fc-1', changes: { '/w/a.txt': { kind: 'add' } }, status: 'completed' }),
+    item('McpToolCall', { id: 'mcp-1', server: 'oathe', tool: 'oathe_statement', arguments: { task_id: 'task-p', proposition: 'one' }, status: 'completed' }),
+    item('McpToolCall', { id: 'mcp-2', server: 'oathe', tool: 'oathe_statement', arguments: { task_id: 'task-p', proposition: 'two' }, status: 'completed' }),
+    output('c1', 'ok'), usage(10, 1),
+  ]);
+  const ledger = t.steps[0].tool_calls[0].extra.record.executions;
+  assert.equal(ledger.length, 3);
+  assert.equal(ledger[0].tool, 'apply_patch');
+  assert.equal('pending' in ledger[0], false, 'no item completes a patch entry (FileChange enriches the result) — the record never claims to be waiting for one');
+  assert.deepEqual(ledger[1], { tool: 'mcp__oathe__oathe_statement', arguments: { task_id: 'task-p', proposition: 'one' }, status: 'completed' },
+    'the entry the source named (task_id stated, proposition a variable) completed by its item');
+  assert.deepEqual(ledger[2], { tool: 'mcp__oathe__oathe_statement', arguments: { task_id: 'task-p', proposition: 'two' }, status: 'completed' },
+    'the loop\'s second act — appended, and named, so the annotator reads it');
+  assert.deepEqual(t.steps[0].observation.results[0].extra.record, { files_changed: ['/w/a.txt'] }, 'outcomes stay on the result');
+  assert.equal(t.extra.record.uncorrelated_items, undefined);
+  assert.deepEqual(new OatheAnnotator().annotate(t).steps[0].extra.oathe.claim_events,
+    [{ verb: 'oathe_statement', task_id: 'task-p' }, { verb: 'oathe_statement', task_id: 'task-p' }]);
+});
+
+test('Codex source: a multi-call exec cell names its acts the MOMENT it is written — no item, no output row yet — so a blocking done inside it is visible to its own verification', () => {
+  // The exact cell that stalled cloud-gate1-product-alignment (2026-09-04): sed + claim + done
+  // in one cell; verification ran while the cell was still executing. The source alone must
+  // yield the acts: claim_events, and the interval that lets discovery confirm performance.
+  const src = 'text(await tools.exec_command({cmd:"sed -n \'107,118p\' /tmp/pasted.txt",max_output_tokens:1600})); '
+    + 'text(await tools.mcp__oathe__oathe_claim({task_id:"gate1-align",objective:"Assess the packet",parent:null})); '
+    + 'text(await tools.mcp__oathe__oathe_done({task_id:"gate1-align",proposition:"Reviewed.",evidence_ref:"/tmp/pasted.txt"}));';
+  const running = codexRollout([
+    reasoning('rs_1'),
+    { timestamp: 't', type: 'response_item', payload: { type: 'custom_tool_call', id: 'ctc_1', status: 'completed', call_id: 'c1', name: 'exec', input: src } },
+  ]);
+  const call = running.steps[0].tool_calls[0];
+  assert.equal(call.function_name, 'exec');
+  assert.deepEqual(call.extra.record.executions.map((e) => e.tool),
+    ['exec_command', 'mcp__oathe__oathe_claim', 'mcp__oathe__oathe_done'], 'every inner call, in dispatch order, from the source');
+  assert.deepEqual(call.extra.record.executions[1].arguments, { task_id: 'gate1-align', objective: 'Assess the packet', parent: null });
+  assert.equal(running.steps[0].observation, undefined, 'the cell has not answered — nothing invented');
+  const annotated = new OatheAnnotator().annotate(running);
+  assert.deepEqual(annotated.steps[0].extra.oathe.claim_events,
+    [{ verb: 'oathe_claim', task_id: 'gate1-align' }, { verb: 'oathe_done', task_id: 'gate1-align' }]);
+  assert.deepEqual(claimIntervals(annotated).map((i) => i.task_id), ['gate1-align'], 'the interval exists before the cell returns');
+
+  // The claim's item lands (the call returned inside the cell) — it COMPLETES the source entry,
+  // never adds a second one; the command's item completes the exec_command entry the same way.
+  const landed = codexRollout([
+    reasoning('rs_1'),
+    { timestamp: 't', type: 'response_item', payload: { type: 'custom_tool_call', id: 'ctc_1', status: 'completed', call_id: 'c1', name: 'exec', input: src } },
+    item('CommandExecution', { id: 'exec-0', command: ['bash', '-lc', "sed -n '107,118p' /tmp/pasted.txt"], cwd: '/w', status: 'completed', exit_code: 0, stdout: '', stderr: '' }),
+    item('McpToolCall', { id: 'exec-1', server: 'oathe', tool: 'oathe_claim', arguments: { task_id: 'gate1-align', objective: 'Assess the packet', parent: null }, status: 'completed', result: { content: [{ type: 'text', text: '{"claimed":true}' }], isError: false } }),
+  ]);
+  const ledger = landed.steps[0].tool_calls[0].extra.record.executions;
+  assert.equal(ledger.length, 3, 'items complete entries; they never duplicate them');
+  assert.deepEqual(ledger[0], { tool: 'exec_command', arguments: { cmd: "sed -n '107,118p' /tmp/pasted.txt", max_output_tokens: 1600 }, command: "sed -n '107,118p' /tmp/pasted.txt", exit_code: 0 });
+  assert.equal(ledger[1].status, 'completed');
+  assert.equal(ledger[2].status, undefined, 'the done is still running');
+  assert.equal(landed.extra.record.uncorrelated_items, undefined);
+});
+
+test('Codex source: a single-call exec cell whose argument is a VARIABLE still names its act at call-start with the literal fields it can read; the item completes the arguments', () => {
+  // The exact cell that was falsely rejected (review-a3-gate1-plan, 2026-09-04): evidence_ref:p.
+  const src = 'const p="/tmp/A3.md"; const r=await tools.mcp__oathe__oathe_done({task_id:"a3-review",proposition:"Completed the review.",evidence_ref:p}); for(const c of(r?.content||[])){if(c.type==="text")text(c.text)}';
+  const running = codexRollout([
+    reasoning('rs_1'),
+    { timestamp: 't', type: 'response_item', payload: { type: 'custom_tool_call', id: 'ctc_1', status: 'completed', call_id: 'c1', name: 'exec', input: src } },
+  ]);
+  const call = running.steps[0].tool_calls[0];
+  assert.equal(call.function_name, 'mcp__oathe__oathe_done', 'one inner call — the exec IS that act, variable or not');
+  assert.deepEqual(call.arguments, { task_id: 'a3-review', proposition: 'Completed the review.', input: src },
+    'the literal fields the source states, the raw source beside them — never an invented evidence_ref');
+  const annotated = new OatheAnnotator().annotate(running);
+  assert.deepEqual(annotated.steps[0].extra.oathe.claim_events, [{ verb: 'oathe_done', task_id: 'a3-review' }]);
+
+  const landed = codexRollout([
+    reasoning('rs_1'),
+    { timestamp: 't', type: 'response_item', payload: { type: 'custom_tool_call', id: 'ctc_1', status: 'completed', call_id: 'c1', name: 'exec', input: src } },
+    item('McpToolCall', { id: 'exec-1', server: 'oathe', tool: 'oathe_done', arguments: { task_id: 'a3-review', proposition: 'Completed the review.', evidence_ref: '/tmp/A3.md' }, status: 'completed', result: { content: [{ type: 'text', text: '{"done":true}' }], isError: false } }),
+    output('c1', '{"done":true}'), usage(10, 1),
+  ]);
+  assert.deepEqual(landed.steps[0].tool_calls[0].arguments,
+    { task_id: 'a3-review', proposition: 'Completed the review.', evidence_ref: '/tmp/A3.md' },
+    'the item knows the whole argument set — the record ends complete');
+  assert.equal(landed.extra.record.uncorrelated_items, undefined);
 });
 
 // The inter-agent bus (measured 2026-09-01: 24 FINAL_ANSWER rows in the incident parent, one

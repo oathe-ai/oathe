@@ -15,45 +15,27 @@ import path from 'node:path';
 
 import { defaultExec } from './harnesses/harness.mjs';
 import { sha256Hex } from './manifest.mjs';
+import {
+  serviceLabel, agentPathFor, launchAgentPlistFor, launchdJob as launchdJobOf,
+  bootstrapWithRetry, blockingSleep,
+} from './launchd.mjs';
 
 export const NOTCH_LABEL = 'ai.oathe.notch';
 
-/** The launchd label NAMES the installation, and installations are per-home — EVERY home,
- *  the real one included, gets a home-hashed label. There is deliberately no bare-label
- *  special case: "am I the default home" cannot be judged from inside an environment
- *  (os.homedir() follows $HOME, so a sandboxed child believes its sandbox is home — the
- *  self-reference that let a full-suite run kill the founder's live island through the
- *  shared fixed label, 2026-08-31, twice). The uid's launchd domain is shared across
- *  homes; only the hash keeps installations apart. */
+/** The notch's per-home label — the mechanism (and its 2026-08-31 scar story) lives in
+ *  src/launchd.mjs, ONE implementation for every oathe service. */
 export function notchLabel(home) {
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
-  return `${NOTCH_LABEL}.${sha256Hex(real(home)).slice(0, 12)}`;
+  return serviceLabel(home, NOTCH_LABEL);
 }
 
 export function launchAgentPath(home) {
-  return path.join(home, 'Library', 'LaunchAgents', `${notchLabel(home)}.plist`);
+  return agentPathFor(home, notchLabel(home));
 }
 
+/** The notch's plist: the app binary as the one program argument. KeepAlive rationale — a
+ *  dead viewer is a silent breach surface — rides the shared writer. */
 export function launchAgentPlist(appPath, { label = NOTCH_LABEL, nodeBinDir = path.dirname(process.execPath) } = {}) {
-  // launchd spawns with a bare PATH and a login shell never sources .zshrc — but init IS
-  // oathe running, so it knows exactly where the bin lives: the running node's own bin dir
-  // (the global npm bin) leads the agent's PATH. The app resolves `oathe` from this, no
-  // shell guessing. KeepAlive: the notch is a viewer with no side effects — a dead viewer
-  // is a silent breach surface, so launchd owns its liveness (crash, kill, or a replaced
-  // binary all end in a restart, never in quiet absence).
-  const agentPath = [nodeBinDir, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'].join(':');
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>${label}</string>
-  <key>ProgramArguments</key><array><string>${appPath}</string></array>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>${agentPath}</string></dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-</dict>
-</plist>
-`;
+  return launchAgentPlistFor({ label, programArguments: [appPath], nodeBinDir });
 }
 
 /** The app the npm package ships — built by prepack, the SOURCE every machine materializes from. */
@@ -94,21 +76,14 @@ export function materializeNotchApp({ home, appBinary, version }) {
   return { dir, binary, sha256: sha };
 }
 
-/** @returns {object[]} action rows for the init report; [] only off-darwin */
-/** launchd's word on one label: loaded, and the pid it runs — the only "running" oathe reports. */
-export function launchdJob({ label, exec = defaultExec, uid = process.getuid() }) {
-  const r = exec.run('launchctl', ['print', `gui/${uid}/${label}`]);
-  const pid = r.status === 0 ? Number(/^\s*pid = (\d+)/m.exec(r.stdout)?.[1] ?? NaN) : NaN;
-  return { label, loaded: r.status === 0, pid: Number.isFinite(pid) ? pid : null };
-}
+/** launchd's word on one label — the implementation lives in src/launchd.mjs; re-exported
+ *  here for its standing consumers (doctor's liveness row). */
+export const launchdJob = launchdJobOf;
 
 /** The same word for this home's notch agent. */
 export function notchStatus({ home, exec = defaultExec, uid = process.getuid() }) {
   return launchdJob({ label: notchLabel(home), exec, uid });
 }
-
-/** A synchronous pause — init is a straight line, and launchd is asked, not raced. */
-const blockingSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 export function wireNotch({ home, manifest, config, version, exec = defaultExec, uid = process.getuid(), packageRoot, sleep = blockingSleep }) {
   if (process.platform !== 'darwin') return [];
@@ -131,8 +106,10 @@ export function wireNotch({ home, manifest, config, version, exec = defaultExec,
   // Replaced wholesale on every wire: the manifest rows say what exists NOW (upsert keys on
   // detail, so a moved app path would otherwise accumulate rows instead of replacing them).
   // A replaced agent under a DIFFERENT name (a legacy bare label, a moved home) is booted
-  // out and removed here — otherwise the old job lingers loaded beside the new one.
-  for (const row of manifest.removeWhere((r) => r.kind === 'launch-agent' || r.kind === 'notch-app')) {
+  // out and removed here — otherwise the old job lingers loaded beside the new one. The
+  // sweep is scoped to the NOTCH'S OWN rows (phase 2): the serve daemon's launch agent is
+  // another owner's — a kind-wide sweep would boot it out on every init.
+  for (const row of manifest.removeWhere((r) => r.harness === 'notch' && (r.kind === 'launch-agent' || r.kind === 'notch-app'))) {
     if (row.kind === 'launch-agent' && row.file !== file) {
       exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]); // result unread: a legacy label that is not loaded answers 'Could not find service' — nothing to do either way
       if (fs.existsSync(row.file)) fs.rmSync(row.file);
@@ -154,36 +131,25 @@ export function wireNotch({ home, manifest, config, version, exec = defaultExec,
     const stale = path.join(materializedNotchRoot(home), key);
     if (stale !== app.dir) fs.rmSync(stale, { recursive: true, force: true });
   }
-  // bootout is asynchronous: launchd answers before the old job is torn down, and a
-  // bootstrap inside that window is refused (5: Input/output error). Ask again inside the
-  // budget; then confirm from launchd itself that the job has a pid. Past the budget the
-  // row says NOT RUNNING with launchd's last word — a silent "written" over a dead notch
-  // is what shipped in 0.4.3.
-  const deadline = Date.now() + config.get('notchRestartSeconds') * 1000;
-  // A poll never sleeps past the deadline — the budget is the budget (Greptile P1 on #34).
-  const poll = () => Math.max(0, Math.min(config.get('notchRestartPollMs'), deadline - Date.now()));
-  let last = exec.run('launchctl', ['bootstrap', `gui/${uid}`, file]);
-  while (last.status !== 0 && Date.now() < deadline) {
-    sleep(poll());
-    last = exec.run('launchctl', ['bootstrap', `gui/${uid}`, file]);
-  }
-  let status = notchStatus({ home, exec, uid });
-  while (last.status === 0 && status.pid === null && Date.now() < deadline) {
-    sleep(poll());
-    status = notchStatus({ home, exec, uid });
-  }
-  const outcome = status.pid !== null
-    ? { action: 'notch-running', pid: status.pid, label }
-    : { action: 'notch-not-running', file, label, detail: lastLine(last.stderr) || (status.loaded ? 'loaded, no pid yet' : 'not loaded') };
+  // The restart, asked not raced — the shared bootstrapWithRetry (src/launchd.mjs) carries
+  // the 0.4.3 lesson: retry the refused bootstrap inside the budget, read the pid back from
+  // launchd, and past the budget answer with launchd's own last word.
+  const took = bootstrapWithRetry({
+    label, file, uid, exec, sleep,
+    deadlineMs: config.get('notchRestartSeconds') * 1000,
+    pollMs: config.get('notchRestartPollMs'),
+  });
+  const outcome = took.pid !== null
+    ? { action: 'notch-running', pid: took.pid, label }
+    : { action: 'notch-not-running', file, label, detail: took.detail };
   return [{ action: 'launch-agent-written', file }, outcome];
 }
 
-const lastLine = (text) => String(text ?? '').trim().split('\n').filter((l) => l && !/^Try re-running/.test(l)).at(-1) ?? '';
-
-/** @returns {object[]} action rows for the uninstall report */
+/** @returns {object[]} action rows for the uninstall report — the NOTCH'S rows only; the
+ *  serve daemon unwires through its own owner (src/serve.mjs). */
 export function unwireNotch({ manifest, exec = defaultExec, uid = process.getuid() }) {
   const actions = [];
-  for (const row of manifest.removeWhere((r) => r.kind === 'launch-agent')) {
+  for (const row of manifest.removeWhere((r) => r.harness === 'notch' && r.kind === 'launch-agent')) {
     // The label rides the recorded file name — unwire boots out exactly what wire named.
     exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]); // result unread: an agent already gone answers 'Could not find service'; the removal below is what uninstall promises
     if (fs.existsSync(row.file)) fs.rmSync(row.file);

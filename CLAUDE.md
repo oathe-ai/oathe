@@ -1,4 +1,4 @@
-<!-- >>> oathe v0.3.1 >>> -->
+<!-- >>> oathe v0.4.5 >>> -->
 ## Oathe
 
 This folder has an Oathe board (workspace `ws-6fb73e6686d6`). Claims are speech acts:

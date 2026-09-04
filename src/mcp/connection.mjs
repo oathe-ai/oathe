@@ -40,19 +40,52 @@ export class McpConnection {
     this.resolver = null;
     this.contextPromise = null;
     this.currentContext = null;
+    this.closed = false;
+    this.rl = null;
     this.served = lazyTools(() => this.#context());
   }
 
   start() {
-    const rl = readline.createInterface({ input: this.input });
-    rl.on('line', async (line) => {
+    this.rl = readline.createInterface({ input: this.input });
+    this.rl.on('line', (line) => {
       const s = line.trim();
       if (!s) return;
       let msg;
       try { msg = JSON.parse(s); } catch { return; }
-      await this.#onMessage(msg);
+      void this.handleMessage(msg);
     });
     return this;
+  }
+
+  /**
+   * The ONE entry for a parsed frame — the daemon feeds its per-socket lines here. It never
+   * throws: in a one-shot stdio process an unhandled rejection was a crash the client
+   * noticed; in a daemon it would take every other session down with it (phase 2).
+   */
+  async handleMessage(msg) {
+    try {
+      await this.#onMessage(msg);
+    } catch (e) {
+      this.err.write(`oathe mcp: ${String(e?.message || e).slice(0, 300)}\n`);
+      let id;
+      try { id = msg?.id; } catch { id = undefined; }
+      if (id !== undefined && id !== null) {
+        this.#tryWrite({ jsonrpc: '2.0', id, error: { code: -32603, message: 'internal error — the server lives; detail on stderr' } });
+      }
+    }
+  }
+
+  /** End this connection: park nothing, leak nothing. Idempotent — the daemon closes on
+   *  socket end AND on error, whichever comes first. */
+  async close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.rl?.close();
+    for (const [id, entry] of this.pending) {
+      entry.reject(new Error(`connection closed before ${id} was answered`));
+    }
+    this.pending.clear();
+    await this.#invalidate();
   }
 
   /** A server→client request; the response routes back by id. */
@@ -88,6 +121,11 @@ export class McpConnection {
 
   #write(obj) {
     this.output.write(`${JSON.stringify(obj)}\n`);
+  }
+
+  /** A write to a transport that may already be gone — close() owns the cleanup either way. */
+  #tryWrite(obj) {
+    try { this.#write(obj); } catch { /* transport gone */ }
   }
 
   /**
@@ -140,6 +178,11 @@ export class McpConnection {
     // only cause one extra rebuild next call, never a missed change.
     const configStamp = this.#configStamp(resolution.root ?? null);
     const context = await this.factory({ resolution, client: this.client });
+    if (this.closed) {
+      // close() raced the build: the context that finished late is not a leaked pg client.
+      await context.close?.().catch?.(() => {});
+      throw new Error('connection closed during context build');
+    }
     this.currentContext = context;
     return { resolution, tools: context.tools, context, configStamp };
   }
@@ -155,8 +198,11 @@ export class McpConnection {
 
 /** The production context: config from the resolved root, real substrate, and the ONE
  *  activation seam (src/activation.mjs) — the resolution's `synthetic` fact rides into both
- *  the tools (board scope) and the seam (no registration, no fences). */
-export function defaultToolContextFactory({ env }) {
+ *  the tools (board scope) and the seam (no registration, no fences). `speakerPid` is the
+ *  process whose ancestry IS the speaker: the daemon passes its forwarder's hello pid (the
+ *  walk is measured; the pid is the client's word inside the same-user socket boundary) or
+ *  null (nothing to walk — the gate refuses its claims); absent, the speaker is this process. */
+export function defaultToolContextFactory({ env, speakerPid = undefined }) {
   return async ({ resolution, client }) => {
     const [
       { Substrate }, { buildPaths }, { OatheConfig }, { WorkspaceRegistry }, { InstallManifest },
@@ -195,7 +241,10 @@ export function defaultToolContextFactory({ env }) {
       // The SPEAKER primitive — resolved FRESH per context build: our own ancestry never
       // changes, but the device session registry does (a /clear, a rotation), and a stale
       // memo would stamp the first session's id on every later act (found 2026-09-01).
-      speaker: resolveSpeaker({ clientName: client?.info?.name, sessionsPath: paths.sessionsPath }),
+      speaker: resolveSpeaker({
+        clientName: client?.info?.name, sessionsPath: paths.sessionsPath, devicePath: paths.devicePath,
+        ...(speakerPid !== undefined && { pid: speakerPid }), // null = nothing to walk
+      }),
 
       // Verification over MCP DISPATCHES — the engine never runs inside the server (a run is
       // minutes; the server must keep answering). ONE seam, every surface (verifierSeam).

@@ -11,6 +11,7 @@
 // checks pid-aliveness — no cron, no migration, no dead-process ledger.
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { atomicWriteJson, withFileLock } from './fslock.mjs';
 import { defaultExec } from './harnesses/harness.mjs';
@@ -36,14 +37,36 @@ export function pidAlive(pid) {
   }
 }
 
+/** The linux walk: /proc/<pid>/status carries PPid, /proc/<pid>/exe the full executable path
+ *  (its Name line stands in when exe cannot be read — a kernel thread, a vanished process). */
+function procAncestry(pid, root) {
+  const chain = [];
+  let cursor = pid;
+  for (let depth = 0; depth < ANCESTRY_DEPTH_CAP; depth += 1) {
+    let status;
+    try { status = fs.readFileSync(path.join(root, String(cursor), 'status'), 'utf8'); } catch { break; }
+    const ppid = Number(/^PPid:\s*(\d+)/m.exec(status)?.[1] ?? NaN);
+    let exec;
+    try { exec = fs.readlinkSync(path.join(root, String(cursor), 'exe')); } catch { exec = /^Name:\s*(.*)$/m.exec(status)?.[1]?.trim() ?? ''; }
+    chain.push({ pid: cursor, exec });
+    if (cursor === 1 || !Number.isInteger(ppid) || ppid === 0) break;
+    cursor = ppid;
+  }
+  return chain;
+}
+
 /**
- * The process ancestry of `pid` to pid 1 — ONE `ps` snapshot walked in memory. A darwin
- * fact (`comm=` is the full exec path there; elsewhere it truncates): other platforms get
- * `[]`, and so does any ps failure — the walk is fail-soft, a session without ancestry
- * still registers and its pid-aliveness still serves.
+ * The process ancestry of `pid` to pid 1 — measured, never asserted. Darwin: ONE `ps`
+ * snapshot walked in memory (`comm=` is the full exec path there). Linux: /proc walked
+ * (PPid + exe). Any other platform, and any ps failure, yields `[]` — the walk is fail-soft,
+ * a session without ancestry still registers and its pid-aliveness still serves; the claim
+ * gate treats an unwalked speaker as the client's word (ruling 2026-09-04).
+ * @param {{pid: number, exec?: object, platform?: string, procRoot?: string}} o — exec and
+ *   procRoot are test seams (the ps runner; the /proc directory)
  * @returns {Array<{pid: number, exec: string}>} ancestry[0] is `pid` itself
  */
-export function processAncestry({ pid, exec = defaultExec, platform = process.platform }) {
+export function processAncestry({ pid, exec = defaultExec, platform = process.platform, procRoot = '/proc' }) {
+  if (platform === 'linux') return procAncestry(pid, procRoot);
   if (platform !== 'darwin') return [];
   const out = exec.run('ps', ['-axo', 'pid=,ppid=,comm=']);
   if (out.status !== 0) return [];

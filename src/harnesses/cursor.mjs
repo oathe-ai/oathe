@@ -18,6 +18,7 @@ import { Harness, HarnessOnboardError } from './harness.mjs';
 import { workspaceRootsDialect } from './dialects.mjs';
 import { JsonArrayEntries, JsonEntries } from '../blocks.mjs';
 import { sha256Hex } from '../manifest.mjs';
+import { shimPath } from '../shim.mjs';
 
 const HOOK_EVENTS = Object.freeze([
   { event: 'sessionStart', script: 'render-board' },
@@ -50,6 +51,7 @@ export class CursorHarness extends Harness {
     name: () => 'cursor',
   });
   // cursor/cli-installation.md:10 (pinned 2026-08-29).
+  static attestation = Object.freeze({ cursor: 'hooks' });
   static install = Object.freeze({ installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'] });
   // Headless: `agent -p --output-format json` → {type:"result", result} (cursor/cli-output-format.md);
   // CI auth CURSOR_API_KEY (cursor/cli-authentication.md:24-37, cli-github-actions.md:17). A fresh
@@ -90,21 +92,17 @@ export class CursorHarness extends Harness {
   }
 
   /**
-   * The absolute oathe address: the bin resolved on PATH, else <node> <packageRoot>/bin/oathe.mjs
-   * (npm shims ride `#!/usr/bin/env node`, and a GUI-launched Cursor may not carry node's dir
-   * on PATH — the fallback names the runtime explicitly).
+   * The absolute oathe address for every cursor-owned entry.
    * @returns {{command: string, args: string[], hookPrefix: string}}
    */
   #oatheAddress() {
-    for (const dir of this.envPath.split(':').filter(Boolean)) {
-      const candidate = path.join(dir, 'oathe');
-      try {
-        fs.accessSync(candidate, fs.constants.X_OK);
-        return { command: candidate, args: [], hookPrefix: candidate };
-      } catch { /* keep looking */ }
-    }
-    const binPath = path.join(this.paths.packageRoot, 'bin/oathe.mjs');
-    return { command: process.execPath, args: [binPath], hookPrefix: `${process.execPath} ${binPath}` };
+    // The ONE durable address (connection-lane plan, 2026-09-04): the shim init materializes
+    // under the oathe home. The old PATH scan answered differently per environment — the
+    // exact class that stranded GUI sessions — and a raw node path was stranded by the next
+    // nvm switch. Deterministic from home alone; init writes the shim before any adapter.
+    // The hook prefix is QUOTED (review F7): a HOME with a space must not break one dialect.
+    const shim = shimPath(this.home);
+    return { command: shim, args: [], hookPrefix: `"${shim}"` };
   }
 
   #hookEntries(hookPrefix) {
@@ -113,7 +111,10 @@ export class CursorHarness extends Harness {
       return {
         path: ['hooks', event],
         element: { command },
-        owns: (el) => el?.command === command,
+        // Ownership is the SCHEMA, not this vintage's exact address (review F2): any entry
+        // driving `… hook <script>` is ours — an old-address entry converges instead of
+        // pairing up with the new one and running every hook twice through a dead path.
+        owns: (el) => typeof el?.command === 'string' && el.command.endsWith(` hook ${script}`),
         match: command,
       };
     });
@@ -190,6 +191,9 @@ export class CursorHarness extends Harness {
       verify: (doc) => hookEntries.every((e) => (doc?.hooks?.[e.path[1]] ?? []).some((el) => el?.command === e.match)),
       refuseDetail: 'the three owned oathe hook entries',
     });
+    // ONE row per file (review F1-class): the detail carries the vintage's match strings, so
+    // an address change would otherwise mint a second row beside the stale one.
+    manifest.removeWhere((r) => r.harness === this.name && r.file === this.hooksConfigPath && r.kind === 'json-array');
     manifest.upsert({
       harness: this.name,
       file: this.hooksConfigPath,

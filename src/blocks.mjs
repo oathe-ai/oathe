@@ -227,7 +227,16 @@ export class JsonArrayEntries {
       }
       const leaf = path.at(-1);
       if (!Array.isArray(node[leaf])) node[leaf] = [];
-      if (!node[leaf].some(owns)) node[leaf].push(element);
+      // Owned elements CONVERGE to the current shape (review F2, 2026-09-04): an entry a
+      // prior vintage wrote (an old address) is ours by the predicate and is REPLACED, and
+      // any further owned duplicates (the mixed-vintage state observed live) are pruned —
+      // push-if-absent alone left every re-wired machine running each hook twice, once
+      // through a dead path. User elements never match `owns` and are byte-preserved.
+      const owned = node[leaf].findIndex(owns);
+      if (owned === -1) node[leaf].push(element);
+      else node[leaf][owned] = element;
+      const keep = owned === -1 ? node[leaf].length - 1 : owned;
+      node[leaf] = node[leaf].filter((el, i) => i === keep || !owns(el));
     }
     const content = stringifyJsonTarget(doc);
     return { content, changed: content !== text };

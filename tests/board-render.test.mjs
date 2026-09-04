@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 
 import { renderBoard, renderSplash } from '../src/board-render.mjs';
-import { BreachDigest, DIGEST_ROW_CAP, DETAIL_CLIP } from '../src/breach-digest.mjs';
+import { BreachDigest, DIGEST_ROW_CAP, DETAIL_CLIP, JUDGMENT } from '../src/breach-digest.mjs';
 import { waitForLaunch } from '../src/launch.mjs';
 
 const SECTIONS = {
@@ -26,6 +26,29 @@ const plain = (text) => text.replaceAll(/\x1b\[[0-9]+m/g, '');
 // A board with nothing on it — the breach section is the subject.
 const emptyClient = { query: async () => ({ rows: [] }) };
 const IDENTITY = { orgId: 'oathe', principalId: 'founder', department: 'founder' };
+
+test('UX rule 22 on the board: an ASSERTED row names the judgment it awaits — the JUDGMENT table\'s words, on the splash and in the model\'s context alike', async () => {
+  const asserted = [
+    { task_id: 'a-judged', objective: 'a judge holds it', state: 'completion_asserted', judgment: 'verifying' },
+    { task_id: 'a-waiting', objective: 'nobody has taken it', state: 'completion_asserted', judgment: 'awaiting' },
+  ];
+  const splash = plain(renderSplash({ digest: digestOf([]), sections: { ...EMPTY, asserted }, workspace: 'ws-0d0a0b0c0d0e' }));
+  assert.match(splash, new RegExp(`a-judged .*${JUDGMENT.verifying.word}`), 'the splash says verifying');
+  assert.match(splash, new RegExp(`a-waiting .*${JUDGMENT.awaiting.word}`), 'the splash says awaiting verdict');
+  // The model's context: the board query answers with the classification's inputs (the
+  // `verifying` fact rides the row), and the renderer speaks the same table.
+  const client = {
+    query: async () => ({
+      rows: [
+        { task_id: 'a-judged', objective: 'a judge holds it', state: 'completion_asserted', verifying: true, rejected_after: false, settled_at: null, origin: 'minted_at_claim', principal_id: 'founder', home: null, parent: null },
+        { task_id: 'a-waiting', objective: 'nobody has taken it', state: 'completion_asserted', verifying: false, rejected_after: false, settled_at: null, origin: 'minted_at_claim', principal_id: 'founder', home: null, parent: null },
+      ],
+    }),
+  };
+  const { context } = await renderBoard({ client, identity: IDENTITY, workspace: 'ws-0d0a0b0c0d0e', all: true });
+  assert.match(context, new RegExp(`- \\[a-judged\\] a judge holds it — ${JUDGMENT.verifying.word}`));
+  assert.match(context, new RegExp(`- \\[a-waiting\\] nobody has taken it — ${JUDGMENT.awaiting.word}`));
+});
 
 test('renderSplash is ANSI, aligned, and carries NO markdown syntax', () => {
   const splash = renderSplash({

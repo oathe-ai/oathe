@@ -245,6 +245,48 @@ test('a SERVING tool surface without its speaker is a typed refusal — the prim
     (e) => e.code === 'OATHE_SPEAKER_REQUIRED');
 });
 
+test('THE GATE (ruling 2026-09-04): a claim needs a session behind it — refused, typed, with the fix, unless the surface is declared hookless; later acts on an admitted claim never refuse', async () => {
+  const seam = { register: async () => ({}), activate: async () => ({}) };
+  const identity = { orgId: 'oathe', principalId: 'founder', department: 'founder' };
+  const build = (speaker) => createOatheTools({ client: substrate, identity, workspace: WS, config: scratchConfig(), activation: seam, speaker });
+  // (b) a hook-capable surface with NO registered session: the SessionStart hook never ran
+  const unregistered = build({ surface: 'claude', app: { bundle: '/Applications/iTerm.app', pid: 4242 }, session: null, walked: true, client: 'claude-code', pid: 4242, device: null });
+  await assert.rejects(unregistered.oathe_claim({ task_id: 'gate-unregistered', objective: 'resumed before init' }),
+    (e) => e.code === 'OATHE_SESSION_UNREGISTERED' && /oathe init/.test(e.message) && /new session/.test(e.message),
+    'refused at the act, and told what to do — never a stall at done hours later');
+  const none = await substrate.query("SELECT 1 FROM cell.work_claim WHERE task_id = 'gate-unregistered'");
+  assert.equal(none.rows.length, 0, 'nothing written — the refusal is before the claim');
+  // (d) a bare shell: nobody's process, no client label
+  const bare = build({ surface: null, app: null, session: null, walked: true, client: null, pid: 4242, device: null });
+  await assert.rejects(bare.oathe_claim({ task_id: 'gate-bare', objective: 'typed from a shell' }),
+    (e) => e.code === 'OATHE_SPEAKER_UNKNOWN' && /oathe_claim/.test(e.message) && /harness session/.test(e.message));
+  // (the daemon's no-hello client) nothing to walk at all
+  const nothing = build({ surface: 'codex', app: null, session: null, walked: false, client: 'codex', pid: null, device: null });
+  await assert.rejects(nothing.oathe_claim({ task_id: 'gate-nothing', objective: 'no hello' }), (e) => e.code === 'OATHE_SPEAKER_UNKNOWN');
+  // (e) the client's label disagrees with the measured process
+  const liar = build({ surface: 'claude', app: null, session: null, walked: true, client: 'codex', pid: 4242, device: null });
+  await assert.rejects(liar.oathe_claim({ task_id: 'gate-liar', objective: 'mislabeled' }),
+    (e) => e.code === 'OATHE_SPEAKER_MISMATCH' && /codex/.test(e.message) && /claude/.test(e.message));
+  // (c) a surface that runs no hooks by design: admitted, and it says how its evidence will be found
+  const desktop = build({ surface: 'chatgpt', app: { bundle: '/Applications/ChatGPT.app', pid: 4242 }, session: null, walked: true, client: 'codex', pid: 4242, device: 'dev-1' });
+  const admitted = await desktop.oathe_claim({ task_id: 'gate-desktop', objective: 'no hooks, by design' });
+  assert.equal(admitted.claimed, true);
+  assert.equal(admitted.trace_link?.linked, false);
+  assert.match(admitted.trace_link?.why, /no hooks/, 'the reason is on the act');
+  assert.match(admitted.trace_link?.why, /discover/, 'and so is how its evidence will be found');
+  assert.deepEqual(admitted.spoken_from, { surface: 'chatgpt', app: '/Applications/ChatGPT.app', session: null, device: 'dev-1' }, 'the device rides every act');
+  // (f) the gate is claim-only: a later act from a speaker with no session is NOT refused on attribution
+  const later = await desktop.oathe_statement({ task_id: 'gate-desktop', proposition: 'still working, still hookless' });
+  assert.equal(later.recorded, true);
+  await desktop.oathe_yield({ task_id: 'gate-desktop', note: 'fixture done' });
+  // (off darwin) a blind walk with a real pid: the client's label stands in — admitted with the disclosure, a stated D0 limitation
+  const blind = build({ surface: 'claude', app: null, session: null, walked: false, client: 'claude-code', pid: 4242, device: null });
+  const stoodIn = await blind.oathe_claim({ task_id: 'gate-blind', objective: 'no ps on this platform' });
+  assert.equal(stoodIn.claimed, true);
+  assert.match(stoodIn.trace_link?.why, /ancestry/, 'the disclosure says the walk was unavailable');
+  await blind.oathe_yield({ task_id: 'gate-blind', note: 'fixture done' });
+});
+
 test('attribution rides the speech act — a claim leaves its trace-link statement IMMEDIATELY, idempotently, disclosed', async () => {
   const seam = { register: async () => ({}), activate: async () => ({}) };
   // A transcript that EXISTS: a link names a file a verifier can read, or it is not written.
@@ -263,8 +305,8 @@ test('attribution rides the speech act — a claim leaves its trace-link stateme
     },
   });
   const out = await wired.oathe_claim({ task_id: 'attr-task', objective: 'attributed at the act, not at turn end' });
-  assert.deepEqual(out.spoken_from, { surface: 'claude', app: '/Applications/iTerm.app', session: 'sess-attr-1' },
-    'the act discloses who spoke it');
+  assert.deepEqual(out.spoken_from, { surface: 'claude', app: '/Applications/iTerm.app', session: 'sess-attr-1', device: null },
+    'the act discloses who spoke it — and from which device (null: this fixture minted none)');
   assert.ok(!('trace_link' in out), 'a link that landed needs no disclosure');
   const links = () => substrate.query(
     "SELECT evidence_refs FROM cell.agent_statement WHERE task_id = 'attr-task' AND subject_ref = 'trace:sess-attr-1'");
@@ -480,6 +522,16 @@ test('oathe_done records a completion statement and moves the claim terminal —
   assert.notEqual(claim.rows[0].state, 'active');
 });
 
+test('oathe_statement fingerprints its claim — the transcript that records the response can be found by it', async () => {
+  const claim = await tools.oathe_claim({ task_id: 'fingerprint-task', objective: 'echo the claim into the record' });
+  const out = await tools.oathe_statement({
+    task_id: 'fingerprint-task', proposition: 'progress spoken mid-claim', evidence_ref: 'note:x',
+  });
+  assert.equal(out.task_id, 'fingerprint-task', 'a statement names the task it speaks to');
+  assert.equal(out.work_claim_id, claim.work_claim_id,
+    'a statement carries its claim UUID — a session that only records statements still self-fingerprints');
+});
+
 test('oathe_claim assigns the verifier engine at claim time, from config', async () => {
   const codexTools = createOatheTools({
     client: substrate,
@@ -574,7 +626,7 @@ test('read tools REGISTER the workspace; oathe_claim ACTIVATES it and discloses 
         return { ref: WS, fences: ['CLAUDE.md'], registered: true };
       },
     },
-    speaker: { surface: null, app: null, session: null }, // a bare terminal — required even when all-null
+    speaker: { surface: 'chatgpt', app: { bundle: '/Applications/ChatGPT.app', pid: 4242 }, session: null, walked: true, client: 'codex', pid: 4242, device: null }, // a surface with no hooks (the gate admits it; a bare terminal can no longer claim)
   });
   await seamed.oathe_board({});
   assert.deepEqual(calls.at(-1), ['register', 'oathe_board']);

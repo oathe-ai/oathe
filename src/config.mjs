@@ -80,6 +80,15 @@ const KEYS = Object.freeze({
   // every re-wired notch unloaded because the one attempt's refusal went unread).
   notchRestartSeconds: { default: 10, env: 'OATHE_NOTCH_RESTART_SECONDS', check: positiveInt },
   notchRestartPollMs: { default: 100, env: 'OATHE_NOTCH_RESTART_POLL_MS', check: positiveInt },
+  // The serve daemon (connection-lane phase 2): the unix socket the device's one oathe
+  // presence answers on — null derives <oathe home>/serve.sock (src/serve.mjs); a path
+  // overrides it. The connect budget is the forwarder's ONE attempt before it falls back to
+  // the standalone stdio server (a measured fact, never a hang); the restart budget is the
+  // same launchd lesson the notch keys carry.
+  serveSocket: { default: null, env: 'OATHE_SERVE_SOCKET', check: nullOrString },
+  serveConnectMs: { default: 250, env: 'OATHE_SERVE_CONNECT_MS', check: positiveInt },
+  serveRestartSeconds: { default: 10, env: 'OATHE_SERVE_RESTART_SECONDS', check: positiveInt },
+  serveRestartPollMs: { default: 100, env: 'OATHE_SERVE_RESTART_POLL_MS', check: positiveInt },
 });
 
 function nonEmptyString(v) {

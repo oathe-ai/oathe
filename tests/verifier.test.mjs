@@ -85,6 +85,9 @@ function fixtureTranscriptWithInterval(name) {
 for (const [providerName, makeProvider] of PROVIDERS) {
   describe(`settlement under the ${providerName} provider`, () => {
     const SCRATCH_DB = `oathe_verif_test_${process.pid}_${providerName}`;
+    // Every Verifier here reads stores under a scratch HOME: evidence discovery walks the
+    // trace stores, and a test must never scan (or depend on) the real ones.
+    const SCRATCH_ENV = { ...process.env, HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vhome-')) };
 
     let substrate;
     let workerTools;
@@ -129,6 +132,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       });
       engineCalls = [];
       verifier = new Verifier({
+        env: SCRATCH_ENV,
         substrate,
         paths,
         workspace: WS,
@@ -167,6 +171,161 @@ for (const [providerName, makeProvider] of PROVIDERS) {
         'pre-claim planning is context, not execution evidence — it never reaches the engine');
     });
 
+    it('an unsettled verify re-resolves the engine from CURRENT config — a failed engine never locks the task to one harness', async () => {
+      // Claimed when config said 'cursor' → the plan freezes cursor. The operator then switches
+      // the verifier to the standing config's engine (claude). Re-verify must follow the switch,
+      // not stay wedged on the dead binding (founder ruling 2026-09-04).
+      const cursorHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vcur-')));
+      const cursorTools = createOatheTools({
+        client: substrate,
+        identity: { orgId: 'oathe', principalId: OPERATOR, department: 'founder' },
+        workspace: WS,
+        config: new OatheConfig({
+          env: { HOME: cursorHome, OATHE_HOME: path.join(cursorHome, '.oathe'), OATHE_VERIFIER: 'cursor' },
+          cwd: cursorHome,
+        }),
+      });
+      const claim = await cursorTools.oathe_claim({ task_id: 'engine-rebind', objective: 'switch judges mid-flight' });
+      await linkTrace('engine-rebind', claim.work_claim_id);
+      await cursorTools.oathe_done({ task_id: 'engine-rebind', proposition: 'done', evidence_ref: 'x' });
+      const { rows: frozen } = await substrate.query(
+        "SELECT verification_plan->>'verifier_engine' AS e FROM cell.task WHERE org_id='oathe' AND task_id='verify:engine-rebind'");
+      assert.equal(frozen[0].e, 'cursor', 'the plan froze the claim-time engine — the record stands');
+      const current = verifier.config.get('verifier');
+      assert.notEqual(current, 'cursor', 'the standing verifier config must differ, or the test proves nothing');
+      engineVerdict = { verdict: 'accepted', reason: 'judged by the current engine' };
+      await verifier.verify({ taskId: 'engine-rebind' });
+      assert.equal(engineCalls.at(-1).engine, current,
+        'an unsettled verify follows current config, never the frozen claim-time binding');
+    });
+
+    it('the judge is told what the completion assertion IS — the done act under judgment, which may be absent from the traces', async () => {
+      // A blocking done on a code-mode surface (codex) writes its own act to the record only
+      // when the call RETURNS — after its verification. Told "absence of evidence is absence",
+      // the engine read the missing CLAIM(oathe_done) as "never completed" and rejected honest
+      // work (review-a3-gate1-plan, 2026-09-04). The prompt must name the assertion for what it is.
+      const claim = await workerTools.oathe_claim({ task_id: 'framed-done', objective: 'be judged on substance' });
+      await linkTrace('framed-done', claim.work_claim_id);
+      await workerTools.oathe_done({ task_id: 'framed-done', proposition: 'done', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'fine' };
+      await verifier.verify({ taskId: 'framed-done' });
+      const prompt = engineCalls.at(-1).prompt;
+      const framing = prompt.indexOf('IS the done act under judgment');
+      assert.ok(framing !== -1, 'the prompt says what the completion assertion is');
+      assert.ok(framing < prompt.indexOf('SESSION TRACES'), 'and says it before the traces the judge reads');
+      assert.match(prompt, /absence from a trace as absence of completion/, 'the one misreading, named and forbidden');
+    });
+
+    it('a traceless claim verifies against DISCOVERED evidence — the record self-fingerprints, no link required', async () => {
+      // The ChatGPT-desktop class: no registration, no trace link — but the harness transcript
+      // echoes the claim UUID and holds the work. Discovery must find it from the record alone.
+      const claim = await workerTools.oathe_claim({ task_id: 'traceless-surface', objective: 'work with no links' });
+      const projectDir = path.join(SCRATCH_ENV.HOME, '.claude', 'projects', 'fixture-proj');
+      fs.mkdirSync(projectDir, { recursive: true });
+      const sessionId = crypto.randomUUID();
+      fs.writeFileSync(path.join(projectDir, `${sessionId}.jsonl`), [
+        JSON.stringify({ type: 'user', uuid: 'u1', parentUuid: null, sessionId, cwd: projectDir,
+          message: { role: 'user', content: 'work the task' } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId, cwd: projectDir,
+          message: { role: 'assistant', content: [
+            { type: 'tool_use', id: 'toolu_c1', name: 'mcp__oathe__oathe_claim', input: { task_id: 'traceless-surface', objective: 'work with no links' } }] } }),
+        JSON.stringify({ type: 'user', uuid: 'r1', parentUuid: 'a1', sessionId, cwd: projectDir,
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_c1',
+            content: `{"claimed":true,"task_id":"traceless-surface","work_claim_id":"${claim.work_claim_id}"}` }] } }),
+        JSON.stringify({ type: 'assistant', uuid: 'a2', parentUuid: 'r1', sessionId, cwd: projectDir,
+          message: { role: 'assistant', content: [
+            { type: 'tool_use', id: 'toolu_w1', name: 'Bash', input: { command: 'make it' } },
+            { type: 'text', text: 'DISCOVERED-WORK-MARKER' }] } }),
+        JSON.stringify({ type: 'user', uuid: 'r2', parentUuid: 'a2', sessionId, cwd: projectDir,
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_w1', content: 'made it\nExit code 0' }] } }),
+      ].join('\n'));
+      await workerTools.oathe_done({ task_id: 'traceless-surface', proposition: 'done with no links', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'discovered evidence suffices' };
+      await verifier.verify({ taskId: 'traceless-surface' });
+      const prompt = engineCalls.at(-1).prompt;
+      assert.match(prompt, /DISCOVERED-WORK-MARKER/,
+        'the work sat on disk while the verifier judged an empty record — discovery must read it');
+    });
+
+    it('a reclaimed task is judged on every interval ever linked to it — the re-claim sees the prior claim\'s work', async () => {
+      // Round 1: claim, work (linked trace with a real interval), done — rejected.
+      const first = await workerTools.oathe_claim({ task_id: 'reclaim-blind', objective: 'prove reclaim evidence' });
+      const { file, sessionId } = fixtureTranscriptWithInterval('reclaim-blind');
+      await substrate.query(
+        `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+                execution_actor, claim_principal, statement_type, subject_ref, proposition,
+                evidence_refs, epistemic_status, asserted_at)
+         VALUES ($1, 'oathe', 'reclaim-blind', $2, $3, $4, 'progress', $5, 'trace', $6::jsonb, 'observed', now())`,
+        [crypto.randomUUID(), first.work_claim_id, `session:${sessionId}`, OPERATOR,
+          `trace:${sessionId}`, JSON.stringify([file])]);
+      await workerTools.oathe_done({ task_id: 'reclaim-blind', proposition: 'first pass done', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'rejected', reason: 'not yet' };
+      await verifier.verify({ taskId: 'reclaim-blind' });
+      // Round 2: the blind re-claim — no new trace link, done again seconds later.
+      await workerTools.oathe_claim({ task_id: 'reclaim-blind', objective: 'prove reclaim evidence' });
+      await workerTools.oathe_done({ task_id: 'reclaim-blind', proposition: 'second pass done', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'prior interval carries the work' };
+      await verifier.verify({ taskId: 'reclaim-blind' });
+      const prompt = engineCalls.at(-1).prompt;
+      assert.match(prompt, /INTERVAL-WORK-MARKER/,
+        'evidence is the TASK\'s record across claims — a re-claim judged blind to the prior interval is a false rejection');
+    });
+
+    it('an empty record stalls in the evidence lane — the engine never judges nothing', async () => {
+      // No link, no discoverable transcript: the engine improvised opposite verdicts from the
+      // same emptiness two minutes apart (live 2026-09-04). An empty record is a stall, not a coin flip.
+      await workerTools.oathe_claim({ task_id: 'empty-record', objective: 'nothing reachable' });
+      await workerTools.oathe_done({ task_id: 'empty-record', proposition: 'done unseen', evidence_ref: 'x' });
+      const before = engineCalls.length;
+      await assert.rejects(verifier.verify({ taskId: 'empty-record' }),
+        (e) => e.code === 'OATHE_EVIDENCE_EMPTY');
+      assert.equal(engineCalls.length, before, 'no engine ran — a verdict needs a record');
+      const { rows } = await substrate.query(
+        `SELECT evidence_refs FROM cell.agent_statement
+          WHERE task_id = 'verify:empty-record' AND evidence_refs::text LIKE '%evidence-failure:%'`);
+      assert.equal(rows.length, 1, 'the stall is durable, in the evidence-failure lane');
+    });
+
+    it('an unreadable store file never stalls a task on its own — it is REPORTED in the stall note by name (Greptile on PR #37)', async (t) => {
+      if (process.getuid?.() === 0) return t.skip('root reads everything');
+      const lockedDir = path.join(SCRATCH_ENV.HOME, '.claude', 'projects', 'locked-proj');
+      fs.mkdirSync(lockedDir, { recursive: true });
+      const locked = path.join(lockedDir, `${crypto.randomUUID()}.jsonl`);
+      fs.writeFileSync(locked, `${JSON.stringify({ type: 'user', uuid: 'u1', cwd: lockedDir, message: { role: 'user', content: 'unrelated' } })}\n`);
+      fs.chmodSync(locked, 0o000);
+      try {
+        await workerTools.oathe_claim({ task_id: 'locked-neighbor', objective: 'nothing reachable, one locked file nearby' });
+        await workerTools.oathe_done({ task_id: 'locked-neighbor', proposition: 'done unseen', evidence_ref: 'x' });
+        const before = engineCalls.length;
+        await assert.rejects(verifier.verify({ taskId: 'locked-neighbor' }),
+          (e) => e.code === 'OATHE_EVIDENCE_EMPTY' && e.message.includes(locked),
+          'the stall is the EMPTY record, and it names the file the scan could not read — never TRACE_UNREADABLE on an unrelated file');
+        assert.equal(engineCalls.length, before);
+        const { rows } = await substrate.query(
+          `SELECT proposition FROM cell.agent_statement
+            WHERE task_id = 'verify:locked-neighbor' AND evidence_refs::text LIKE '%evidence-failure:%'`);
+        assert.equal(rows.length, 1);
+        assert.ok(rows[0].proposition.includes(locked), 'the durable stall note names it too');
+      } finally {
+        fs.chmodSync(locked, 0o600);
+      }
+    });
+
+    it('a store-less surface\'s claim still reaches the engine — an honest empty link is attribution, not absence', async () => {
+      const claim = await workerTools.oathe_claim({ task_id: 'storeless-surface', objective: 'cursor-style work' });
+      await substrate.query(
+        `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+                execution_actor, claim_principal, statement_type, subject_ref, proposition,
+                evidence_refs, epistemic_status, asserted_at)
+         VALUES ($1, 'oathe', 'storeless-surface', $2, $3, $4, 'progress', $5, 'no store', '[]'::jsonb, 'observed', now())`,
+        [crypto.randomUUID(), claim.work_claim_id, `session:${crypto.randomUUID()}`, OPERATOR,
+          `trace:${crypto.randomUUID()}`]);
+      await workerTools.oathe_done({ task_id: 'storeless-surface', proposition: 'done from cursor', evidence_ref: 'x' });
+      engineVerdict = { verdict: 'accepted', reason: 'assertions judged on their own weight' };
+      const out = await verifier.verify({ taskId: 'storeless-surface' });
+      assert.equal(out.verdict, 'accepted', 'the surface keeps no store, honestly — the engine still judges');
+    });
+
     it('the evidence section of the engine prompt respects verifierEvidenceBudget — the render bound holds through the verifier', async () => {
       const claim = await workerTools.oathe_claim({ task_id: 'budget-task', objective: 'prove the prompt bound' });
       await linkTrace('budget-task', claim.work_claim_id);
@@ -175,6 +334,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       const budget = 600;
       const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-vbudget-')));
       const tight = new Verifier({
+        env: SCRATCH_ENV,
         substrate, paths, workspace: WS, operatorPrincipal: OPERATOR,
         config: new OatheConfig({
           env: { HOME: home, OATHE_HOME: path.join(home, '.oathe'), OATHE_VERIFIER_EVIDENCE_BUDGET: String(budget) },
@@ -361,6 +521,12 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       }
       const verdictNudge = notifies.find((n) => n.task_id === 'wired-verdict' && n.kind === 'settled');
       assert.ok(verdictNudge, `the settle nudged the wire: ${JSON.stringify(notifies.map((n) => n.kind))}`);
+      // The judgment announces its START too (ruling 2026-09-04): the moment the verifier
+      // holds the verify claim, the glass turns the row `verifying` — without this nudge the
+      // stale failure stood until the verdict, minutes later (the founder's live retry).
+      const kinds = notifies.filter((n) => n.task_id === 'wired-verdict').map((n) => n.kind);
+      assert.ok(kinds.indexOf('verify_started') !== -1 && kinds.indexOf('verify_started') < kinds.indexOf('settled'),
+        `verify_started rides the wire before the verdict: ${JSON.stringify(kinds)}`);
     });
 
     it('the engine runs IN the task workspace — cwd resolved by the one home resolver, prompt invites file inspection', async () => {
@@ -370,6 +536,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       engineVerdict = { verdict: 'accepted', reason: 'the artifact is on disk' };
       const seen = [];
       const eyed = new Verifier({
+        env: SCRATCH_ENV,
         substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
         provider: makeProvider(),
         engineRunner: async ({ engine, prompt, cwd }) => { seen.push({ engine, prompt, cwd }); return engineVerdict; },
@@ -398,6 +565,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
         connectionConfig: () => substrate.connectionConfig(),
       };
       const failing = new Verifier({
+        env: SCRATCH_ENV,
         substrate: spyClient, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
         provider: new StandaloneRuntimeProvider({ paths }),
         engineRunner: async () => { const e = new Error('engine evaporated'); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
@@ -418,6 +586,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       await workerTools.oathe_done({ task_id: 'engine-dies', proposition: 'done', evidence_ref: 'x' });
       engineVerdict = null; // the runner throws instead
       const failing = new Verifier({
+        env: SCRATCH_ENV,
         substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
         provider: new StandaloneRuntimeProvider({ paths }),
         engineRunner: async () => { const e = new Error('codex exited 1: usage limit reached — try again at 2:56 AM'); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
@@ -454,6 +623,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       await workerTools.oathe_done({ task_id: 'evidence-dies', proposition: 'done', evidence_ref: 'x' });
       let engineLaunched = false;
       const failing = new Verifier({
+        env: SCRATCH_ENV,
         substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
         provider: new StandaloneRuntimeProvider({ paths }),
         engineRunner: async () => { engineLaunched = true; return { verdict: 'accepted', reason: 'must never run' }; },
@@ -529,6 +699,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
       // A verifier standing in ANOTHER folder judges it — its claim on verify:homed-verify must
       // carry WS (the parent's home), never the verifier's own workspace (leak #2).
       const foreign = new Verifier({
+        env: SCRATCH_ENV,
         substrate, paths, workspace: 'ws-fedcba654321', config: scratchConfig(),
         operatorPrincipal: OPERATOR, provider: makeProvider(),
         engineRunner: async () => ({ verdict: 'accepted', reason: 'fine' }),

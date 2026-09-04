@@ -5,8 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
 import { notchLabel } from '../src/notch.mjs';
+import { serveLabel } from '../src/serve.mjs';
 
 // A sandbox's machine side effects die with the process. A test that runs `oathe init`
 // through the REAL bin (cli.test's picker moment, init.test's machine-wide verifier run)
@@ -19,9 +21,51 @@ const sandboxHomes = [];
 if (process.platform === 'darwin') {
   process.on('exit', () => {
     for (const home of sandboxHomes) {
+      // Both supervised services: a leaked KeepAlive daemon outlives the temp dir forever.
       spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${notchLabel(home)}`], { stdio: 'ignore' });
+      spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${serveLabel(home)}`], { stdio: 'ignore' });
     }
   });
+}
+
+/**
+ * A minimal Claude transcript (one tool call, one result) in Claude's store layout — a file
+ * the claude trace store OWNS and can project (ownership is by path), under a scratch home.
+ * @param {{taskId: string, home?: string}} o  home: the HOME to plant it under (default: a scratch dir)
+ * @returns {{file: string, sessionId: string}}
+ */
+export function writeClaudeTranscript({ taskId, home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-trace-')) }) {
+  const dir = path.join(home, '.claude', 'projects', 'fixture');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${taskId}.jsonl`);
+  const sessionId = randomUUID();
+  fs.writeFileSync(file, [
+    JSON.stringify({ type: 'user', uuid: 'u1', sessionId, cwd: dir, message: { role: 'user', content: 'work' } }),
+    JSON.stringify({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId, cwd: dir,
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'make it' } }] } }),
+    JSON.stringify({ type: 'user', uuid: 'u2', parentUuid: 'a1', sessionId, cwd: dir,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'made it\nExit code 0' }] } }),
+  ].join('\n'));
+  return { file, sessionId };
+}
+
+/**
+ * ONE claim interval's worth of evidence: a minimal Claude transcript (one tool call, one
+ * result — what the verifier lane needs to judge at all) in Claude's store layout (ownership
+ * is by path), linked to the claim by the same trace-link statement the heartbeat writes.
+ * @param {{substrate: {query: Function}, taskId: string, workClaimId: string, principal: string, orgId?: string}} o
+ * @returns {Promise<{file: string, sessionId: string}>}
+ */
+export async function linkClaudeTrace({ substrate, taskId, workClaimId, principal, orgId = 'oathe' }) {
+  const { file, sessionId } = writeClaudeTranscript({ taskId });
+  await substrate.query(
+    `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+            execution_actor, claim_principal, statement_type, subject_ref, proposition,
+            evidence_refs, epistemic_status, asserted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'progress', $7, 'trace', $8::jsonb, 'observed', now())`,
+    [randomUUID(), orgId, taskId, workClaimId, `session:${sessionId}`, principal, `trace:${sessionId}`,
+      JSON.stringify([file])]);
+  return { file, sessionId };
 }
 
 /**
@@ -74,8 +118,11 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
       const key = args[0] === 'mcp' ? 'mcp' : (args[1] === 'marketplace' ? 'marketplace' : 'add');
       const line = stanza[key];
       if (args.includes('remove')) {
-        // A marketplace stanza carries its source line (as the real config.toml does).
-        const pattern = key === 'marketplace' ? new RegExp(`\\[marketplaces\\.oathe\\]\\n(source = "[^"]*"\\n)?`) : `${line}\n`;
+        // A marketplace stanza carries its source line; an mcp stanza its command (as the
+        // real config.toml does).
+        const pattern = key === 'marketplace' ? new RegExp(`\\[marketplaces\\.oathe\\]\\n(source = "[^"]*"\\n)?`)
+          : key === 'mcp' ? new RegExp(`\\[mcp_servers\\.oathe\\]\\n(command = "[^"]*"\\n)?`)
+            : `${line}\n`;
         fs.writeFileSync(configPath, prior.replace(pattern, ''));
         return { status: 0, stdout: '', stderr: '' };
       }
@@ -87,12 +134,36 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
         if (recorded === undefined) fs.writeFileSync(configPath, `${prior}${line}\nsource = "${args[3]}"\n`);
         return { status: 0, stdout: '', stderr: '' };
       }
+      if (key === 'mcp') {
+        // `codex mcp add <name> -- <command> <args…>` records the command it was handed.
+        const command = args[args.indexOf('--') + 1];
+        const next = prior.includes(line) ? prior.replace(new RegExp(`(\\[mcp_servers\\.oathe\\]\\n)command = "[^"]*"\\n`), `$1command = "${command}"\n`)
+          : `${prior}${line}\ncommand = "${command}"\n`;
+        if (next !== prior) fs.writeFileSync(configPath, next);
+        return { status: 0, stdout: '', stderr: '' };
+      }
       if (!prior.includes(line)) fs.writeFileSync(configPath, `${prior}${line}\n`);
       return { status: 0, stdout: '', stderr: '' };
     },
     claude(args) {
       const marketplacesFile = path.join(registryDir, 'known_marketplaces.json');
       const installedFile = path.join(registryDir, 'installed_plugins.json');
+      // `claude mcp add -s user <name> -- <command> <args…>` lands in ~/.claude.json —
+      // the user scope's home (claude-code/mcp.md, pinned).
+      const claudeJson = path.join(home, '.claude.json');
+      if (args[0] === 'mcp' && args[1] === 'add') {
+        const doc = readJson(claudeJson, {});
+        const sep = args.indexOf('--');
+        doc.mcpServers = { ...doc.mcpServers, [args[sep - 1]]: { command: args[sep + 1], args: args.slice(sep + 2) } };
+        writeJson(claudeJson, doc);
+        return;
+      }
+      if (args[0] === 'mcp' && args[1] === 'remove') {
+        const doc = readJson(claudeJson, {});
+        delete doc.mcpServers?.[args[2]];
+        writeJson(claudeJson, doc);
+        return;
+      }
       if (args[1] === 'marketplace' && args[2] === 'add') {
         const doc = readJson(marketplacesFile, {});
         doc.oathe = { source: { source: 'directory', path: args[3] } };

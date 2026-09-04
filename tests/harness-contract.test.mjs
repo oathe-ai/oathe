@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  HARNESS_CLASSES, buildAll, buildWireable, byName, capabilityTable, detectOnlySurfaces, dialectFor,
+  HARNESS_CLASSES, attestationFor, buildAll, buildWireable, byName, capabilityTable, detectOnlySurfaces, dialectFor,
   docsDependents, harnessForClient, installable, isSyntheticWorkspace, launchable, liveTestable,
   ownerOfTracePath, traceStores, verifierCapable, verifiers, wireable,
 } from '../src/harnesses/catalog.mjs';
@@ -84,12 +84,26 @@ test('capability roll-call: each capability is a frozen object with its contract
 
 test('the GOLDEN capability table — the definition of a supported harness; a row change is a reviewed change', () => {
   assert.deepEqual(capabilityTable(), {
-    claude: { wiring: true, hooks: true, launch: true, headless: true, traces: true, surfaces: true, contextFiles: true, globalContextFiles: false, synthetic: false, install: true, docs: true },
-    codex: { wiring: true, hooks: true, launch: true, headless: true, traces: true, surfaces: true, contextFiles: true, globalContextFiles: true, synthetic: true, install: true, docs: true },
-    cursor: { wiring: true, hooks: true, launch: true, headless: true, traces: false, surfaces: true, contextFiles: true, globalContextFiles: false, synthetic: false, install: true, docs: true },
-    cowork: { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: true },
-    'chatgpt-web': { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: false },
+    claude: { wiring: true, hooks: true, launch: true, headless: true, traces: true, surfaces: true, contextFiles: true, globalContextFiles: false, synthetic: false, install: true, docs: true, attestation: { claude: 'hooks' } },
+    codex: { wiring: true, hooks: true, launch: true, headless: true, traces: true, surfaces: true, contextFiles: true, globalContextFiles: true, synthetic: true, install: true, docs: true, attestation: { codex: 'hooks', chatgpt: 'hookless' } },
+    cursor: { wiring: true, hooks: true, launch: true, headless: true, traces: false, surfaces: true, contextFiles: true, globalContextFiles: false, synthetic: false, install: true, docs: true, attestation: { cursor: 'hooks' } },
+    cowork: { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: true, attestation: null },
+    'chatgpt-web': { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: false, attestation: null },
   });
+});
+
+test('attestation is a touchpoint (ruling 2026-09-04): every surface an adapter owns declares whether its sessions register through hooks, and the catalog answers by SURFACE name — never a harness literal outside src/harnesses/', () => {
+  assert.deepEqual(attestationFor('claude'), { harness: 'claude', attestation: 'hooks' });
+  assert.deepEqual(attestationFor('codex'), { harness: 'codex', attestation: 'hooks' });
+  assert.deepEqual(attestationFor('chatgpt'), { harness: 'codex', attestation: 'hookless' }, 'the ChatGPT desktop app embeds codex and runs no hooks — its claims are admitted on discovery');
+  assert.deepEqual(attestationFor('cursor'), { harness: 'cursor', attestation: 'hooks' });
+  assert.equal(attestationFor('nobody'), null, 'an unknown surface is nobody\'s — the gate refuses it');
+  assert.equal(attestationFor(null), null);
+  for (const C of HARNESS_CLASSES) {
+    if (C.surfaces === null) { assert.equal(C.attestation, null, `${C.harnessName}: a surface that never speaks declares null`); continue; }
+    assert.ok(C.attestation && Object.keys(C.attestation).length > 0, `${C.harnessName} declares attestation per owned surface`);
+    for (const v of Object.values(C.attestation)) assert.ok(['hooks', 'hookless'].includes(v), `${C.harnessName}: ${v}`);
+  }
 });
 
 test('the GOLDEN payload roster — every trace row type is handled or CONSCIOUSLY ignored, per engine; a new type is a reviewed row change', () => {
@@ -324,6 +338,13 @@ test('wiring describes itself from the same data it writes — every wired adapt
   assert.match(by.claude, /settings\.json/); assert.match(by.claude, /claude plugin install/);
   assert.match(by.codex, /config\.toml/); assert.match(by.codex, /AGENTS/);
   assert.match(by.cursor, /mcp\.json/); assert.match(by.cursor, /hooks\.json/);
+  // ONE address at ONE rigor (connection-lane plan, 2026-09-04): every wired adapter's MCP
+  // entry speaks the shim — the same touchpoint may never sit at three rigors again (the
+  // 2026-09-04 escape: cursor absolute, claude and codex bare PATH).
+  const shim = `${home}/.oathe/bin/oathe`;
+  for (const [name, described] of Object.entries(by)) {
+    assert.ok(described.includes(shim), `${name}: describe() names the shim address — got:\n${described}`);
+  }
   assert.deepEqual(buildWireable({ home, envPath: env.PATH, paths, exec }).map((h) => h.name), wireable());
 });
 
