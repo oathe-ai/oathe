@@ -60,7 +60,10 @@ harness, and the agent inspects the actual workspace and carries on.
 
 That is the whole upgrade — it runs `npm i -g @oathe/oathe@latest && oathe init` for you,
 through the npm that sits beside the node running oathe (never another node's), then `init`
-through the freshly installed bin under npm's global prefix. The two commands still work by hand. Node ≥ 22.13 is the floor: `npm install` refuses below it with
+through the freshly installed bin under npm's global prefix, and ends with the word that matters:
+`update successful — oathe v<version> · notch running (pid N)`. That last clause is read from
+launchd after init re-wired the notch, never assumed — a notch that did not come back is said as
+`NOT running` with launchd's reason and an `attention` trailer. The two commands still work by hand. Node ≥ 22.13 is the floor: `npm install` refuses below it with
 `ERROR_NODE_VERSION` and the upgrade command, and so does the bin (Codex's thread index
 needs `node:sqlite`). Hooks and the MCP server run the `oathe` bin on PATH, so the new
 code is live the moment npm replaces it; `oathe init` is idempotent and re-materializes the

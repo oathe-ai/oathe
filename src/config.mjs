@@ -74,6 +74,12 @@ const KEYS = Object.freeze({
   // The notch feed's drift guard: `oathe notch --serve` recomputes a frame this often even
   // when no wire event arrives (the push path is pg_notify; this is the belt to its braces).
   notchHeartbeatSeconds: { default: 300, env: 'OATHE_NOTCH_HEARTBEAT_SECONDS', check: positiveInt },
+  // The notch restart budget: launchd's bootout returns before the old job is gone, and a
+  // bootstrap in that window is refused ("5: Input/output error") — init re-tries inside
+  // this budget, asking this often, and says NOT RUNNING past it (the 0.4.3 update left
+  // every re-wired notch unloaded because the one attempt's refusal went unread).
+  notchRestartSeconds: { default: 10, env: 'OATHE_NOTCH_RESTART_SECONDS', check: positiveInt },
+  notchRestartPollMs: { default: 100, env: 'OATHE_NOTCH_RESTART_POLL_MS', check: positiveInt },
 });
 
 function nonEmptyString(v) {

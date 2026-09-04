@@ -54,7 +54,20 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
   };
   // One fake per real CLI, each mirroring the files the real one writes so verification has
   // bytes to read: codex -> config.toml stanzas; claude -> the plugins registry.
+  // launchd as it answers a wired agent: bootstrap loads the label, bootout drops it, and
+  // print names a pid for a loaded job — the running notch init and doctor read from launchd.
+  const loaded = new Set();
+  const label = (target) => String(target).split('/').at(-1);
   const fakes = {
+    launchctl: (args) => {
+      if (args[0] === 'bootstrap') { loaded.add(path.basename(args[2], '.plist')); return { status: 0, stdout: '', stderr: '' }; }
+      if (args[0] === 'bootout') { loaded.delete(label(args[1])); return { status: 0, stdout: '', stderr: '' }; }
+      if (args[0] === 'print') {
+        return loaded.has(label(args[1])) ? { status: 0, stdout: '\tstate = running\n\tpid = 4242\n', stderr: '' }
+          : { status: 113, stdout: '', stderr: `Could not find service "${label(args[1])}" in domain for user gui: 501\n` };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    },
     codex(args) {
       const prior = fs.readFileSync(configPath, 'utf8');
       const stanza = { marketplace: '[marketplaces.oathe]', add: '[plugins."oathe@oathe"]', mcp: '[mcp_servers.oathe]' };

@@ -130,3 +130,34 @@ test("a custom npm prefix (npm config set prefix …): the package lands under n
   assert.ok(exec.calls.every(([cmd]) => cmd === path.join(nodeHome, 'bin', 'npm')), 'npm is still the one beside node — npm ships with node');
   assert.deepEqual(handoffs, [[path.join(prefix, 'bin', 'oathe'), ['init']]], "init runs through the bin under npm's prefix, where the install landed");
 });
+
+test('update ends with the word the person needs: the version that is live now and the notch launchd runs — or that it does not', () => {
+  const { prefix, packageRoot, execPath } = globalInstall({ version: '0.4.1' });
+  const exec = fakeExec({
+    rootG: path.join(prefix, 'lib', 'node_modules'),
+    onInstall: () => {
+      fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@oathe/oathe', version: '0.4.4' }));
+      return { status: 0, stdout: 'changed 15 packages in 1s\n', stderr: '' };
+    },
+  });
+  const lines = [];
+  const up = runUpdate({
+    packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => lines.push(s) },
+    notch: () => ({ label: 'ai.oathe.notch.x', loaded: true, pid: 31337 }),
+  });
+  assert.deepEqual(up.notch, { label: 'ai.oathe.notch.x', loaded: true, pid: 31337 });
+  assert.match(lines.at(-1), /^update successful — oathe v0\.4\.4 · notch running \(pid 31337\)\n$/);
+
+  const down = [];
+  const dn = runUpdate({
+    packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => down.push(s) },
+    notch: () => ({ label: 'ai.oathe.notch.x', loaded: false, pid: null }),
+  });
+  assert.equal(dn.notch.loaded, false);
+  assert.match(down.at(-1), /^update installed oathe v0\.4\.4 — but the notch is NOT running/, 'a dead notch is never folded into "successful"');
+
+  const none = [];
+  const off = runUpdate({ packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => none.push(s) }, notch: () => null });
+  assert.equal(off.notch, null, 'off darwin there is no notch to report');
+  assert.match(none.at(-1), /^update successful — oathe v0\.4\.4\n$/);
+});

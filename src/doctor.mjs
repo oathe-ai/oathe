@@ -8,6 +8,8 @@ import path from 'node:path';
 import { buildContext, packageVersion } from './context.mjs';
 import { FencedBlock, FENCE_STYLES, JsonEntries } from './blocks.mjs';
 import { sha256Hex } from './manifest.mjs';
+import { launchdJob } from './notch.mjs';
+import { defaultExec } from './harnesses/harness.mjs';
 
 function verifyJsonRow(row) {
   if (!fs.existsSync(row.file)) return 'file-missing';
@@ -66,9 +68,12 @@ export function traceStatusOf(error) {
 // A LaunchAgent is a whole-file write: present and byte-identical to what init recorded, or
 // user-edited; gone is gone. (The notch ships with the package — every darwin manifest
 // carries this row now.)
-function verifyLaunchAgentRow(row) {
+// …and "ok" means launchd RUNS it: an agent on disk that launchd dropped (the asynchronous
+// bootout race, a bootout by hand) is the not-running notch the person is staring at.
+function verifyLaunchAgentRow(row, { launchd }) {
   if (!fs.existsSync(row.file)) return 'file-missing';
-  return sha256Hex(fs.readFileSync(row.file, 'utf8')) === row.sha256 ? 'ok' : 'user-edited';
+  if (sha256Hex(fs.readFileSync(row.file, 'utf8')) !== row.sha256) return 'user-edited';
+  return launchd(path.basename(row.file, '.plist')).pid !== null ? 'ok' : 'not-running';
 }
 
 // The materialized notch copy: the row's detail names the binary inside the key dir; ok
@@ -115,7 +120,8 @@ export async function runSurfaceReport({ env = process.env, cwd = () => process.
 }
 
 /** @returns {Promise<{rows: object[], substrate: object, plugin: {resolves: boolean, detail: string|null}}>} */
-export async function runDoctor({ env = process.env } = {}) {
+export async function runDoctor({ env = process.env, exec = defaultExec } = {}) {
+  const launchd = (label) => launchdJob({ label, exec });
   const ctx = buildContext({ env });
   const { manifest, substrate, paths, harnesses } = ctx;
   try {
@@ -130,7 +136,7 @@ export async function runDoctor({ env = process.env } = {}) {
       file: row.file,
       kind: row.kind,
       block_version: row.block_version,
-      status: (VERIFIERS[row.kind] ?? (() => 'unknown-kind'))(row),
+      status: (VERIFIERS[row.kind] ?? (() => 'unknown-kind'))(row, { launchd }),
     }));
     // The trace-contract monitor: both vendors disclaim transcript-schema stability, so the
     // doctor validates the NEWEST live record in each engine's store against docs/traces.md and

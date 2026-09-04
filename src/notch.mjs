@@ -95,7 +95,22 @@ export function materializeNotchApp({ home, appBinary, version }) {
 }
 
 /** @returns {object[]} action rows for the init report; [] only off-darwin */
-export function wireNotch({ home, manifest, config, version, exec = defaultExec, uid = process.getuid(), packageRoot }) {
+/** launchd's word on one label: loaded, and the pid it runs — the only "running" oathe reports. */
+export function launchdJob({ label, exec = defaultExec, uid = process.getuid() }) {
+  const r = exec.run('launchctl', ['print', `gui/${uid}/${label}`]);
+  const pid = r.status === 0 ? Number(/^\s*pid = (\d+)/m.exec(r.stdout)?.[1] ?? NaN) : NaN;
+  return { label, loaded: r.status === 0, pid: Number.isFinite(pid) ? pid : null };
+}
+
+/** The same word for this home's notch agent. */
+export function notchStatus({ home, exec = defaultExec, uid = process.getuid() }) {
+  return launchdJob({ label: notchLabel(home), exec, uid });
+}
+
+/** A synchronous pause — init is a straight line, and launchd is asked, not raced. */
+const blockingSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+export function wireNotch({ home, manifest, config, version, exec = defaultExec, uid = process.getuid(), packageRoot, sleep = blockingSleep }) {
   if (process.platform !== 'darwin') return [];
   const source = config.get('notchApp') ?? packagedNotchApp(packageRoot);
   if (!fs.existsSync(source)) return [{ action: 'notch-binary-missing', file: source }];
@@ -119,7 +134,7 @@ export function wireNotch({ home, manifest, config, version, exec = defaultExec,
   // out and removed here — otherwise the old job lingers loaded beside the new one.
   for (const row of manifest.removeWhere((r) => r.kind === 'launch-agent' || r.kind === 'notch-app')) {
     if (row.kind === 'launch-agent' && row.file !== file) {
-      exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]);
+      exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]); // result unread: a legacy label that is not loaded answers 'Could not find service' — nothing to do either way
       if (fs.existsSync(row.file)) fs.rmSync(row.file);
     }
   }
@@ -134,21 +149,43 @@ export function wireNotch({ home, manifest, config, version, exec = defaultExec,
 
   // A re-run is the restart: bootout is allowed to fail (not loaded), bootstrap must land.
   // Prune stale keys BETWEEN the two — launchd is off the old copy, the new one not yet up.
-  exec.run('launchctl', ['bootout', `gui/${uid}/${label}`]);
+  exec.run('launchctl', ['bootout', `gui/${uid}/${label}`]); // result unread: a first install has no job to boot out; whether the OLD job is gone is asked below, by retrying bootstrap until launchd takes the new one
   for (const key of fs.readdirSync(materializedNotchRoot(home))) {
     const stale = path.join(materializedNotchRoot(home), key);
     if (stale !== app.dir) fs.rmSync(stale, { recursive: true, force: true });
   }
-  exec.run('launchctl', ['bootstrap', `gui/${uid}`, file]);
-  return [{ action: 'launch-agent-written', file }];
+  // bootout is asynchronous: launchd answers before the old job is torn down, and a
+  // bootstrap inside that window is refused (5: Input/output error). Ask again inside the
+  // budget; then confirm from launchd itself that the job has a pid. Past the budget the
+  // row says NOT RUNNING with launchd's last word — a silent "written" over a dead notch
+  // is what shipped in 0.4.3.
+  const deadline = Date.now() + config.get('notchRestartSeconds') * 1000;
+  // A poll never sleeps past the deadline — the budget is the budget (Greptile P1 on #34).
+  const poll = () => Math.max(0, Math.min(config.get('notchRestartPollMs'), deadline - Date.now()));
+  let last = exec.run('launchctl', ['bootstrap', `gui/${uid}`, file]);
+  while (last.status !== 0 && Date.now() < deadline) {
+    sleep(poll());
+    last = exec.run('launchctl', ['bootstrap', `gui/${uid}`, file]);
+  }
+  let status = notchStatus({ home, exec, uid });
+  while (last.status === 0 && status.pid === null && Date.now() < deadline) {
+    sleep(poll());
+    status = notchStatus({ home, exec, uid });
+  }
+  const outcome = status.pid !== null
+    ? { action: 'notch-running', pid: status.pid, label }
+    : { action: 'notch-not-running', file, label, detail: lastLine(last.stderr) || (status.loaded ? 'loaded, no pid yet' : 'not loaded') };
+  return [{ action: 'launch-agent-written', file }, outcome];
 }
+
+const lastLine = (text) => String(text ?? '').trim().split('\n').filter((l) => l && !/^Try re-running/.test(l)).at(-1) ?? '';
 
 /** @returns {object[]} action rows for the uninstall report */
 export function unwireNotch({ manifest, exec = defaultExec, uid = process.getuid() }) {
   const actions = [];
   for (const row of manifest.removeWhere((r) => r.kind === 'launch-agent')) {
     // The label rides the recorded file name — unwire boots out exactly what wire named.
-    exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]);
+    exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]); // result unread: an agent already gone answers 'Could not find service'; the removal below is what uninstall promises
     if (fs.existsSync(row.file)) fs.rmSync(row.file);
     actions.push({ action: 'launch-agent-removed', file: row.file });
   }

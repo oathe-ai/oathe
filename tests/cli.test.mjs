@@ -220,16 +220,27 @@ test('a second claim is the substrate refusal, faithfully non-zero', () => {
   assert.match(second.stderr, /oathe: claim refused/);
 });
 
-test('doctor prints per-row verdicts and the substrate summary', () => {
+test('doctor prints per-row verdicts and the substrate summary — and asks the REAL launchd about the notch agent: this sandbox\'s was wired through a fake exec, so launchd never took it, and doctor says so', () => {
   const out = oathe(['doctor']);
-  assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /substrate.*reachable/i);
   assert.match(out.stdout, new RegExp(`ddl.*${DDL_FILES.length}/${DDL_FILES.length}`, 'i'));
   assert.match(out.stdout, /ddl source: (vendor|monorepo|OATHE_DDL_DIR)/);
-  assert.match(out.stdout, /ok/);
   assert.match(out.stdout, /^runtime: (oathe|standalone) \(requested auto\)/m,
     'the doctor names which runtime provider is active');
-  assert.match(out.stdout, /^oathe: doctor ok$/m);
+  const rows = out.stdout.split('\n').filter((l) => /^  (ok|not-running|user-edited|file-missing)\s/.test(l));
+  assert.ok(rows.length >= 4, out.stdout);
+  if (process.platform === 'darwin') {
+    // An agent on disk that launchd is not running is the notch the person is not seeing —
+    // never an ok row (0.4.3 shipped exactly that silence).
+    assert.ok(rows.some((l) => /^  not-running\s+notch\s+launch-agent/.test(l)), out.stdout);
+    assert.ok(rows.filter((l) => !/launch-agent/.test(l)).every((l) => l.startsWith('  ok')), out.stdout);
+    assert.match(out.stdout, /^oathe: doctor attention$/m);
+    assert.equal(out.status, 1);
+  } else {
+    assert.ok(rows.every((l) => l.startsWith('  ok')), out.stdout);
+    assert.match(out.stdout, /^oathe: doctor ok$/m);
+    assert.equal(out.status, 0, out.stderr);
+  }
 });
 
 test('doctor --surface prints the resolution report without touching the substrate', () => {
