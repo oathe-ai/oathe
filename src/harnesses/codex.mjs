@@ -13,6 +13,7 @@ import { cwdDialect } from './dialects.mjs';
 import { CODEX_ROLLOUT_ROSTER, CODEX_CALL_TYPES, CORRELATABLE_ITEMS, CODEX_ROOT_AGENT_PATH, codexKindOf } from './codex-roster.mjs';
 import { makeFidelity } from './fidelity.mjs';
 import { CodexTraceStore } from '../traces.mjs';
+import { shimPath } from '../shim.mjs';
 
 /** The raw call payloads of a rollout — the fidelity extractors' one reading of actions. */
 const codexRawCalls = (entries) => entries
@@ -62,6 +63,9 @@ export class CodexHarness extends Harness {
     return realpathOr(dir).startsWith(`${parent}${path.sep}`);
   }
 
+  // The CLI registers through hooks; the ChatGPT desktop app embeds codex and runs NONE —
+  // its claims are admitted on discovery (the measured app bundle names the surface).
+  static attestation = Object.freeze({ codex: 'hooks', chatgpt: 'hookless' });
   static install = Object.freeze({ npm: '@openai/codex', bin: 'codex', versionArgs: ['--version'] });
   // Non-interactive auth: CODEX_API_KEY "provides an API key to a non-interactive Codex
   // process" (codex/environment-variables.md:49, pinned 2026-08-29).
@@ -171,8 +175,13 @@ export class CodexHarness extends Harness {
       },
       {
         id: 'mcp-server',
-        add: ['mcp', 'add', 'oathe', '--', 'oathe', 'mcp'],
-        proof: '[mcp_servers.oathe]',
+        // The shim, literal: config.toml has no interpolation (codex/config-reference.md,
+        // pinned), and the ChatGPT desktop app reads this same config (codex/mcp.md) — one
+        // write serves both. A bare `oathe` died on every GUI PATH (2026-09-04). The proof
+        // is the COMMAND LINE, not the stanza (review F3): an old init stomping the address
+        // back to bare must read as drift in doctor, never as ok over a dead lane.
+        add: ['mcp', 'add', 'oathe', '--', shimPath(this.home), 'mcp'],
+        proof: `command = "${shimPath(this.home)}"`,
         undo: ['mcp', 'remove', 'oathe'],
       },
     ];
@@ -181,8 +190,9 @@ export class CodexHarness extends Harness {
   /** What init writes — from the registrations the CLI makes and the global fence target. */
   describe() {
     const globals = this.constructor.globalContextFiles.map((f) => path.join(this.configHome, f)).join(' (or ');
+    const mcp = this.#registrations().find((r) => r.id === 'mcp-server');
     return [
-      `${this.configPath}: ${this.#registrations().map((r) => r.proof).join(', ')} via the codex CLI (marketplace, plugin, MCP server)`,
+      `${this.configPath}: ${this.#registrations().map((r) => r.proof).join(', ')} via the codex CLI (marketplace, plugin, MCP server → ${mcp.add.slice(mcp.add.indexOf('--') + 1).join(' ')})`,
       `${globals}${this.constructor.globalContextFiles.length > 1 ? ')' : ''}: the standing Oathe rule for every Codex session — ChatGPT desktop reads it too`,
     ];
   }

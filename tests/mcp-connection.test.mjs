@@ -219,3 +219,47 @@ test('a config change between calls REBUILDS the context — a long-lived server
   await waitFor((m) => m.id === 3);
   assert.equal(built, 2, 'an unchanged config keeps the cached context');
 });
+
+// ------------------------------------------------- phase 2: a connection the DAEMON can hold
+// One process, N connections: each must end cleanly (an ended session leaks nothing) and no
+// single bad frame may take the process — and every other session — down with it.
+
+test('close() rejects every pending server-initiated request and closes the live context — an ended session leaks nothing', async () => {
+  let closed = 0;
+  const { connection, send, waitFor } = harnessed({
+    toolContextFactory: async () => ({ tools: { oathe_board: async () => ({}) }, close: async () => { closed += 1; } }),
+  });
+  send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { capabilities: {} } });
+  send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'oathe_board', arguments: {} } });
+  await waitFor((m) => m.id === 2);
+  const parked = connection.request('roots/list');
+  await connection.close();
+  await assert.rejects(parked, /closed/, 'a session that dies mid-request pins no promise forever');
+  assert.equal(closed, 1, 'the substrate-holding context is closed — one pg client per LIVE connection');
+  await connection.close(); // idempotent — the daemon may close on error AND on socket end
+});
+
+test('handleMessage NEVER throws — an internal failure answers on stderr (and -32603 when the id is readable), the process lives', async () => {
+  const { connection, errText } = harnessed({
+    toolContextFactory: async () => ({ tools: {}, close: async () => {} }),
+  });
+  // A poisoned message object stands in for any internal dispatch throw: in the daemon one
+  // session's failure must never become every session's crash.
+  await connection.handleMessage(new Proxy({}, { get() { throw new Error('boom-internal'); } }));
+  assert.ok(errText.join('').includes('boom-internal'), 'the failure speaks on stderr, never silently');
+});
+
+test('a close() racing an in-flight context build closes the late-built context too', async () => {
+  let closed = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { connection, send } = harnessed({
+    toolContextFactory: async () => { await gate; return { tools: {}, close: async () => { closed += 1; } }; },
+  });
+  send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'oathe_board', arguments: {} } });
+  await new Promise((r) => setTimeout(r, 20)); // the build is parked on the gate
+  await connection.close();
+  release();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(closed, 1, 'the context that finished building after close is not a leaked pg client');
+});

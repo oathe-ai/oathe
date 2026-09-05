@@ -34,7 +34,17 @@ function verifyFenceRow(row) {
 
 function verifyCliRow(row) {
   if (!fs.existsSync(row.file)) return 'file-missing';
-  return fs.readFileSync(row.file, 'utf8').includes(row.detail?.proof) ? 'ok' : 'removed';
+  const text = fs.readFileSync(row.file, 'utf8');
+  // A JSON file the CLI owns (claude's ~/.claude.json): the proof is the PARSED entry — a
+  // substring cannot survive the CLI's own formatting. detail.command is the address the
+  // entry must carry; a different one is a drifted lane, visible on the machine it broke on.
+  if (row.detail?.command !== undefined) {
+    let entry;
+    try { entry = JSON.parse(text)?.mcpServers?.oathe ?? null; } catch { return 'user-edited'; }
+    if (entry === null) return 'removed';
+    return entry.command === row.detail.command ? 'ok' : 'user-edited';
+  }
+  return text.includes(row.detail?.proof) ? 'ok' : 'removed';
 }
 
 function verifyJsonArrayRow(row) {
@@ -85,9 +95,18 @@ function verifyNotchAppRow(row) {
   return sha256Hex(fs.readFileSync(binary)) === row.sha256 ? 'ok' : 'user-edited';
 }
 
+// A whole-file write (the shim, the device identity) is byte-identical to what init stamped,
+// or user-edited; gone is gone — a gone shim means every harness's MCP entry points at
+// nothing, a gone device means every act speaks from no device.
+function verifyWholeFileRow(row) {
+  if (!fs.existsSync(row.file)) return 'file-missing';
+  return sha256Hex(fs.readFileSync(row.file, 'utf8')) === row.sha256 ? 'ok' : 'user-edited';
+}
+
 const VERIFIERS = {
   'json-path': verifyJsonRow, fence: verifyFenceRow, 'cli-managed': verifyCliRow, 'json-array': verifyJsonArrayRow,
-  'launch-agent': verifyLaunchAgentRow, 'notch-app': verifyNotchAppRow,
+  'launch-agent': verifyLaunchAgentRow, 'notch-app': verifyNotchAppRow, 'oathe-shim': verifyWholeFileRow,
+  'device-id': verifyWholeFileRow,
 };
 
 /**
@@ -210,7 +229,23 @@ export async function runDoctor({ env = process.env, exec = defaultExec } = {}) 
         capabilities: null, error: String(e?.message || e), probe: null };
     }
 
-    return { version, rows, substrate: await substrate.status(), plugin, traces, runtime };
+    // The daemon probe (phase 2): a REAL MCP initialize over the socket — the launch-agent
+    // row above says what launchd holds; this says whether an MCP server ANSWERS where the
+    // forwarders knock (a bare connect proves a listener, not a server — a wedged process
+    // squatting the socket must never read as ok; the verifier's catch, 2026-09-04).
+    let daemon;
+    try {
+      const [{ serveSocketPath }, { probeDaemon }] = await Promise.all([
+        import('./serve.mjs'), import('./mcp/forwarder.mjs'),
+      ]);
+      const socket = serveSocketPath(paths, ctx.config);
+      const probe = await probeDaemon({ socketPath: socket, timeoutMs: ctx.config.get('serveConnectMs') });
+      daemon = { socket, answering: probe.answering, server: probe.server };
+    } catch (e) {
+      daemon = { socket: null, answering: false, server: null, detail: String(e?.message || e) };
+    }
+
+    return { version, rows, substrate: await substrate.status(), plugin, traces, runtime, daemon };
   } finally {
     await substrate.close();
   }

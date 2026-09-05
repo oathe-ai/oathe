@@ -22,7 +22,7 @@
 // PROVENANCE; the judgment quality is the engine's, and the linked traces exist precisely so
 // that judgment stays auditable.
 
-import { isTraceSubjectSql, TRACE_SUBJECT_PREFIX } from './statements.mjs';
+import { EvidenceDiscovery } from './evidence-discovery.mjs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { amendSubjectRef, engineFailureRef, evidenceFailureRef } from './statements.mjs';
@@ -33,8 +33,6 @@ import { HomeBoard } from './home.mjs';
 
 import { createOatheTools } from './mcp/oathe-tools.mjs';
 import { renderEvidenceView, sliceForTask } from './atif.mjs';
-import { transcriptFor } from './harnesses/catalog.mjs';
-import { projectAnnotated } from './oathe-annotator.mjs';
 import { verificationTaskId, isVerificationTask, ACCEPTANCE_CLAUSE_KEY } from './plans.mjs';
 import { RECORDED_VERDICT_CHECKER } from './runtime/discharge.mjs';
 
@@ -57,8 +55,9 @@ export class Verifier {
    *          config: import('./config.mjs').OatheConfig, operatorPrincipal: string,
    *          engineRunner?: ({engine, prompt}) => Promise<{verdict: string, reason: string}>}} o
    */
-  constructor({ substrate, paths, workspace, config, operatorPrincipal, engineRunner, provider = null, homePathFor = null, env = process.env }) {
+  constructor({ substrate, paths, workspace, config, operatorPrincipal, engineRunner, provider = null, homePathFor = null, env = process.env, discovery = null }) {
     this.env = env; // the store home follows the RUN's env — a rebound HOME (cage, sandbox) must read the store the hooks wrote
+    this.discovery = discovery; // the evidence rail — injectable like engineRunner, defaulted at first gather
     this.substrate = substrate;
     this.paths = paths;
     this.workspace = workspace;
@@ -118,24 +117,14 @@ export class Verifier {
    * validated. Contract/projection failures REFUSE loudly (TraceContractError/AtifError):
    * never less evidence than the claim recorded.
    */
-  async #traceEvidence(workClaimId) {
-    const { rows } = await this.substrate.query(
-      `SELECT subject_ref, evidence_refs FROM cell.agent_statement
-        WHERE org_id = $1 AND work_claim_id = $2 AND ${isTraceSubjectSql('subject_ref')}`,
-      [this.orgId, workClaimId]);
-    const traces = [];
-    for (const row of rows) {
-      // The file the session's rows LIVE in: a link spoken from a resumed session names the
-      // transcript the harness reported and never wrote — the store resolves it from the rows
-      // that carry the session id (transcriptFor); a file nothing carries stays as recorded
-      // and refuses below, loudly.
-      const sessionId = row.subject_ref.slice(TRACE_SUBJECT_PREFIX.length);
-      for (const ref of row.evidence_refs) {
-        const file = transcriptFor({ sessionId, reportedPath: ref, home: homeOf(this.env) });
-        traces.push({ path: file, trajectory: await projectAnnotated(file, { home: homeOf(this.env) }) });
-      }
-    }
-    return traces;
+  async #traceEvidence(taskId) {
+    // Evidence is the TASK's record, spanning claims, gathered by the evidence rail: the
+    // recorded trace links ∪ fingerprint discovery, performance-confirmed and deterministic
+    // (src/evidence-discovery.mjs). A re-claim judged blind to its prior interval and a
+    // traceless surface judged on an empty record were both false rejections, live 2026-09-04.
+    this.discovery ??= new EvidenceDiscovery({
+      client: this.substrate, orgId: this.orgId, home: homeOf(this.env) });
+    return this.discovery.read({ taskId });
   }
 
   #prompt({ taskRow, completion, traces, taskId, amendments = [] }) {
@@ -155,6 +144,13 @@ export class Verifier {
       `VERIFICATION PLAN: ${JSON.stringify(taskRow.verification_plan)}`,
       `COMPLETION ASSERTION: ${completion.proposition}`,
       `ASSERTED EVIDENCE: ${JSON.stringify(completion.evidence_refs)}`,
+      // The assertion is the done act itself, from the substrate — told "absence is absence"
+      // without this, an engine read a done missing from the trace (the call in flight on a
+      // code-mode surface) as "never completed" and rejected honest work (2026-09-04).
+      'The COMPLETION ASSERTION above IS the done act under judgment, recorded by the substrate. It may',
+      'not appear in the traces below: it is the call in flight on some surfaces, or was spoken from',
+      'elsewhere. Never treat its absence from a trace as absence of completion — judge the DID/GOT',
+      'against the objective.',
       ...(amendments.length === 0 ? [] : [
         '',
         `AMENDMENT TRAIL (${amendments.length} — the definition of done MOVED, with sign-off;`,
@@ -186,11 +182,20 @@ export class Verifier {
         `no verification task '${verificationTask}' on the board — has '${originalTask}' been `
         + 'asserted done (oathe done) at all?', { taskId });
     }
-    const engine = engineOverride ?? vtaskRows[0].verification_plan?.verifier_engine
-      ?? this.config.get('verifier');
+    // Current config beats the claim-time binding (founder ruling 2026-09-04): an unsettled
+    // verification must never stay wedged on an engine that failed — a dead CLI, a usage
+    // limit — when the operator has since changed the verifier. The plan's frozen
+    // verifier_engine stays the RECORD of what was assigned at claim; an explicit --engine
+    // still wins as a deliberate per-run choice.
+    const engine = engineOverride ?? this.config.get('verifier')
+      ?? vtaskRows[0].verification_plan?.verifier_engine;
 
     // 1. Claim the review — the verifier principal takes visible responsibility for it.
     const vclaim = await this.tools.oathe_claim({ task_id: verificationTask });
+    // The judgment announces its START on the wire (ruling 2026-09-04): the glass turns the
+    // row `verifying` the moment the claim lands, whichever surface dispatched it — the
+    // verifier's own tools carry no activation, so this nudge is hand-rolled like the verdict's.
+    await wireEmit(this.substrate, { kind: 'verify_started', task_id: originalTask });
 
     // 2-3. EVERYTHING between the claim and a durable verdict runs under the release
     // guard (ruling 2026-08-31: ANY exit before a verdict fails loud and frees the claim —
@@ -211,7 +216,23 @@ export class Verifier {
       // The engine judges FROM the task's workspace — its own tools read the evidence on
       // disk. One resolver (registry rootOf); a homeless task judges from the operator's home.
       const taskHome = this.homePathFor(taskRows[0]?.home) ?? homeOf();
-      traces = await this.#traceEvidence(completion.work_claim_id);
+      const evidence = await this.#traceEvidence(originalTask);
+      traces = evidence.traces;
+      // An empty record never reaches the engine: judged on nothing, one engine rejected and
+      // the next accepted the same claim (live 2026-09-04) — a verdict lottery. A store-less
+      // surface's empty-evidence link IS attribution and still judges; no link and no
+      // discovery hit is a stall in the evidence lane, not a coin flip. What the scan could
+      // not read is said in the stall, by name — an unrelated unreadable file never stalls a
+      // task on its own, and never goes unmentioned either.
+      if (traces.length === 0 && !(await this.discovery.hasAttribution(originalTask))) {
+        const unread = evidence.unreadable.length === 0 ? ''
+          : `; ${evidence.unreadable.length} store file(s) the scan could not read: `
+            + evidence.unreadable.map((u) => `${u.path} (${u.code})`).join(', ');
+        throw new VerifierError('OATHE_EVIDENCE_EMPTY',
+          `no session evidence reachable for '${originalTask}' — the record holds no trace links and `
+          + `discovery found no transcript performing it${unread}; fix attribution (or land the work) and re-verify`,
+          { taskId: originalTask, unreadable: evidence.unreadable });
+      }
       // R-AMEND: the amendment trail is part of the record — the engine judges the CURRENT
       // objective and SEES every move of the bar (a late amendment is visible evidence).
       const { rows: amendments } = await this.substrate.query(
@@ -237,7 +258,7 @@ export class Verifier {
       const stall = engineLaunched
         ? { proposition: `engine ${engine} failed before a verdict: ${msg}`,
             ref: engineFailureRef(engine),
-            note: `engine ${engine} died — released for retry: oathe verify ${originalTask} --engine <another>` }
+            note: `engine ${engine} died — released for retry: set another verifier (oathe config verifier <engine>) or oathe verify ${originalTask} --engine <engine>` }
         : { proposition: `gathering evidence failed before the ${engine} engine launched: ${msg}`,
             ref: evidenceFailureRef(e?.code),
             note: `the record could not be read — fix the cause and retry: oathe verify ${originalTask}` };

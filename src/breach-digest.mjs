@@ -22,6 +22,22 @@ export const KINDS = Object.freeze({
   overdue: Object.freeze({ word: 'never verified', bucket: 'verify', act: 'verify ↗' }),
   quiet: Object.freeze({ word: 'quiet', bucket: 'quiet', act: CONTINUE_ACT }),
 });
+/**
+ * The in-flight state ON a breach (ruling 2026-09-04): a verifier holds the verify claim, so
+ * the judgment is running — the row says so, wears no failure, offers no act (the glass never
+ * offers an act it would refuse), and is not counted (nothing to act on). One spelling.
+ */
+export const BUSY = Object.freeze({ word: 'verifying', detail: 'a verifier holds it — the verdict lands on the glass' });
+/**
+ * The judgment an ASSERTED claim awaits (ruling 2026-09-04: nothing is invisible between done
+ * and verdict): `verifying` while a judge holds the verify claim — the same word BUSY speaks,
+ * spelled once, with the spinner — and `awaiting` until one does. Keyed by the board's
+ * `judgment`; every surface renders these words and adds nothing.
+ */
+export const JUDGMENT = Object.freeze({
+  verifying: Object.freeze({ word: BUSY.word, busy: true }),
+  awaiting: Object.freeze({ word: 'awaiting verdict', busy: false }),
+});
 /** The push buckets, in the order the one ambient line speaks them. */
 export const BUCKET_WORDS = Object.freeze({ fix: 'to fix', verify: 'to verify', quiet: 'gone quiet' });
 /** The kinds in sharpness order: a verdict that came back first, an unjudged assertion last. */
@@ -89,8 +105,13 @@ function pushLine(counts) {
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
+/** A member's word: the kind's, unless its judgment is in flight. */
+const wordOf = (breach) => (breach.busy ? BUSY.word : KINDS[breach.kind].word);
+
 function single(breach) {
-  return { ...breach, kind_word: KINDS[breach.kind].word, group: null };
+  return breach.busy
+    ? { ...breach, busy: true, kind_word: BUSY.word, detail: BUSY.detail, group: null }
+    : { ...breach, busy: false, kind_word: KINDS[breach.kind].word, group: null };
 }
 
 /**
@@ -103,25 +124,37 @@ function groupRow(own, children) {
   const members = [...(own ? [own] : []), ...children].sort(breachOrder);
   const sortedChildren = [...children].sort(breachOrder);
   const byKind = {};
-  for (const child of children) byKind[child.kind] = (byKind[child.kind] ?? 0) + 1;
+  let busyChildren = 0;
+  for (const child of children) {
+    if (child.busy) busyChildren += 1;
+    else byKind[child.kind] = (byKind[child.kind] ?? 0) + 1;
+  }
   const shown = sortedChildren.slice(0, DIGEST_ROW_CAP);
   const more = children.length - shown.length;
   const lead = own ?? members[0];
   const detail = [
-    ...(own ? [own.detail] : []),
-    ...shown.map((child) => `${child.task_id} · ${KINDS[child.kind].word} · ${child.detail}`),
+    ...(own ? [own.busy ? BUSY.detail : own.detail] : []),
+    ...shown.map((child) => `${child.task_id} · ${wordOf(child)} · ${child.busy ? BUSY.detail : child.detail}`),
     ...(more > 0 ? [`+${more} more`] : []),
   ].join('\n');
+  // The one act a verify-led group offers targets its oldest child whose judgment is NOT in
+  // flight — a child being judged is not retried; none idle → the row offers no act.
+  const retry = sortedChildren.find((child) => !child.busy)?.task_id ?? null;
   return {
     kind: members[0].kind,
-    kind_word: [...(own ? [KINDS[own.kind].word] : []), countWords(byKind)].join(' · '),
+    kind_word: [
+      ...(own ? [wordOf(own)] : []),
+      countWords(byKind),
+      ...(busyChildren > 0 ? [`${busyChildren} ${BUSY.word}`] : []),
+    ].filter(Boolean).join(' · '),
     task_id: own ? own.task_id : children[0].parent,
     objective: own ? own.objective : children[0].parent_objective,
     home: lead.home,
     home_ref: lead.home_ref,
     detail,
     at: members[0].at,
-    group: { n: children.length, by_kind: byKind, children: shown.map((child) => child.task_id), more },
+    busy: own?.busy === true,
+    group: { n: children.length, by_kind: byKind, children: shown.map((child) => child.task_id), more, retry },
   };
 }
 
@@ -159,8 +192,10 @@ export class BreachDigest {
       }
     }
     this.#breaches = breaches;
+    // A judgment in flight is not a breach to act on: it keeps its row (a person sees it
+    // verifying) and leaves every count — the ambient line, attention, the model channel.
     this.counts = Object.fromEntries(BREACH_KINDS.map((kind) => [kind, 0]));
-    for (const breach of breaches) this.counts[breach.kind] += 1;
+    for (const breach of breaches) if (!breach.busy) this.counts[breach.kind] += 1;
     this.total = breaches.length;
     this.push = pushLine(this.counts);
     const { rows, rowOf } = groupSiblings(breaches);

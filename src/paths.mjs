@@ -47,6 +47,7 @@ export function buildPaths(env = process.env) {
     manifestPath: path.join(oatheHome, 'install-manifest.json'),
     registryPath: path.join(oatheHome, 'workspaces.json'),
     sessionsPath: path.join(oatheHome, 'sessions.json'),
+    devicePath: path.join(oatheHome, 'device.json'),
     // The one-shot welcome marker sits at the home root: ~/.oathe/notch/ is pruned to the
     // current materialized key by wireNotch, which would eat a marker planted there.
     welcomePath: path.join(oatheHome, 'welcome-pending.json'),

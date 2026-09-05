@@ -82,7 +82,23 @@ export function capabilityTable() {
     synthetic: C.isSyntheticWorkspaceDir !== Harness.isSyntheticWorkspaceDir,
     install: C.install !== null,
     docs: C.docs.length > 0,
+    attestation: C.attestation,
   }]));
+}
+
+/**
+ * Attestation by SURFACE name (the speaker's `surface`, as the adapters name it): which
+ * adapter owns the surface and whether its sessions register through hooks. `null` for a
+ * surface nobody owns — the claim gate refuses those.
+ * @returns {{harness: string, attestation: 'hooks'|'hookless'}|null}
+ */
+export function attestationFor(surface) {
+  if (!surface) return null;
+  for (const C of HARNESS_CLASSES) {
+    const declared = C.attestation?.[surface];
+    if (declared) return { harness: C.harnessName, attestation: declared };
+  }
+  return null;
 }
 
 /** [name, envVar] pairs for every adapter that documents a project-dir env var. */

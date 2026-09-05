@@ -22,7 +22,9 @@
 
 import { HomeBoard } from './home.mjs';
 import { VERIFICATION_PREFIX } from './plans.mjs';
-import { isEngineFailureSql, isVerifyStallSql, latestVerdictSql, latestProgressSql, spawnParentSql } from './statements.mjs';
+import {
+  isEngineFailureSql, isVerifyStallSql, judgeHoldSql, latestVerdictSql, latestProgressSql, rejectedIntervalSql, spawnParentSql,
+} from './statements.mjs';
 import { verifierCapable } from './harnesses/catalog.mjs';
 import { BreachDigest, breachOrder } from './breach-digest.mjs';
 
@@ -31,17 +33,24 @@ export const HOMELESS_LABEL = 'homeless';
 const STAMP = "'YYYY-MM-DD HH24:MI'";
 
 /**
- * A stall's detail: the verify child's own failure words, whole, then the retry gesture — on
- * another engine only when an engine (not the record) died, named concretely from the catalog.
- * The failed engine is read from the stall statement's fixed opening (`engine <name> failed…`,
- * src/verifier.mjs) — the one place that wording is minted. The kind word ("verify failed")
- * rides beside every rendering of this detail, so the detail does not repeat it; the retry
- * leads, so a renderer's clip only ever shortens the engine's words, never the act.
+ * A stall's detail: the verify child's own failure words, whole, behind the retry gesture.
+ * Config wins at every verify (ruling 2026-09-04), so the gesture is decided by ONE question:
+ * would a plain retry hit the same dead engine? Only when the engine that died IS the
+ * configured verifier — then the act is the config change, naming a concrete other engine
+ * from the catalog, and the retry after it. Any other stall (a record that would fail every
+ * engine alike, or a death on an override engine the config no longer points at) is a plain
+ * retry. The failed engine is read from the stall statement's fixed opening
+ * (`engine <name> failed…`, src/verifier.mjs) — the one place that wording is minted. The
+ * kind word ("verify failed") rides beside every rendering of this detail, so the detail does
+ * not repeat it; the gesture leads, so a renderer's clip only ever shortens the engine's words.
  */
-function stallDetail({ task_id, proposition, engine_stage }) {
+function stallDetail({ task_id, proposition, engine_stage, verifier }) {
   const failed = engine_stage ? /^engine (\S+) failed/.exec(proposition)?.[1] ?? null : null;
-  const other = engine_stage ? verifierCapable().find((engine) => engine !== failed) ?? null : null;
-  return `retry: /oathe:verify ${task_id}${other ? ` ${other}` : ''} — ${proposition}`;
+  if (failed !== null && failed === verifier) {
+    const other = verifierCapable().find((engine) => engine !== failed);
+    return `set another verifier: oathe config verifier ${other}, then /oathe:verify ${task_id} — ${proposition}`;
+  }
+  return `retry: /oathe:verify ${task_id} — ${proposition}`;
 }
 
 export class Pager {
@@ -55,6 +64,7 @@ export class Pager {
     this.client = client;
     this.orgId = identity.orgId;
     this.quietHours = config.get('pagerQuietHours');
+    this.verifier = config.get('verifier'); // the engine a plain retry would run — the stall gesture's one question
     this.registry = registry;
     this.clock = clock;
   }
@@ -62,9 +72,10 @@ export class Pager {
   /**
    * @returns {Promise<Array<{kind: 'reopened'|'stalled'|'overdue'|'quiet', task_id: string,
    *                          objective: string, home: string, home_ref: string|null, detail: string,
-   *                          at: string}>>} in breachOrder; `at` is the breach's own clock (UTC) —
-   *          ages render from it, never from the sentence; `home_ref` is the raw ref a digest
-   *          scopes on, `home` the folder a person reads
+   *                          at: string, busy: boolean}>>} in breachOrder; `at` is the breach's own
+   *          clock (UTC) — ages render from it, never from the sentence; `busy` says a verifier
+   *          holds the verify claim right now (then `at` is the retry's start); `home_ref` is
+   *          the raw ref a digest scopes on, `home` the folder a person reads
    */
   async breaches() {
     const asOf = this.clock().toISOString();
@@ -72,16 +83,43 @@ export class Pager {
     const reopened = await this.#reopened();
     const stalled = await this.#stalled();
     const quiet = await this.#quiet(asOf);
+    const verifying = await this.judgesInFlight(asOf);
     // A rejected-and-unreclaimed or stalled task is also "asserted past verify_by" — but the
     // verdict (or the attempt at one) landed; what is breached is the reclaim or the retry.
     // One row per task, the sharper fact wins; the order is breachOrder's, nowhere else's.
     const judged = new Set([...reopened, ...stalled].map((r) => r.task_id));
     return [...reopened, ...stalled, ...overdue.filter((r) => !judged.has(r.task_id)), ...quiet]
-      .map(({ kind, task_id, objective, home, detail, at, parent, parent_objective }) => ({
-        kind, task_id, objective, home: this.#homeLabel(home), home_ref: home ?? null, detail, at,
-        parent: parent ?? null, parent_objective: parent_objective ?? null,
-      }))
+      .map(({ kind, task_id, objective, home, detail, at, parent, parent_objective }) => {
+        // BUSY is a state ON the breach, never a fifth kind (ruling 2026-09-04): a verifier
+        // holds the verify claim, so the judgment is in flight — the row keeps its kind (the
+        // overdue leg stays suppressed, no "never verified" twin) and its clock becomes the
+        // retry's start. The stale failure it wore is the digest's to drop.
+        const retry = verifying.get(task_id);
+        return {
+          kind, task_id, objective, home: this.#homeLabel(home), home_ref: home ?? null, detail,
+          at: retry ?? at, busy: retry !== undefined,
+          parent: parent ?? null, parent_objective: parent_objective ?? null,
+        };
+      })
       .sort(breachOrder);
+  }
+
+  /**
+   * The judgments IN FLIGHT at `asOf`: a verifier holding the verify claim inside its lease —
+   * the ONE map (UX rule 22): a breach wearing it is `busy`, and the board's `verifying`
+   * judgment on an asserted row is the same fact through the same SQL (judgeHoldSql), so the
+   * two never disagree. An active claim past its lease is a verifier that died without
+   * releasing — not a running one; the underlying breach shows again, with its own clock.
+   * @returns {Promise<Map<string, string>>} task → the judgment's start (UTC)
+   */
+  async judgesInFlight(asOf) {
+    const { rows } = await this.client.query(
+      `SELECT t.task_id, to_char(j.claimed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI"Z"') AS at
+         FROM cell.task t
+         JOIN LATERAL (${judgeHoldSql({ task: 't', asOf: '$2::timestamptz' })}) j ON true
+        WHERE t.org_id = $1 AND t.task_id NOT LIKE '${VERIFICATION_PREFIX}%'`,
+      [this.orgId, asOf]);
+    return new Map(rows.map((r) => [r.task_id, r.at]));
   }
 
   /** The one budget over the facts — every surface that shows a breach renders this. */
@@ -120,9 +158,10 @@ export class Pager {
   }
 
   async #reopened() {
-    // Pages while nobody is REDOING the work: no active claim, and no fresh assertion
-    // since the last rejection. A reclaim silences it only while it stays active — a
-    // reclaim-then-yield returns here, never to "overdue" (the rejected assertion is not
+    // Pages while nobody is REDOING the work: no active claim, and no unjudged assertion
+    // standing (an asserted interval the rejection was NOT over — rejectedIntervalSql, the
+    // interval-exact fact, never a clock). A reclaim silences it only while it stays active —
+    // a reclaim-then-yield returns here, never to "overdue" (the rejected assertion is not
     // owed a second judgment). The verdict rides WHOLE: the reason is one
     // sentence by the verdict contract; clipping is the renderer's business, not the data's.
     const { rows } = await this.client.query(
@@ -154,7 +193,7 @@ export class Pager {
               SELECT 1 FROM cell.work_claim c2
                WHERE c2.org_id = t.org_id AND c2.task_id = t.task_id AND c2.settled_at IS NULL
                  AND (c2.state = 'active'
-                      OR (c2.state = 'completion_asserted' AND c2.claimed_at > r.last_rejected)))
+                      OR (c2.state = 'completion_asserted' AND NOT ${rejectedIntervalSql({ claim: 'c2' })})))
         ORDER BY w.claimed_at, t.task_id`,
       [this.orgId]);
     return rows;
@@ -183,15 +222,18 @@ export class Pager {
                ORDER BY st.asserted_at DESC LIMIT 1
          ) s ON true
         WHERE t.org_id = $1 AND t.task_id LIKE 'verify:%'
+          -- A settled verify claim closes the stall. An ACTIVE one does not hide it: that is a
+          -- retry in flight, rendered busy (breaches()) — hiding it here let the overdue leg
+          -- re-surface the task as "never verified" mid-retry (live 2026-09-04).
           AND NOT EXISTS (SELECT 1 FROM cell.work_claim c
                            WHERE c.org_id = t.org_id AND c.task_id = t.task_id
-                             AND (c.state = 'active' OR c.settled_at IS NOT NULL))
+                             AND c.settled_at IS NOT NULL)
           AND s.asserted_at > coalesce((SELECT max(c2.claimed_at) FROM cell.work_claim c2
                                          WHERE c2.org_id = t.org_id AND c2.task_id = t.task_id
                                            AND c2.settled_at IS NOT NULL), 'epoch')
         ORDER BY s.asserted_at`,
       [this.orgId]);
-    return rows.map(({ proposition, engine_stage, ...row }) => ({ ...row, detail: stallDetail({ ...row, proposition, engine_stage }) }));
+    return rows.map(({ proposition, engine_stage, ...row }) => ({ ...row, detail: stallDetail({ ...row, proposition, engine_stage, verifier: this.verifier }) }));
   }
 
   async #quiet(asOf) {

@@ -113,6 +113,25 @@ evidence ref = the transcript path. The verifier expands each linked trace to it
 (Claude: `<project>/<sessionId>/subagents/*`; Codex: `thread_spawn_edges` children) at
 read time — fan-out membership is derived, never stored stale.
 
+## How evidence is discovered (the read-time rail)
+
+The link is the ATTRIBUTION rail (board, notch, reclaim bundle — act-time, cheap). The
+EVIDENCE rail is read-time (`src/evidence-discovery.mjs`): every oathe tool result echoes
+its claim's substrate-minted UUID into whatever transcript the harness keeps, so the record
+self-fingerprints. `gather()` serves the union — the recorded links, plus every store file
+whose mtime falls in the task's claim window (mtime only: a long-lived session's file lives
+in the date partition of its BIRTH and carries today's work), whose bytes carry a claim
+UUID, and whose PROJECTION performs the task (claim intervals naming it — a transcript that
+merely mentions the UUID, an investigator's or the judge's own, never enters the evidence).
+Linked paths lead in the record's order; discovered paths follow by store order then path —
+`traces[0]` is deterministic. A surface that keeps no store (Cursor) links with empty
+evidence: that is attribution, and the claim still judges; no link and no discovery hit is
+an `OATHE_EVIDENCE_EMPTY` stall — the engine never judges an empty record. A store file in
+the window the byte scan cannot read is reported on the read (`read()` → `unreadable`, by path
+and cause; the stall note and `oathe trace` say it), never a stall — an unrelated unreadable
+file must not block the task's own evidence; a file that names the claim and cannot PROJECT
+still refuses typed, because that one may be the evidence.
+
 ## The row-type rosters (the pinned contract — no upstream page exists)
 
 Neither vendor documents its trace format; these rosters, measured on live stores
@@ -170,9 +189,11 @@ check — never a stolen pass.
     still running, measured up to 9 commands per call; a command that outlives its call —
     `exec_command` yields after `yield_time_ms`, `write_stdin` continues it — completes late
     and lands on the answered call that named it, else the most recent completed raw exec
-    without a command: exactly one → the result's `extra.record.exit_code`, which the
-    annotator's `observed` prefers to the text; several → `extra.record.executions`, each
-    with its command and exit code),
+    without a command: every command completes the CALL's ledger entry the source named for
+    it (`extra.record.executions` on the tool call — born from the source at call-start, so
+    acts inside a running cell are on the record before the cell returns; ruling 2026-09-04),
+    and exactly one command also lands the result's `extra.record.exit_code`, which the
+    annotator's `observed` prefers to the text),
     `McpToolCall` (recovers an exec call whose source could not be parsed: `server`, `tool`,
     `arguments` from the record — never `{input: raw}` when the record knows better),
     `FileChange` (`changes` keys → the result's `files_changed` and the root `files_touched`),

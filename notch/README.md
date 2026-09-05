@@ -44,10 +44,11 @@ A frame carries:
 
 | Key | What it is |
 |---|---|
-| `breaches` | the breach digest's rows — sharpest first, at most the sheet's row cap, each with `kind_word`, `objective`, `home`, `detail`, `at`, and its `act` (`kind`, `word`, and what to run) |
+| `breaches` | the breach digest's rows — sharpest first, at most the sheet's row cap, each with `kind_word`, `objective`, `home`, `detail`, `at`, `busy` (a judgment in flight: the word is `verifying`, the failure is gone, no act — the glass adds a spinner), and its `act` (`kind`, `word`, and what to run) |
 | `more` | how many breaches the budget left out |
 | `motion` | anyone's active claim with a recent word, or one heard live on the wire — each with `objective`, `holder`, `surface`, `session`, `children_line`, and its `resume` |
-| `idle` | your held claims gone quiet, after motion |
+| `judged` | asserted claims awaiting their verdict (never invisible between done and verdict) — the same row shape, with `judgment` (the word: `verifying` while a judge holds it, `awaiting verdict` until one does), `busy` (the spinner, the key a breach spins on), and no `resume` — nothing a person does moves a judgment |
+| `idle` | your held claims gone quiet, after motion and judgment |
 | `sections` | the one board classification (`mine` · `open` · `asserted` · `held`) |
 | `default_agent` | the machine's chosen agent, or null — the glass reads no config |
 | `notice` | optional: the words of the event that caused this frame, with a tone |

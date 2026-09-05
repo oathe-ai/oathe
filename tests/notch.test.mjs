@@ -112,6 +112,45 @@ test('wireNotch points launchd at the MATERIALIZED copy, records both rows, prun
   } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('wireNotch owns ONLY the notch — a second oathe service\'s launch-agent row and plist survive every re-wire', { skip: process.platform !== 'darwin' && 'LaunchAgents are a darwin surface' }, () => {
+  // Phase-2 prerequisite (reuse-map hazard, 2026-09-04): the manifest sweep was kind-wide,
+  // so every `oathe init` would have booted the serve daemon out, deleted its plist, and
+  // dropped its row — because its file differs from the notch's.
+  const home = tmp(); const root = tmp();
+  try {
+    plantApp(root);
+    const manifest = manifestIn(home);
+    const servePlist = path.join(home, 'Library', 'LaunchAgents', 'ai.oathe.serve.aaaabbbbcccc.plist');
+    fs.mkdirSync(path.dirname(servePlist), { recursive: true });
+    fs.writeFileSync(servePlist, '<plist/>');
+    manifest.upsert({ harness: 'serve', file: servePlist, kind: 'launch-agent', detail: {}, blockVersion: '9.9.9', sha256: 'x' });
+    const exec = fakeExec();
+    wireNotch({ home, manifest, config: fakeConfig(), version: '9.9.9', exec, packageRoot: root });
+    assert.ok(manifest.rows.some((r) => r.harness === 'serve' && r.kind === 'launch-agent'),
+      'the serve row survives the notch\'s sweep');
+    assert.ok(fs.existsSync(servePlist), 'the serve plist is not the notch\'s to delete');
+    assert.ok(!exec.calls.some((c) => c.join(' ').includes('ai.oathe.serve')),
+      'no bootout of a service the notch does not own');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('unwireNotch removes only ITS launch agents — the serve daemon\'s row is another owner\'s', { skip: process.platform !== 'darwin' && 'LaunchAgents are a darwin surface' }, () => {
+  const home = tmp();
+  try {
+    const manifest = manifestIn(home);
+    const servePlist = path.join(home, 'Library', 'LaunchAgents', 'ai.oathe.serve.aaaabbbbcccc.plist');
+    manifest.upsert({ harness: 'serve', file: servePlist, kind: 'launch-agent', detail: {}, blockVersion: '9.9.9', sha256: 'x' });
+    const actions = unwireNotch({ manifest, exec: fakeExec() });
+    assert.deepEqual(actions, [], 'nothing of the notch\'s to remove');
+    assert.ok(manifest.rows.some((r) => r.harness === 'serve'), 'the serve row stays for unwireServe');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('wireNotch without the packaged binary reports the fact and touches nothing', { skip: process.platform !== 'darwin' && 'LaunchAgents are a darwin surface' }, () => {
   const home = tmp(); const root = tmp();
   try {

@@ -62,9 +62,48 @@ test('update installs @latest through the npm BESIDE this node, then runs init t
   assert.equal(out.after, '0.4.2');
   assert.deepEqual(exec.calls[0], [path.join(prefix, 'bin', 'npm'), ['root', '-g']], 'the sibling npm, never PATH\'s');
   assert.ok(exec.calls.some(([, a]) => a[0] === 'i' && a[1] === '-g' && a[2] === '@oathe/oathe@latest'), 'the install, through the same npm');
-  assert.ok(exec.calls.every(([cmd]) => cmd === path.join(prefix, 'bin', 'npm')), 'every npm call is the sibling npm');
+  assert.ok(exec.calls.filter(([cmd]) => String(cmd).endsWith('npm')).every(([cmd]) => cmd === path.join(prefix, 'bin', 'npm')),
+    'every npm call is the sibling npm');
   assert.deepEqual(handoffs, [[path.join(prefix, 'bin', 'oathe'), ['init', '--yes']]], 'init runs through the new bin, flags passed through');
   assert.match(lines.join(''), /0\.4\.1 → 0\.4\.2/, 'the version before and after is said');
+});
+
+test('update SWEEPS the stale MCP servers after the install — a replaced tree must not keep serving old code', () => {
+  // Measured 2026-09-03: instances that outlive the install answer every speech act with raw
+  // ENOENT (uninstall window) or serve stale modules (update). "Just get rid of it for them"
+  // (founder, 2026-09-04): after npm replaces the tree, every live server is definitionally
+  // stale — terminate them; harnesses respawn a fresh one from the shim.
+  const { prefix, packageRoot, execPath } = globalInstall({ version: '0.4.1' });
+  const base = fakeExec({
+    rootG: path.join(prefix, 'lib', 'node_modules'),
+    onInstall: () => {
+      fs.writeFileSync(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@oathe/oathe', version: '0.4.2' }));
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+  let pg = 0;
+  const exec = {
+    calls: base.calls,
+    run(cmd, args) {
+      if (cmd === 'pgrep') {
+        base.calls.push([cmd, args]);
+        pg += 1; // the recheck after the kills finds an empty field
+        return pg === 1 ? { status: 0, stdout: '111\n222\n', stderr: '' } : { status: 1, stdout: '', stderr: '' };
+      }
+      if (cmd === 'kill') { base.calls.push([cmd, args]); return { status: 0, stdout: '', stderr: '' }; }
+      return base.run(cmd, args);
+    },
+  };
+  const lines = [];
+  runUpdate({ packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => lines.push(s) }, notch: () => null });
+  const order = base.calls.map(([cmd, a]) => (cmd === 'pgrep' || cmd === 'kill' ? cmd : a[0]));
+  assert.ok(order.indexOf('pgrep') > order.indexOf('i'), 'the sweep runs AFTER the install replaced the tree');
+  const pgrepCall = base.calls.find(([cmd]) => cmd === 'pgrep');
+  assert.deepEqual(pgrepCall[1], ['-u', String(process.getuid()), '-f', '[/]oathe(\\.mjs)? mcp$'],
+    'this user\'s mcp servers only — bare-bin and shim-spawned shapes both match, the notch serve does not');
+  assert.deepEqual(base.calls.filter(([cmd]) => cmd === 'kill').map((c) => c[1]), [['111'], ['222']],
+    'one kill per pid — one already-dead target must not fail the rest (review F5)');
+  assert.match(lines.join(''), /2 stale MCP server/, 'the sweep is said, never silent');
 });
 
 test('an oathe that is not npm\'s global install is refused typed — a checkout updates by git, and nothing runs', () => {
@@ -127,7 +166,8 @@ test("a custom npm prefix (npm config set prefix …): the package lands under n
     out: { write() {} },
   });
   assert.equal(out.after, '0.4.2');
-  assert.ok(exec.calls.every(([cmd]) => cmd === path.join(nodeHome, 'bin', 'npm')), 'npm is still the one beside node — npm ships with node');
+  assert.ok(exec.calls.filter(([cmd]) => String(cmd).endsWith('npm')).every(([cmd]) => cmd === path.join(nodeHome, 'bin', 'npm')),
+    'npm is still the one beside node — npm ships with node');
   assert.deepEqual(handoffs, [[path.join(prefix, 'bin', 'oathe'), ['init']]], "init runs through the bin under npm's prefix, where the install landed");
 });
 
@@ -144,20 +184,33 @@ test('update ends with the word the person needs: the version that is live now a
   const up = runUpdate({
     packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => lines.push(s) },
     notch: () => ({ label: 'ai.oathe.notch.x', loaded: true, pid: 31337 }),
+    daemon: () => ({ label: 'ai.oathe.serve.x', loaded: true, pid: 555 }),
   });
   assert.deepEqual(up.notch, { label: 'ai.oathe.notch.x', loaded: true, pid: 31337 });
-  assert.match(lines.at(-1), /^update successful — oathe v0\.4\.4 · notch running \(pid 31337\)\n$/);
+  assert.deepEqual(up.daemon, { label: 'ai.oathe.serve.x', loaded: true, pid: 555 });
+  assert.match(lines.at(-1), /^update successful — oathe v0\.4\.4 · notch running \(pid 31337\) · daemon running \(pid 555\)\n$/,
+    'both supervised services answer in the last word — read from launchd, never assumed');
 
   const down = [];
   const dn = runUpdate({
     packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => down.push(s) },
     notch: () => ({ label: 'ai.oathe.notch.x', loaded: false, pid: null }),
+    daemon: () => ({ label: 'ai.oathe.serve.x', loaded: true, pid: 555 }),
   });
   assert.equal(dn.notch.loaded, false);
   assert.match(down.at(-1), /^update installed oathe v0\.4\.4 — but the notch is NOT running/, 'a dead notch is never folded into "successful"');
 
+  const deadDaemon = [];
+  runUpdate({
+    packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => deadDaemon.push(s) },
+    notch: () => ({ label: 'ai.oathe.notch.x', loaded: true, pid: 31337 }),
+    daemon: () => ({ label: 'ai.oathe.serve.x', loaded: false, pid: null }),
+  });
+  assert.match(deadDaemon.at(-1), /^update installed oathe v0\.4\.4 — but the daemon is NOT running/,
+    'a dead daemon means every session forwards into nothing — never folded into "successful"');
+
   const none = [];
-  const off = runUpdate({ packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => none.push(s) }, notch: () => null });
+  const off = runUpdate({ packageRoot, execPath, exec, handoff: () => ({ status: 0 }), out: { write: (s) => none.push(s) }, notch: () => null, daemon: () => null });
   assert.equal(off.notch, null, 'off darwin there is no notch to report');
   assert.match(none.at(-1), /^update successful — oathe v0\.4\.4\n$/);
 });

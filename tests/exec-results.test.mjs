@@ -43,9 +43,13 @@ test('no process result is discarded: every bare exec.run/spawnSync statement ca
   assert.deepEqual(offenders, [], `a process was run and its answer thrown away:\n${offenders.join('\n')}`);
   // The accepted list is the review surface: a new entry here is a conscious choice, read in the diff.
   assert.deepEqual(accepted.sort(), [
-    'src/harnesses/codex.mjs:198',
-    'src/notch.mjs:137',
-    'src/notch.mjs:152',
-    'src/notch.mjs:188',
+    'src/harnesses/codex.mjs:208',
+    'src/notch.mjs:114',
+    'src/notch.mjs:129',
+    'src/notch.mjs:154',
+    'src/serve.mjs:50',
+    'src/serve.mjs:61',
+    'src/serve.mjs:77',
+    'src/shim.mjs:91',
   ]);
 });

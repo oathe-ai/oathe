@@ -26,7 +26,32 @@ before(async () => {
   sb = sandbox({ scratchDb: SCRATCH_DB });
   project = fs.realpathSync(fs.mkdtempSync(path.join(sb.home, 'proj-')));
   await runInit({ env: sb.env, exec: sb.exec });
+  // The gate (ruling 2026-09-04): a claim needs a session behind it. A CLI verb speaks FOR the
+  // harness session above it — this test process stands in for that harness, registered the
+  // way the SessionStart hook registers one, so every child `oathe claim` resolves it by ancestry.
+  await resetCliSession();
 });
+
+/** The CLI's own harness session, alone in the registry: earlier tests register other fixture
+ *  sessions keyed to this same pid; a test whose premise is a ROOT claim from the plain CLI
+ *  session resets to exactly this one (a bare claim is what the gate refuses). */
+let cliSessions = 0;
+async function resetCliSession() {
+  const { SessionRegistry } = await import('../src/sessions.mjs');
+  // A FRESH session id each time: a claim spoken from a session folds under that session's
+  // root claim (lineage, UX rule 21), so a test whose premise is a root claim speaks from a
+  // session that holds nothing yet. One transcript file serves them all (a real file: a
+  // ghost path would kill the verifier at the evidence stage).
+  const sessionId = `sess-cli-${++cliSessions}`;
+  const transcript = path.join(sb.home, '.claude', 'projects', 'cli', 'sess-cli.jsonl');
+  fs.mkdirSync(path.dirname(transcript), { recursive: true });
+  if (!fs.existsSync(transcript)) fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', uuid: 'u1', sessionId: 'sess-cli', message: { role: 'user', content: 'cli' } })}\n`);
+  fs.rmSync(path.join(sb.env.OATHE_HOME, 'sessions.json'), { force: true });
+  await new SessionRegistry({ sessionsPath: path.join(sb.env.OATHE_HOME, 'sessions.json') }).ensure({
+    sessionId, pid: process.pid,
+    facts: () => ({ ancestry: [{ pid: process.pid, exec: '/usr/local/bin/claude' }], app: null, transcriptPath: transcript, workspace: null }),
+  });
+}
 
 after(async () => {
   const substrate = new Substrate({ database: SCRATCH_DB, paths, env: process.env });
@@ -83,15 +108,33 @@ test('claim → ls → note → yield: the play loop, productized, with the mach
   assert.match(yieldOut.stdout, /back on the board/);
 });
 
+test('a claim from a BARE shell is refused, typed, with the fix (ruling 2026-09-04: fail loud so the model does the right thing)', () => {
+  // A home whose session registry knows nothing: the child resolves no session and no owned process.
+  const home = fs.mkdtempSync(path.join(sb.home, 'bare-'));
+  const env = { ...sb.env, OATHE_HOME: path.join(home, '.oathe') };
+  fs.mkdirSync(env.OATHE_HOME, { recursive: true });
+  fs.copyFileSync(path.join(sb.env.OATHE_HOME, 'config.json'), path.join(env.OATHE_HOME, 'config.json'));
+  const out = oathe(['claim', 'bare-shell-task', 'typed by a person'], env);
+  assert.equal(out.status, 1);
+  // Which refusal depends on what sits above the test runner: nobody's process (CI) is
+  // OATHE_SPEAKER_UNKNOWN; a developer's own harness session above it (unregistered in this
+  // scratch home) is OATHE_SESSION_UNREGISTERED. Both are the gate, both name the fix.
+  assert.match(out.stderr, /\[OATHE_(SPEAKER_UNKNOWN|SESSION_UNREGISTERED)\]/);
+  assert.match(out.stderr, /oathe_claim|oathe init/, 'the refusal names the door');
+  assert.match(out.stderr, /^oathe: claim refused$/m);
+});
+
 test('claim → done closes the loop from the CLI', () => {
   const claim = oathe(['claim', 'done-cli-task', 'Close me properly']);
   assert.equal(claim.status, 0, claim.stderr);
   const done = oathe(['done', 'done-cli-task', 'closed properly', 'ref:cli-test']);
   assert.equal(done.status, 0, done.stderr);
   assert.match(done.stdout, /completion ASSERTED, not settled/);
-  // The sandbox's fake engine can never produce a verdict — a BLOCKING done says so
-  // loudly (ruling 2026-08-31: locally, done owes its answer).
-  assert.match(done.stdout, /verification failed: engine /);
+  // The CLI spoke for the registered session above it, so the claim IS linked and the
+  // verification reaches the ENGINE stage — where this sandbox's fake engine answers no
+  // verdict — and a BLOCKING done says so loudly (rulings 2026-08-31: locally, done owes its
+  // answer). Before the gate this same run stalled in the evidence lane on an unlinked claim.
+  assert.match(done.stdout, /verification failed: engine \w+ failed before a verdict/);
   assert.match(done.stdout, /^oathe: done attention$/m);
 });
 
@@ -139,7 +182,7 @@ test('oathe trace exports the linked traces of a claim as VALID ATIF on stdout',
   const out = spawnSync('node', [BIN, 'trace', 'trace-cli-task'], { encoding: 'utf8', env: sb.env, cwd: project });
   assert.equal(out.status, 0, out.stderr);
   const trajectories = JSON.parse(out.stdout);
-  assert.equal(trajectories.length, 1);
+  assert.ok(trajectories.length >= 1, 'the fixture trace, plus the CLI session\'s own link');
   const { AtifValidator } = await import('../src/atif.mjs');
   assert.equal(new AtifValidator().validate(trajectories[0]).ok, true);
   // the export carries the full claim linkage in extra.oathe
@@ -153,10 +196,12 @@ test('oathe trace exports the linked traces of a claim as VALID ATIF on stdout',
   const pure = spawnSync('node', [BIN, 'trace', 'trace-cli-task', '--pure'], { encoding: 'utf8', env: sb.env, cwd: project });
   assert.equal(pure.status, 0, pure.stderr);
   const pureTrajectories = JSON.parse(pure.stdout);
-  assert.equal(pureTrajectories.length, 1);
+  assert.ok(pureTrajectories.length >= 1);
   assert.ok(!pure.stdout.includes('"oathe"'), 'no oathe key anywhere in a pure export');
-  assert.equal(pureTrajectories[0].extra.record.source_path, transcript);
-  assert.equal(new AtifValidator().validate(pureTrajectories[0]).ok, true);
+  // The export carries every linked trace — the CLI session's own and the fixture's; the fixture is the one under test.
+  const fixture = pureTrajectories.find((t) => t.extra.record.source_path === transcript);
+  assert.ok(fixture, 'the fixture trace is exported');
+  assert.equal(new AtifValidator().validate(fixture).ok, true);
   assert.match(pure.stderr, /^oathe: trace ok$/m);
   oathe(['yield', 'trace-cli-task', 'export test done']);
 });
@@ -305,11 +350,11 @@ test('oathe claim ACTIVATES the folder through the one writer: fences on disk, p
   oathe(['yield', 'fence-cli-task', 'done with the fixture']);
 });
 
-test('oathe notch is PURE JSON on stdout — breaches, more, sections, default_agent; the trailer rides stderr', () => {
+test('oathe notch is PURE JSON on stdout — breaches, more, sections, default_agent; the trailer rides stderr', async () => {
   // A ROOT claim is this pin's premise: earlier hook tests registered fixture sessions keyed
   // to this process's pid, and a claim spoken from a session folds under the session's
   // root (lineage, UX rule 21) — so the premise is made true, not assumed.
-  fs.rmSync(path.join(sb.env.OATHE_HOME, 'sessions.json'), { force: true });
+  await resetCliSession(); // a ROOT claim from the plain CLI session (a bare claim is refused by the gate)
   const claim = oathe(['claim', 'notch-cli-task', 'Feed the glass']);
   assert.equal(claim.status, 0, claim.stderr);
   const out = oathe(['notch']);
@@ -341,11 +386,11 @@ test('oathe notch only SHOWS — the registry file is byte-identical after the r
   assert.equal(after, before, 'a surface that only shows writes nothing');
 });
 
-test('the frame carries MOTION — live claims only, each with holder, last word, and a home path for the glass', () => {
+test('the frame carries MOTION — live claims only, each with holder, last word, and a home path for the glass', async () => {
   // This pin's premise is a BARE claim — no registered session. Earlier hook tests register
   // fixture sessions keyed to this very process's pid (the speaker primitive would truthfully
   // attribute to them), so the premise is made true, not assumed.
-  fs.rmSync(path.join(sb.env.OATHE_HOME, 'sessions.json'), { force: true });
+  await resetCliSession(); // a ROOT claim from the plain CLI session (a bare claim is refused by the gate)
   const claim = oathe(['claim', 'motion-task', 'prove liveness']);
   assert.equal(claim.status, 0, claim.stderr);
   const out = oathe(['notch']);
@@ -358,8 +403,8 @@ test('the frame carries MOTION — live claims only, each with holder, last word
   assert.match(row.last_word_at, /Z$/, 'UTC basis for the age the glass shows');
   assert.ok(row.home_path, 'home resolved to a path, not a ws-ref');
   assert.ok('surface' in row, 'the glass row names the surface when one is known');
-  assert.equal(row.surface, null, 'a bare CLI claim has no known surface yet');
-  assert.equal(row.session, null, 'no live session row — the liveness join is honest about absence');
+  assert.equal(row.surface, 'claude', 'the CLI spoke for the harness session above it (the gate admits no bare claim)');
+  assert.ok(row.session, 'the live session row rides the frame — the liveness join found the registered session');
   assert.equal(row.resume.kind, 'spawn-terminal',
     'an onboarded machine ALWAYS has a resumption — init recorded the default agent');
   assert.ok(frame.sections.mine.some((r) => r.task_id === 'motion-task'), 'sections stay intact');
@@ -368,15 +413,16 @@ test('the frame carries MOTION — live claims only, each with holder, last word
   oathe(['yield', 'motion-task', 'fixture done']);
 });
 
-test('resume is the package\'s call: a chosen default agent turns continue into a terminal spawn at the task\'s home', () => {
-  fs.rmSync(path.join(sb.env.OATHE_HOME, 'sessions.json'), { force: true }); // bare-claim premise, made true
+test('resume is the package\'s call: a chosen default agent turns continue into a terminal spawn at the task\'s home', async () => {
+  await resetCliSession(); // a ROOT claim from the plain CLI session (a bare claim is refused by the gate)
   const claim = oathe(['claim', 'resume-task', 'take me back']);
   assert.equal(claim.status, 0, claim.stderr);
   const out = oathe(['notch'], { ...sb.env, OATHE_DEFAULT_AGENT: 'claude' });
   assert.equal(out.status, 0, out.stderr);
   const row = JSON.parse(out.stdout).motion.find((r) => r.task_id === 'resume-task');
   assert.equal(row.resume.kind, 'spawn-terminal');
-  assert.match(row.resume.command, /^oathe claude 'continue resume-task'$/, 'the launcher IS the resumption');
+  assert.match(row.resume.command, /^"\/.*\/\.oathe\/bin\/oathe" claude 'continue resume-task'$/,
+    'the launcher IS the resumption — the shim, quoted (a HOME with a space must not break the act)');
   assert.equal(row.resume.cwd, row.home_path);
   assert.ok(row.resume.terminal_bundle.endsWith('.app'), 'a terminal to open it in — the session\'s own, else the system one');
   oathe(['yield', 'resume-task', 'fixture done']);
@@ -444,6 +490,7 @@ test('oathe ls is the pull (UX rule 18): every breached promise on the machine, 
 });
 
 test('oathe notch --serve streams ndjson frames — a write in another process lands a fresh frame within seconds', async () => {
+  await resetCliSession(); // a ROOT claim from a session that holds nothing yet
   const { spawn } = await import('node:child_process');
   const readline = await import('node:readline');
   const child = spawn('node', [BIN, 'notch', '--serve'], { env: sb.env, cwd: project });
@@ -478,6 +525,10 @@ test('oathe notch --serve streams ndjson frames — a write in another process l
       assert.match(notice?.text ?? '', /serve-task.+reopened/, 'the notice names the task and the consequence');
       // The act carries its living app on the wire (founder ruling 2026-08-30): a HOMELESS
       // claim heard from ChatGPT still resolves to "switch to that app" — never a shrug.
+      // The premise is a task with NO registry row behind it: the claim above passed the gate
+      // from the CLI's registered session; that session is now gone, and what the wire hears
+      // is the only living ref.
+      fs.rmSync(path.join(sb.env.OATHE_HOME, 'sessions.json'), { force: true });
       const spoke = nextFrame('the wire carried no app-stamped act');
       await substrate.query('SELECT pg_notify($1, $2)', ['oathe_wire', JSON.stringify({
         kind: 'progress', task_id: 'serve-task', via: 'chatgpt',
@@ -514,15 +565,16 @@ test('oathe notch --serve streams ndjson frames — a write in another process l
       await spoke;
       const row = lines.at(-1).motion.find((r) => r.task_id === 'mid-turn-task');
       assert.ok(row, 'a fresh claim is motion');
-      if (process.platform === 'darwin') {
+      if (process.platform === 'darwin' || process.platform === 'linux') {
+        // Act attribution matches the caller's REAL ancestry against the registry — measured
+        // on every platform that can be (ps on darwin, /proc on linux; ruling 2026-09-04).
         assert.equal(row.session?.surface, 'claude', 'the claim knows its session the moment it lands');
         assert.equal(row.session?.alive, true);
         assert.equal(row.resume?.kind, 'activate', 'continue mid-turn ACTIVATES the living session — never a duplicate terminal');
         assert.equal(row.resume?.app_pid, process.pid);
       } else {
-        // Act attribution matches the caller's REAL ancestry against the registry — a
-        // darwin fact (processAncestry). Elsewhere the claim still lands as motion, unowned.
-        assert.ok(!row.session?.surface, 'off darwin the claim lands unattributed — the recorded degradation');
+        // A platform with neither: the claim still lands as motion, unowned — the recorded degradation.
+        assert.ok(!row.session?.surface, 'without a walk the claim lands unattributed — the recorded degradation');
       }
     }
   } finally {
@@ -530,9 +582,75 @@ test('oathe notch --serve streams ndjson frames — a write in another process l
     // The fixture session row is keyed to THIS runner's pid with a GHOST transcript —
     // left behind, the speaker primitive faithfully attributes every later CLI write in
     // this file to it, and the verifier then dies on the unreadable path. Facts out.
-    fs.rmSync(path.join(sb.env.OATHE_HOME, 'sessions.json'), { force: true });
+    await resetCliSession();
     oathe(['yield', 'serve-task', 'fixture done']);
     oathe(['yield', 'mid-turn-task', 'fixture done']);
+  }
+});
+
+test('the glass speaks an act UP the feed: one {"act":"verify"} line on stdin dispatches the judgment headless, and a --detach from another process wakes the feed too', async () => {
+  const { spawn } = await import('node:child_process');
+  const readline = await import('node:readline');
+  const child = spawn('node', [BIN, 'notch', '--serve'], { env: sb.env, cwd: project });
+  const lines = [];
+  let resolveNext = null;
+  readline.createInterface({ input: child.stdout }).on('line', (l) => {
+    lines.push(JSON.parse(l));
+    resolveNext?.();
+  });
+  const nextFrame = (why) => Promise.race([
+    new Promise((res) => { resolveNext = res; }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`no frame: ${why}`)), 8000)),
+  ]);
+  const substrate = new Substrate({ database: SCRATCH_DB, paths, env: process.env });
+  const attempts = async (task) => (await substrate.query(
+    "SELECT count(*)::int AS n FROM cell.work_claim WHERE org_id='oathe' AND task_id = 'verify:' || $1", [task])).rows[0].n;
+  const until = async (why, ok) => {
+    for (let i = 0; i < 80; i += 1) { if (await ok()) return; await new Promise((r) => setTimeout(r, 100)); }
+    throw new Error(`timed out: ${why}`);
+  };
+  // A dispatched judgment is DETACHED by design and outlives this test unless it waits: its
+  // LAST act is its own trailer in the log (after the final wire nudge) — anything earlier
+  // (claim released, frame seen) still leaves a stray nudge for the next test's feed.
+  const finished = (task) => until(`the judgment of ${task} never wrote its trailer`, async () => {
+    const log = path.join(sb.env.OATHE_HOME, 'logs', `verify-${task}.log`);
+    return fs.existsSync(log) && /^oathe: verify /m.test(fs.readFileSync(log, 'utf8'));
+  });
+  try {
+    if (lines.length === 0) await nextFrame('initial frame never arrived');
+    // A stalled task on the board: claimed, asserted, and its blocking verify died in the
+    // evidence lane (the sandbox keeps no store) — the frame offers the DISPATCH act.
+    const claim = oathe(['claim', 'act-task', 'judged from the glass']);
+    assert.equal(claim.status, 0, claim.stderr);
+    oathe(['done', 'act-task', 'asserted']);
+    const before = await attempts('act-task');
+    await until('the stall reached the frame', async () => {
+      const row = lines.at(-1)?.breaches.find((b) => b.task_id === 'act-task');
+      return row?.act?.kind === 'dispatch';
+    });
+    // The glass clicks retry: the ONE request line, up the pipe it already holds. No
+    // terminal; the feed dispatches through the one dispatcher and the judgment's own
+    // claim wakes the frame.
+    const woke = nextFrame('the feed served no frame after the act');
+    child.stdin.write(`${JSON.stringify({ act: 'verify', task_id: 'act-task', cwd: project })}\n`);
+    await woke;
+    await until('the dispatched judgment never claimed its verify task', async () => (await attempts('act-task')) > before);
+    await finished('act-task');
+    // --detach from ANOTHER process is the same dispatcher, and it wakes the feed as well
+    // (verify_dispatched on the wire) — a terminal-launched retry never leaves the glass stale.
+    const claim2 = oathe(['claim', 'act-task-2', 'judged from a terminal']);
+    assert.equal(claim2.status, 0, claim2.stderr);
+    oathe(['done', 'act-task-2', 'asserted']);
+    await until('stall 2 reached the frame', async () => (await attempts('act-task-2')) >= 1
+      && lines.at(-1)?.breaches.some((b) => b.task_id === 'act-task-2'));
+    const woke2 = nextFrame('the feed served no frame after --detach');
+    const detached = oathe(['verify', '--detach', 'act-task-2']);
+    assert.equal(detached.status, 0, detached.stderr);
+    await woke2;
+    await finished('act-task-2');
+  } finally {
+    child.kill();
+    await substrate.close();
   }
 });
 
@@ -611,7 +729,9 @@ test('oathe verify --detach dispatches and returns — the judgment survives its
   const claim = oathe(['claim', 'detach-verify-task', 'judged in the background']);
   assert.equal(claim.status, 0, claim.stderr);
   const doneOut = oathe(['done', 'detach-verify-task', 'asserted']);
-  assert.match(doneOut.stdout, /verification failed: engine /, 'done BLOCKED through its judgment and told the human');
+  // The claim is linked (the CLI speaks for the session above it), so the judgment reaches
+  // the ENGINE stage, where this sandbox's fake engine answers no verdict.
+  assert.match(doneOut.stdout, /verification failed: engine \w+ failed before a verdict/, 'done BLOCKED through its judgment and told the human');
   const out = oathe(['verify', '--detach', 'detach-verify-task']);
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /dispatched — the verdict lands on the glass/, 'the terminal is closable instantly');
@@ -647,4 +767,24 @@ test('oathe init ends with the Next line (live polish #7) — the picker output 
   assert.equal(out.status, 0, out.stderr);
   assert.match(out.stdout, /Next: claude, codex or agent in any project — the board rides every session/,
     'the Next line names every launchable — cursor joined the primitive');
+});
+
+test('doctor GATES health on the daemon\'s answer where serve is wired — a wired agent over a mute socket is attention, never ok', () => {
+  // The verifier's 2026-09-04 catch: doctor reported ok over a socket that merely accepted.
+  // In this sandbox the serve agent is WIRED (fake launchd took it) but nothing answers the
+  // socket — the truthful doctor says so and refuses to call the install healthy.
+  const out = oathe(['doctor']);
+  assert.match(out.stdout, /^daemon: NOT ANSWERING @ .*serve\.sock$/m, out.stdout);
+  if (process.platform === 'darwin') {
+    assert.match(out.stdout, /^oathe: doctor attention$/m,
+      'a wired serve agent with no answering server fails health — every session would forward into nothing');
+    assert.equal(out.status, 1);
+  } else {
+    // Off darwin nothing wires the serve agent (launchd is the daemon's only supervisor,
+    // serve.mjs), so no session is promised a daemon: the mute socket is reported, never
+    // gated on — every forwarder runs standalone, the recorded degradation.
+    assert.ok(!/^  \S+\s+serve\s+launch-agent/m.test(out.stdout), 'no serve row to gate on off darwin');
+    assert.match(out.stdout, /^oathe: doctor ok$/m, out.stdout);
+    assert.equal(out.status, 0, out.stderr);
+  }
 });

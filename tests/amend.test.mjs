@@ -139,6 +139,7 @@ test('a lawful amend RECORDS: the trail statement carries old→new and why, the
   await tools.oathe_claim({ task_id: 'amend-happy', objective: 'ship the alpha widget' });
   const first = await tools.oathe_amend({ task_id: 'amend-happy', objective: 'ship the beta widget', why: 'alpha was descoped' });
   assert.equal(first.amended, true);
+  assert.ok(first.work_claim_id, 'an amendment fingerprints the claim whose bar moved');
   assert.equal(first.version, 2, 'v2 = one amendment, derived');
   assert.match(first.note, /original definition stays on record/i, "the product copy: changing one's mind is recorded");
   const { rows: task } = await substrate.query(

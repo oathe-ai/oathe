@@ -38,6 +38,18 @@ export async function runUninstall({ env = process.env, exec, purgeDb = false } 
     // The notch LaunchAgent: booted out and removed exactly as recorded (src/notch.mjs).
     const { unwireNotch } = await import('./notch.mjs');
     actions.push(...unwireNotch({ manifest, ...(exec ? { exec } : {}) }));
+    // The serve daemon goes the same way — its bootout ends the process, and every
+    // forwarder's pipe ends with it.
+    const { unwireServe } = await import('./serve.mjs');
+    actions.push(...unwireServe({ manifest, ...(exec ? { exec } : {}) }));
+    // Live MCP servers would keep answering from a tree whose wiring is now gone — sweep them
+    // ("just get rid of it for them", founder 2026-09-04), then remove the durable address
+    // last: the offboard CLIs above may still have run through it.
+    const { unwireShim, sweepMcpServers } = await import('./shim.mjs');
+    actions.push(...sweepMcpServers({ exec: exec ?? (await import('./harnesses/harness.mjs')).defaultExec }));
+    actions.push(...unwireShim({ manifest }));
+    const { unwireDevice } = await import('./device.mjs');
+    actions.push(...unwireDevice({ manifest }));
     // Same rule as init (B4): rows that landed while the undo CLIs ran are kept, this run's
     // removals hold, and the save happens under the lock against the file as it is now.
     const { withFileLock } = await import('./fslock.mjs');

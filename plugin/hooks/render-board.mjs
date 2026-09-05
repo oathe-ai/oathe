@@ -5,7 +5,7 @@
 // session's own dialect. Activation failing must never cost the session its board: the
 // failure is reported on stderr and the render proceeds (hooks are the sanctioned fail-soft).
 
-import { failSoft, emitSessionStart, ensureSessionRegistered } from './lib.mjs';
+import { failSoft, emitSessionStart, ensureSessionRegistered, UNATTRIBUTED_SESSION } from './lib.mjs';
 import { renderBoard } from '../../src/board-render.mjs';
 import { WorkspaceRegistry } from '../../src/registry.mjs';
 
@@ -44,7 +44,9 @@ await failSoft(async ({ substrate, workspace, synthetic, identity, config, cwd, 
   // (a receipt, printed once) even when the board itself has nothing to push.
   const visible = [message, disclosed].filter(Boolean).join('\n') || null;
   emitSessionStart({
-    context: disclosed ? `${context}\n\n_${disclosed}_` : context,
+    // The model reads the disclosure and, when there is no session, the reason its claims
+    // will be refused — before it speaks (ruling 2026-09-04).
+    context: [context, disclosed ? `_${disclosed}_` : null, session ? null : `_Oathe: ${UNATTRIBUTED_SESSION}._`].filter(Boolean).join('\n\n'),
     message: visible,
     dialect,
   });

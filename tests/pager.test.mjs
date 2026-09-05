@@ -24,6 +24,7 @@ import { OatheConfig } from '../src/config.mjs';
 import { WorkspaceRegistry } from '../src/registry.mjs';
 import { standardPlan } from '../src/plans.mjs';
 import { StandaloneRuntimeProvider } from '../src/runtime/provider.mjs';
+import { linkClaudeTrace } from './helpers.mjs';
 
 const paths = buildPaths({});
 const SCRATCH_DB = `oathe_pager_test_${process.pid}`;
@@ -50,26 +51,7 @@ function pager({ at = new Date(), registry = null, config = scratchConfig() } = 
 const hoursFromNow = (h) => new Date(Date.now() + h * HOURS);
 
 /** A transcript carrying one claim interval — what the verifier lane needs to judge at all. */
-async function linkTrace(taskId, workClaimId) {
-  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-pager-trace-')), '.claude', 'projects', 'fixture'); // a Claude transcript lives in Claude's store layout — ownership is by path
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `${taskId}.jsonl`);
-  const sessionId = crypto.randomUUID();
-  fs.writeFileSync(file, [
-    JSON.stringify({ type: 'user', uuid: 'u1', sessionId, cwd: dir, message: { role: 'user', content: 'work' } }),
-    JSON.stringify({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId, cwd: dir,
-      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'make it' } }] } }),
-    JSON.stringify({ type: 'user', uuid: 'u2', parentUuid: 'a1', sessionId, cwd: dir,
-      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'made it\nExit code 0' }] } }),
-  ].join('\n'));
-  await substrate.query(
-    `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
-            execution_actor, claim_principal, statement_type, subject_ref, proposition,
-            evidence_refs, epistemic_status, asserted_at)
-     VALUES ($1, 'oathe', $2, $3, $4, $5, 'progress', $6, 'trace', $7::jsonb, 'observed', now())`,
-    [crypto.randomUUID(), taskId, workClaimId, `session:${sessionId}`, OPERATOR, `trace:${sessionId}`,
-      JSON.stringify([file])]);
-}
+const linkTrace = (taskId, workClaimId) => linkClaudeTrace({ substrate, taskId, workClaimId, principal: OPERATOR });
 
 async function assertDone(taskId, objective) {
   const claim = await tools.oathe_claim({ task_id: taskId, objective });
@@ -320,9 +302,12 @@ test('a STALLED verification (engine died, claim released) pages with the retry 
   assert.ok(stalled, `the stall pages: ${JSON.stringify(breaches.map((b) => [b.kind, b.task_id]))}`);
   assert.ok(stalled.detail.includes(engineError), `the engine's whole words, never clipped in the data: ${stalled.detail}`);
   const failed = stalled.detail.match(/engine (\S+) failed/)?.[1];
-  const others = verifierCapable().filter((e) => e !== failed);
-  assert.match(stalled.detail, new RegExp(`^retry: /oathe:verify stall-me (${others.join('|')}) — engine `),
-    'the retry LEADS and names a CONCRETE other engine — never the <another engine> placeholder; a clip never loses the act');
+  assert.equal(failed, scratchConfig().get('verifier'), 'the engine that died IS the configured verifier (config-wins)');
+  const other = verifierCapable().find((e) => e !== failed);
+  // Config wins at every verify (ruling 2026-09-04): a plain retry would hit the SAME dead
+  // engine, so the gesture is the config change — a concrete other engine, then the retry.
+  assert.match(stalled.detail, new RegExp(`^set another verifier: oathe config verifier ${other}, then /oathe:verify stall-me — engine `),
+    'the gesture LEADS and names the config change — never an --engine override the person did not choose');
 
   const board = await tools.oathe_board({});
   const line = (board.attention ?? []).find((a) => a.includes('stall-me'));
@@ -337,6 +322,66 @@ test('a STALLED verification (engine died, claim released) pages with the retry 
   assert.ok(!(after.attention ?? []).some((a) => a.includes('stall-me')), 'the stall vanishes once settled');
   assert.ok(!(await new Pager({ client: substrate, identity: IDENTITY, config: scratchConfig() }).breaches())
     .some((b) => b.task_id === 'stall-me'), 'and stops paging');
+});
+
+test('a stall on an engine that is NOT the configured verifier pages a plain retry — config already points elsewhere', async () => {
+  const minted = await tools.oathe_claim({ task_id: 'stall-other', objective: 'die on an override engine' });
+  await linkTrace('stall-other', minted.work_claim_id);
+  await tools.oathe_done({ task_id: 'stall-other', proposition: 'done', evidence_ref: 'x' });
+  const dying = new Verifier({
+    substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
+    provider: new StandaloneRuntimeProvider({ paths }),
+    engineRunner: async () => { const e = new Error('codex: usage limit reached'); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
+  });
+  const override = verifierCapable().find((e) => e !== scratchConfig().get('verifier'));
+  try { await assert.rejects(dying.verify({ taskId: 'stall-other', engine: override }), /usage limit/); } finally { await dying.close(); }
+  const stalled = (await pager().breaches()).find((b) => b.kind === 'stalled' && b.task_id === 'stall-other');
+  assert.ok(stalled, 'the stall pages');
+  assert.match(stalled.detail, /^retry: \/oathe:verify stall-other — engine /,
+    'the configured verifier is another engine already — the retry is plain, no override named');
+});
+
+test('a stall with an ACTIVE retry in flight renders BUSY — the row stays, its clock is the retry\'s, it never re-surfaces as overdue, and an expired lease is not busy', async () => {
+  const minted = await tools.oathe_claim({ task_id: 'busy-me', objective: 'retry in flight' });
+  await linkTrace('busy-me', minted.work_claim_id);
+  await tools.oathe_done({ task_id: 'busy-me', proposition: 'done', evidence_ref: 'x' });
+  const dying = new Verifier({
+    substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
+    provider: new StandaloneRuntimeProvider({ paths }),
+    engineRunner: async () => { const e = new Error('claude exited 1: usage limit'); e.code = 'OATHE_ENGINE_FAILED'; throw e; },
+  });
+  try { await assert.rejects(dying.verify({ taskId: 'busy-me' }), /usage limit/); } finally { await dying.close(); }
+  const before = (await pager().breaches()).find((b) => b.task_id === 'busy-me');
+  assert.equal(before.kind, 'stalled');
+  assert.equal(before.busy, false, 'released and idle — not busy');
+
+  // The retry launches: a verifier takes the verify claim. The glass showed the OLD failure
+  // through this whole window (live 2026-09-04) — or, on a heartbeat, "never verified".
+  const judge = createOatheTools({
+    client: substrate, identity: { orgId: 'oathe', principalId: VERIFIER, department: 'verification' },
+    workspace: WS, config: scratchConfig(),
+  });
+  const retry = await judge.oathe_claim({ task_id: 'verify:busy-me' });
+  const during = await pager().breaches();
+  const busy = during.find((b) => b.task_id === 'busy-me');
+  assert.equal(busy.kind, 'stalled', 'the underlying breach is unchanged — busy is a state ON it, not a fifth kind');
+  assert.equal(busy.busy, true, 'a verifier holds the verify claim — the row is verifying');
+  const { rows: claimed } = await substrate.query(
+    `SELECT to_char(claimed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI"Z"') AS at FROM cell.work_claim WHERE work_claim_id = $1`,
+    [retry.work_claim_id]);
+  assert.equal(busy.at, claimed[0].at, 'the row\'s clock is the retry\'s start — the glass reads "verifying · 12s"');
+  assert.equal(during.filter((b) => b.task_id === 'busy-me').length, 1, 'one row — never a "never verified" twin');
+  const board = await tools.oathe_board({});
+  assert.ok(!(board.attention ?? []).some((a) => a.includes('busy-me')),
+    'attention does not page a judgment in flight — a model acting on it would only be refused');
+
+  const lapsed = await pager({ at: hoursFromNow(5) }).breaches();
+  const wedged = lapsed.find((b) => b.task_id === 'busy-me');
+  assert.equal(wedged.busy, false, 'an active claim past its lease is a dead verifier, not a running one — the stall shows again');
+  assert.equal(wedged.at, before.at, 'and its clock is the stall\'s again');
+
+  await judge.oathe_yield({ task_id: 'verify:busy-me', note: 'fixture done' });
+  assert.equal((await pager().breaches()).find((b) => b.task_id === 'busy-me').busy, false, 'released → not busy');
 });
 
 test('an EVIDENCE-stalled verification pages WITHOUT the another-engine advice — the record is broken, not the judge', async () => {
@@ -432,8 +477,37 @@ test('UX rule 19: attention is budgeted — a flood of rejections on this board 
     assert.ok(lines[i].includes(`'${row.task_id}'`), `line ${i} is the ${i}th sharpest: ${lines[i]}`);
   }
   assert.equal(lines.at(-1), `+${fix.length - 8} more — oathe_board lists every breach on this board`);
-  assert.ok(lines.slice(0, 8).every((l) => /^rejected: 'flood-\d\d' — rejected: flood reason \d+ — nobody has reclaimed it \(last held by founder\) — reclaim it \(oathe_claim\) for the bundle$/.test(l)),
+  // The act named is the owner's NEXT act (ruling 2026-09-04: the verdict hands the work back;
+  // any speech act on it resumes it) — oathe_claim stays the explicit door.
+  assert.ok(lines.slice(0, 8).every((l) => /^rejected: 'flood-\d\d' — rejected: flood reason \d+ — nobody has reclaimed it \(last held by founder\) — your next act on it resumes it with the bundle \(or oathe_claim\)$/.test(l)),
     `a line is the kind word, the task, the verdict, the act: ${lines[0]}`);
+});
+
+test('UX rule 22: judgesInFlight is THE ONE MAP — a judge holding the verify claim is `verifying` on the board\'s asserted row and busy on any breach, from the same SQL; released, both clear together', async () => {
+  await assertDone('agree-1', 'judged by one map');
+  const bench = createOatheTools({
+    client: substrate, identity: { orgId: 'oathe', principalId: VERIFIER, department: 'verification' }, workspace: WS, config: scratchConfig(),
+  });
+  const asOf = () => new Date().toISOString();
+  assert.ok(!(await pager().judgesInFlight(asOf())).has('agree-1'), 'no judge yet');
+  assert.equal((await tools.oathe_board({})).sections.asserted.find((r) => r.task_id === 'agree-1').judgment, 'awaiting');
+  await bench.oathe_claim({ task_id: 'verify:agree-1' });
+  const held = await pager().judgesInFlight(asOf());
+  assert.ok(held.has('agree-1'), 'the judge\'s hold is in the map');
+  assert.match(held.get('agree-1'), /^\d{4}-\d\d-\d\dT\d\d:\d\dZ$/, 'the judgment\'s start, UTC');
+  assert.equal((await tools.oathe_board({})).sections.asserted.find((r) => r.task_id === 'agree-1').judgment, 'verifying',
+    'the board says what the map says — one SQL spelling (judgeHoldSql), never two computations');
+  assert.ok(!(await pager().breaches()).some((r) => r.task_id === 'agree-1'), 'a healthy hold inside verify_by breaches nothing');
+  // Past the hold's lease the judge is dead, not running: the map drops it and the assertion
+  // pages overdue — un-busy — with its own clock (the same clock the frame's judged row would
+  // have lost; one map, both surfaces agree).
+  const at48 = hoursFromNow(48);
+  assert.ok(!(await pager({ at: at48 }).judgesInFlight(at48.toISOString())).has('agree-1'), 'a hold past its lease is a dead judge');
+  const late = (await pager({ at: at48 }).breaches()).find((r) => r.task_id === 'agree-1');
+  assert.deepEqual([late?.kind, late?.busy], ['overdue', false]);
+  await bench.oathe_yield({ task_id: 'verify:agree-1', note: 'released' });
+  assert.ok(!(await pager().judgesInFlight(asOf())).has('agree-1'));
+  assert.equal((await tools.oathe_board({})).sections.asserted.find((r) => r.task_id === 'agree-1').judgment, 'awaiting');
 });
 
 test('REDEMPTION silences: rejected → redone → ACCEPTED pages nothing, forever (the founder\'s settled-but-still-rejected glass)', async () => {

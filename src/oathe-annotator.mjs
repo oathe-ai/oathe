@@ -79,16 +79,16 @@ export class OatheAnnotator {
   }
 
   #step(step) {
-    // A speech act is a tool call by an oathe verb — or, on codex, an act the record decoded
-    // INSIDE an exec source that ran several things (extra.record.executions[].tool): the
-    // exec stays one call, the act stays on the record. A step this trajectory INHERITED
-    // (is_copied_context — a forked child's copy of the parent's turn) carries the parent's
-    // acts, never this agent's claim events.
-    const acts = step.is_copied_context === true ? [] : [
-      ...(step.tool_calls ?? []).map((call) => ({ name: call.function_name, args: call.arguments })),
-      ...(step.observation?.results ?? []).flatMap((result) => (result.extra?.record?.executions ?? [])
-        .filter((ran) => ran.tool).map((ran) => ({ name: ran.tool, args: ran.arguments }))),
-    ];
+    // A speech act is a tool call by an oathe verb — or, on codex, an act the record names
+    // INSIDE an exec source that ran several things (the call's ledger,
+    // extra.record.executions[].tool — named from the source at call-start, completed by the
+    // items): the exec stays one call, the act is on the record before the cell returns. A
+    // step this trajectory INHERITED (is_copied_context — a forked child's copy of the
+    // parent's turn) carries the parent's acts, never this agent's claim events.
+    const acts = step.is_copied_context === true ? [] : (step.tool_calls ?? []).flatMap((call) => [
+      { name: call.function_name, args: call.arguments },
+      ...(call.extra?.record?.executions ?? []).filter((ran) => ran.tool).map((ran) => ({ name: ran.tool, args: ran.arguments })),
+    ]);
     const events = acts
       .map(({ name, args }) => {
         const verb = oatheVerbFor(name);
