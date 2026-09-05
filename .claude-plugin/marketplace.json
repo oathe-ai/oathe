@@ -1,14 +1,30 @@
 {
   "name": "oathe",
   "owner": {
-    "name": "Oathe"
+    "name": "Oathe",
+    "url": "https://oathe.ai"
   },
   "description": "The Oathe marketplace: one plugin, the claim loop over the local cell substrate.",
   "plugins": [
     {
       "name": "oathe",
       "source": "./plugin",
-      "description": "The Oathe claim loop: board at SessionStart, statements as you work, lease heartbeat at Stop, frame note before compaction."
+      "description": "The Oathe claim loop: board at SessionStart, statements as you work, lease heartbeat at Stop, frame note before compaction.",
+      "homepage": "https://oathe.ai",
+      "repository": "https://github.com/oathe-ai/oathe",
+      "license": "Apache-2.0",
+      "category": "workflow",
+      "keywords": [
+        "claude-code",
+        "agents",
+        "multi-agent",
+        "verification",
+        "settlement",
+        "handoff",
+        "reliability",
+        "harness",
+        "auto-save"
+      ]
     }
   ]
 }
