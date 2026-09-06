@@ -42,12 +42,29 @@ export class EvidenceDiscovery {
    *          storesFor?: ({home}) => Promise<object[]>, maxFiles?: number}} o
    *   client/orgId read the record; home roots the stores; storesFor and maxFiles are seams.
    */
-  constructor({ client, orgId, home = undefined, storesFor = defaultStoresFor, maxFiles = DISCOVERY_MAX_FILES }) {
+  constructor({ client, orgId, home = undefined, storesFor = defaultStoresFor, maxFiles = DISCOVERY_MAX_FILES, project = projectAnnotated }) {
+    this.project = project; // the projector seam (tests inject a failing one)
     this.client = client;
     this.orgId = orgId;
     this.home = home;
     this.storesFor = storesFor;
     this.maxFiles = maxFiles;
+  }
+
+  /**
+   * Project ONE file, and let nothing die untyped: a TraceContractError (a torn line, an
+   * unreadable file) passes through as the record's own refusal; anything else the projector
+   * throws becomes TRACE_PROJECTION_FAILED naming the file and the cause — the verifier's stall
+   * note reads a file and a reason, never a stack (Greptile round 3 on PR #37, 2026-09-06).
+   */
+  async #project(file) {
+    try {
+      return await this.project(file, { home: this.home });
+    } catch (e) {
+      if (e instanceof TraceContractError) throw e;
+      throw new TraceContractError('TRACE_PROJECTION_FAILED',
+        `${file} could not be projected: ${String(e?.message ?? e)}`, { file, cause: e?.code ?? e?.name ?? 'error' });
+    }
   }
 
   /** The task's recorded trace links, resolved to the files the sessions actually write. */
@@ -103,7 +120,7 @@ export class EvidenceDiscovery {
     const traces = [];
     const unreadable = [];
     for (const file of linked) {
-      traces.push({ path: file, trajectory: await projectAnnotated(file, { home: this.home }), via: 'linked' });
+      traces.push({ path: file, trajectory: await this.#project(file), via: 'linked' });
     }
     if (claims.length === 0) return { traces, unreadable };
 
@@ -138,7 +155,7 @@ export class EvidenceDiscovery {
         }
         if (!names) continue;
         // The projector, not the byte scan, decides membership: performing, never mentioning.
-        const trajectory = await projectAnnotated(file, { home: this.home });
+        const trajectory = await this.#project(file);
         if (!claimIntervals(trajectory).some((i) => i.task_id === taskId)) continue;
         traces.push({ path: file, trajectory, via: 'discovered' });
       }

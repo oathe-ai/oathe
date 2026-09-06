@@ -45,7 +45,14 @@ export class TraceStore {
           `${file} is zstd-compressed and this node build cannot decompress it — refusing to `
           + 'silently skip evidence', { file });
       }
-      bytes = zlib.zstdDecompressSync(bytes);
+      try {
+        bytes = zlib.zstdDecompressSync(bytes);
+      } catch (e) {
+        // A broken archive is "cannot read" like a vanished file or a permission — one grammar,
+        // typed, so a discovery loop reports it by name and moves past it (Greptile round 3, PR #37).
+        throw new TraceContractError('TRACE_UNREADABLE',
+          `trace file cannot be read: ${file} (zstd: ${e.message})`, { file, cause: e.code ?? e.name });
+      }
     }
     return bytes;
   }

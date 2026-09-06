@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 
 import { ClaudeTraceStore, CodexTraceStore, TraceContractError } from '../src/traces.mjs';
 import { EvidenceDiscovery } from '../src/evidence-discovery.mjs';
@@ -235,4 +236,84 @@ test('a store that cannot be ENUMERATED is reported, never a stall — the other
   const { traces, unreadable } = await discovery.read({ taskId: TASK });
   assert.deepEqual(traces.map((x) => x.path), [performed], 'the readable store\'s evidence still serves');
   assert.deepEqual(unreadable.map((u) => [u.path, u.code]), [['broken store', 'ENOENT']], 'the store that could not be walked is on the result by name and cause');
+});
+
+// ---------------------------------------------------------------- Greptile round 3 (PR #37, 5fdca56): nothing in the gather dies untyped
+
+/** A codex rollout that PERFORMED the task (the claim's UUID echoed in an item_completed). */
+function performingRollout(dir, { taskId = TASK, uuid = CLAIM_UUID, stamp = '13-05-00' } = {}) {
+  const threadId = crypto.randomUUID();
+  const file = path.join(dir, `rollout-2026-09-04T${stamp}-${threadId}.jsonl`);
+  fs.writeFileSync(file, [
+    { timestamp: 't0', type: 'session_meta', payload: { id: threadId, cwd: '/work', source: 'cli', cli_version: '0.150.0', model_provider: 'openai' } },
+    { timestamp: 't1', type: 'turn_context', payload: { turn_id: 'turn-1', cwd: '/work', model: 'gpt-5.6-sol' } },
+    { timestamp: 't2', type: 'response_item', payload: { type: 'message', id: 'msg_1', role: 'user', content: [{ type: 'input_text', text: 'do it' }] } },
+    { timestamp: 't2b', type: 'response_item', payload: { type: 'custom_tool_call', id: 'ctc_1', status: 'completed', call_id: 'c1', name: 'exec', input: `text(await tools.mcp__oathe__oathe_claim({task_id:"${taskId}",objective:"do it"}));` } },
+    { timestamp: 't3', type: 'event_msg', payload: { type: 'item_completed', thread_id: threadId, turn_id: 'turn-1', item: { type: 'McpToolCall', id: 'mcp-1', server: 'oathe', tool: 'oathe_claim', arguments: { task_id: taskId, objective: 'do it' }, status: 'completed', result: { content: [{ type: 'text', text: `{"claimed":true,"work_claim_id":"${uuid}"}` }], isError: false } } } },
+  ].map((r) => JSON.stringify(r)).join('\n'));
+  return { file, threadId };
+}
+
+const ZSTD_CODE = typeof zlib.zstdDecompressSync === 'function' ? 'TRACE_UNREADABLE' : 'TRACE_ZSTD_UNSUPPORTED';
+
+test('a corrupt .zst trace refuses TYPED from the byte scan — never a raw zlib error (Greptile round 3 on PR #37)', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-ed-zst-'));
+  const dir = path.join(home, '.codex/sessions/2026/09/04');
+  fs.mkdirSync(dir, { recursive: true });
+  const corrupt = path.join(dir, `rollout-2026-09-04T13-06-00-${crypto.randomUUID()}.jsonl.zst`);
+  fs.writeFileSync(corrupt, Buffer.from('this is not a zstd frame'));
+  const store = new CodexTraceStore({ harness: 'codex', home });
+  assert.throws(() => store.contains(corrupt, CLAIM_UUID),
+    (e) => e instanceof TraceContractError && e.code === ZSTD_CODE && e.message.includes(corrupt) && e.details.file === corrupt,
+    'the one grammar of "cannot read": a typed refusal naming the file, whatever the cause (permissions, a vanished file, a broken archive)');
+});
+
+test('a corrupt .zst candidate in the window is REPORTED and the gather moves past it — the task\'s own evidence still serves (Greptile round 3 on PR #37)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-ed-zst-'));
+  const dir = path.join(home, '.codex/sessions/2026/09/04');
+  fs.mkdirSync(dir, { recursive: true });
+  const corrupt = path.join(dir, `rollout-2026-09-04T13-04-00-${crypto.randomUUID()}.jsonl.zst`);
+  fs.writeFileSync(corrupt, Buffer.from('this is not a zstd frame'));
+  const { file: performed } = performingRollout(dir);
+  const discovery = new EvidenceDiscovery({
+    client: stubClient({ claims: [{ work_claim_id: CLAIM_UUID, claimed_at: RECENT }] }),
+    orgId: 'oathe', home, storesFor: async () => [new CodexTraceStore({ harness: 'codex', home })],
+  });
+  const { traces, unreadable } = await discovery.read({ taskId: TASK });
+  assert.deepEqual(traces.map((x) => ({ path: x.path, via: x.via })), [{ path: performed, via: 'discovered' }]);
+  assert.deepEqual(unreadable.map((u) => ({ path: u.path, code: u.code })), [{ path: corrupt, code: ZSTD_CODE }],
+    'the broken archive is on the result by name and cause — an unrelated file never stalls the judgment');
+});
+
+test('a file that NAMES the claim and cannot be projected refuses TYPED — the stance (it may be the evidence), and the refusal names the file whatever the projector threw (Greptile round 3 on PR #37)', async () => {
+  const { home, projectDir } = scratchClaudeHome();
+  // 1. The stance, pinned: a uuid-naming transcript with a torn last line is TRACE_LINE_MALFORMED, a stall by name — never skipped as "unrelated".
+  const { file: torn } = performingTranscript(projectDir);
+  fs.appendFileSync(torn, '\n{"type":"assistant","uuid":"a9","parentUuid":"r2","message":{"role":"assistant","content":[{"type":"text","te');
+  const discovery = new EvidenceDiscovery({
+    client: stubClient({ claims: [{ work_claim_id: CLAIM_UUID, claimed_at: RECENT }] }),
+    orgId: 'oathe', home,
+  });
+  await assert.rejects(() => discovery.read({ taskId: TASK }),
+    (e) => e instanceof TraceContractError && e.code === 'TRACE_LINE_MALFORMED' && e.details.file === torn,
+    'a torn uuid-naming record refuses by name — the person reads which file, and retries when it is whole');
+  // 2. Any OTHER failure inside projection (a projector bug, a shape the contract never saw) is
+  // the same grammar: a TraceContractError naming the file, with the cause — never a raw
+  // TypeError escaping read() into the verifier's stall note.
+  const raw = new EvidenceDiscovery({
+    client: stubClient({ claims: [{ work_claim_id: CLAIM_UUID, claimed_at: RECENT }] }),
+    orgId: 'oathe', home,
+    project: async (file) => { throw new TypeError(`boom in ${path.basename(file)}`); },
+  });
+  await assert.rejects(() => raw.read({ taskId: TASK }),
+    (e) => e instanceof TraceContractError && e.code === 'TRACE_PROJECTION_FAILED' && e.details.file === torn && /boom/.test(e.message),
+    'a projector death is typed, by file, with the cause');
+  // 3. A LINKED file rides the same wrap — the record's own evidence dying untyped would wedge the twin the same way.
+  const linked = new EvidenceDiscovery({
+    client: stubClient({ claims: [{ work_claim_id: CLAIM_UUID, claimed_at: RECENT }], links: [{ subject_ref: 'trace:sess-x', evidence_refs: [torn] }] }),
+    orgId: 'oathe', home,
+    project: async () => { throw new RangeError('linked boom'); },
+  });
+  await assert.rejects(() => linked.read({ taskId: TASK }),
+    (e) => e instanceof TraceContractError && e.code === 'TRACE_PROJECTION_FAILED' && e.details.file === torn);
 });

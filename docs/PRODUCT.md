@@ -638,8 +638,10 @@ Per `oathe verify [task] [--all] [--engine claude|codex|cursor]`:
    to its prior interval), and an empty record stalls in the evidence lane before any engine
    (`OATHE_EVIDENCE_EMPTY`) — an engine never improvises a verdict from nothing. A store file
    the byte scan cannot read is reported (path and cause, in the stall note and `oathe trace`),
-   never a stall: an unrelated unreadable file does not block the task's own evidence; a file
-   that names the claim and cannot project still refuses typed.
+   never a stall: an unrelated unreadable file (a permission, a vanished file, a broken `.zst`
+   archive — one `TRACE_UNREADABLE` grammar) does not block the task's own evidence; a file
+   that names the claim and cannot project still refuses typed, by file: the record's own code
+   (`TRACE_LINE_MALFORMED`) or `TRACE_PROJECTION_FAILED` with the cause — never a raw error.
 3. ONE fresh headless engine run (each adapter's declared `headless` command — `claude -p
    --output-format json`, `codex exec --skip-git-repo-check`, `agent -p --trust
    --output-format json`) — fresh context, different eyes ("same-harness verification is

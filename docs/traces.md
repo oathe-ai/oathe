@@ -129,8 +129,12 @@ evidence: that is attribution, and the claim still judges; no link and no discov
 an `OATHE_EVIDENCE_EMPTY` stall — the engine never judges an empty record. A store file in
 the window the byte scan cannot read is reported on the read (`read()` → `unreadable`, by path
 and cause; the stall note and `oathe trace` say it), never a stall — an unrelated unreadable
-file must not block the task's own evidence; a file that names the claim and cannot PROJECT
-still refuses typed, because that one may be the evidence.
+file must not block the task's own evidence ("cannot read" is one grammar — a permission, a
+vanished file, a broken `.zst` archive — every one `TRACE_UNREADABLE` by path); a file that names
+the claim and cannot PROJECT still refuses typed, because that one may be the evidence: the
+record's own refusal (`TRACE_LINE_MALFORMED` for a torn line) passes through, and anything else
+the projector throws is `TRACE_PROJECTION_FAILED` naming the file and the cause — the stall note
+reads a file and a reason, never a stack.
 
 ## The row-type rosters (the pinned contract — no upstream page exists)
 
