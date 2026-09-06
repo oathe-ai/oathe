@@ -101,11 +101,17 @@ keyboard) is the last gate before a public flip — never the first place a rule
     the glass reads no config and composes no sentence. The Swift decoder's fields are pinned
     by a Node test that reads `Feed.swift`, and the sheet's row cap equals the digest's. A row
     expands to the task card: what is owed, where it stands, the last word (whole), where it
-    lives, the one act. The glass offers every act the package decides (ruling 2026-09-04): a
-    breach row never dead-ends — continue resumes into the living app that spoke the task, else
-    spawns the agent at its home, else opens the app, else the clipboard, the one ladder a moving
-    row's continue already climbs; the button shows for every act. — held by
-    `tests/notch-frame.test.mjs, tests/cli.test.mjs`
+    lives, the one act. The glass offers every act the package decides, and only those (rulings
+    2026-09-04, 2026-09-05): continue goes where the work LIVES — into the living app that spoke
+    the task, else the agent at the folder it resides in, else the app it resides in (the place
+    recorded on the act, so a feed restart forgets nothing); a row nobody can resume into shows
+    no act (the absence rule 22 already uses), never a clipboard dressed as one. Where a task
+    lives is the place that picked it up last — a folder, or an app named by its adapter's word
+    ("ChatGPT"); a claim is picked up at a place or refused, and a task no claim picked up is
+    simply unclaimed — there is no third word. Continue into an app also puts `continue <task>` on the
+    clipboard and expands the row with "command copied — paste in <App> to continue" (2026-09-05):
+    the open is the act, the clipboard its helper, and the sentence is Node's. — held by
+    `tests/notch-frame.test.mjs, tests/cli.test.mjs, tests/oathe-tools.test.mjs`
 21. **Siblings are one row.** Work claimed while a session holds a claim is recorded as spawned
     under it (`oathe_claim` `parent`: omit for the session's root, an id to name the claim it
     serves, `null` for standalone work; a parent you do not hold is a typed refusal before any
@@ -124,8 +130,12 @@ keyboard) is the last gate before a public flip — never the first place a rule
     holds it, `awaiting verdict` until one does; no act, uncounted. A rejection returned in the
     asserter's own blocking `done` hands the task back inside that response (`reclaimed`); a
     verdict rendered elsewhere is picked up by the owner's next act; anyone else is told no
-    and who owns it (`OATHE_RECLAIM_FOREIGN`). — held by
-    `tests/pager.test.mjs, tests/breach-digest.test.mjs, tests/notch-frame.test.mjs, tests/board-render.test.mjs, tests/rejection-loop.test.mjs`
+    and who owns it (`OATHE_RECLAIM_FOREIGN`). The in-flight table has a second word
+    (2026-09-05): while the machine holds `update:<engine>`, every stall that names that engine
+    as out of date reads `updating <Engine>` — same spinner, same rules, from the same map
+    (`IN_FLIGHT`); and a stall whose cause is an out-of-date engine offers `update ↗`, never a
+    retry that cannot help. — held by
+    `tests/pager.test.mjs, tests/breach-digest.test.mjs, tests/notch-frame.test.mjs, tests/board-render.test.mjs, tests/rejection-loop.test.mjs, tests/system-tasks.test.mjs`
 
 ## Words
 

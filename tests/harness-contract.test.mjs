@@ -13,13 +13,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  HARNESS_CLASSES, attestationFor, buildAll, buildWireable, byName, capabilityTable, detectOnlySurfaces, dialectFor,
+  HARNESS_CLASSES, appResumable, attestationFor, buildAll, buildWireable, byName, capabilityTable, detectOnlySurfaces, dialectFor, displayFor,
   docsDependents, harnessForClient, installable, isSyntheticWorkspace, launchable, liveTestable,
   ownerOfTracePath, traceStores, verifierCapable, verifiers, wireable,
 } from '../src/harnesses/catalog.mjs';
 import { DOC_SOURCES } from '../scripts/pull-harness-docs.mjs';
 import { ORIGIN_KINDS } from '../src/harnesses/claude-roster.mjs';
 import { sandbox } from './helpers.mjs';
+import { OatheConfig } from '../src/config.mjs';
 
 const FIXTURES_DIR = fileURLToPath(new URL('./fixtures/hooks', import.meta.url));
 const scratch = (prefix = 'oathe-contract-') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -55,7 +56,31 @@ test('identity facts: every entry declares them (null where a fact does not appl
     assert.ok(i === null || (typeof i.bin === 'string' && Array.isArray(i.versionArgs) && ((typeof i.npm === 'string') !== (typeof i.installer === 'string'))),
       `${n}: install is null or {npm|installer, bin, versionArgs}`);
     assert.ok(C.note === null || typeof C.note === 'string', `${n}: note (manual steps for a detect-only surface)`);
+    // The synthetic staging dirs (an app surface's sessions run there, no project folder) are a
+    // MEASURED list — `dirs(home)` — plus the rollout originators that name the desktop, so the
+    // doctor can say when the app moves again (B1, 2026-09-06). A claim from one is picked up by
+    // the app and says so in its place statement — nothing is inferred.
+    assert.ok(C.synthetic === null || (Object.isFrozen(C.synthetic) && typeof C.synthetic.dirs === 'function' && Array.isArray(C.synthetic.originators)),
+      `${n}: synthetic is null or {dirs(home), originators}`);
+    if (C.synthetic !== null) {
+      const dirs = C.synthetic.dirs('/Users/x');
+      assert.ok(dirs.length > 0 && dirs.every((d) => path.isAbsolute(d)), `${n}: synthetic.dirs are absolute paths`);
+    }
   }
+  assert.equal(HARNESS_CLASSES.filter((C) => C.synthetic !== null).length, 1, 'one adapter stages sessions without a folder — the desktop app');
+  // ChatGPT desktop stages two ways (measured): projects under the config home, and "Codex work"
+  // conversations (originator codex_work_desktop, codex 0.153.4, 2026-09-06) under ~/Documents/Codex/<date>/<slug>.
+  assert.deepEqual(byName('codex').synthetic.dirs('/Users/x'), ['/Users/x/.codex/.chatgpt-projects', '/Users/x/Documents/Codex']);
+  assert.deepEqual(byName('codex').synthetic.originators, ['codex_work_desktop']);
+  assert.equal(isSyntheticWorkspace({ dir: '/Users/x/Documents/Codex/2026-09-06/te', home: '/Users/x' }), true, 'a Codex-work conversation dir is staging');
+  assert.equal(isSyntheticWorkspace({ dir: '/Users/x/.codex/.chatgpt-projects/g-p-1/work', home: '/Users/x' }), true);
+  assert.equal(isSyntheticWorkspace({ dir: '/Users/x/Documents/Other', home: '/Users/x' }), false, 'only the staging parents, never all of Documents');
+  // The gate: a desktop rollout whose cwd is not a known staging dir is DRIFT, said by the adapter.
+  const drift = byName('codex').traces.stagingDrift;
+  assert.equal(typeof drift, 'function');
+  assert.match(drift({ path: '/r.jsonl', originator: 'codex_work_desktop', cwd: '/Users/x/Somewhere/new' }, { home: '/Users/x' }), /desktop rollout .* ran from \/Users\/x\/Somewhere\/new — not a staging dir this adapter knows/);
+  assert.equal(drift({ path: '/r.jsonl', originator: 'codex_work_desktop', cwd: '/Users/x/Documents/Codex/2026-09-06/te' }, { home: '/Users/x' }), null);
+  assert.equal(drift({ path: '/r.jsonl', originator: 'codex_cli_rs', cwd: '/Users/x/Somewhere' }, { home: '/Users/x' }), null, 'a terminal session runs anywhere');
 });
 
 test('capability roll-call: each capability is a frozen object with its contract, or null', () => {
@@ -65,14 +90,28 @@ test('capability roll-call: each capability is a frozen object with its contract
     assert.ok(C.hooks === null || (C.hooks.dialect?.matches && C.hooks.dialect?.normalizePayload && C.hooks.dialect?.formatSessionStart), `${n}: hooks is null or {dialect}`);
     assert.ok(C.launch === null || (typeof C.launch.splash === 'boolean' && typeof C.launch.bin === 'string'),
       `${n}: launch is null or {splash, bin} — the adapter names its OWN binary, never the harness name assumed`);
-    assert.ok(C.headless === null || (Array.isArray(C.headless.auth) && isFn(C.headless.command) && isFn(C.headless.extract)), `${n}: headless is null or {auth, command, extract}`);
+    // diagnose(stderrTail) → a cause word ('outdated') or null: the ONLY place an engine's failure
+    // words are read (ruling 2026-09-05 — the signal will change; it changes here).
+    assert.ok(C.headless === null || (Array.isArray(C.headless.auth) && isFn(C.headless.command) && isFn(C.headless.extract) && isFn(C.headless.diagnose)),
+      `${n}: headless is null or {auth, command, extract, diagnose}`);
+    // install.update(address) → [bin, args] that updates THIS CLI in place, or null when the
+    // adapter knows no updater (then the glass offers no update act).
+    assert.ok(C.install === null || C.install.update === null || isFn(C.install.update), `${n}: install.update is a function or null`);
     assert.ok(C.traces === null || (isFn(C.traces.store) && isFn(C.traces.newest) && isFn(C.traces.recent) && isFn(C.traces.projector) && isFn(C.traces.ownsPath)
       && typeof C.traces.roster === 'object' && Object.isFrozen(C.traces.roster) && isFn(C.traces.kindOf)
       && typeof C.traces.fidelity === 'object' && Object.isFrozen(C.traces.fidelity)
       && 'harbor' in C.traces && (C.traces.harbor === null || (typeof C.traces.harbor.agent === 'string'
         && typeof C.traces.harbor.sessions?.home === 'string' && typeof C.traces.harbor.sessions?.logs === 'string'))),
     `${n}: traces is null or {store, newest, recent, projector, ownsPath, roster, kindOf, fidelity, harbor} — harbor names the reference converter and where it reads sessions, or is null`);
-    assert.ok(C.surfaces === null || (isFn(C.surfaces.ownsExec) && isFn(C.surfaces.name)), `${n}: surfaces is null or {ownsExec, name}`);
+    assert.ok(C.surfaces === null || (isFn(C.surfaces.ownsExec) && isFn(C.surfaces.name)
+      && typeof C.surfaces.display === 'object' && Object.isFrozen(C.surfaces.display) && Object.values(C.surfaces.display).every((d) => typeof d === 'string' && d.length > 0)
+      && Array.isArray(C.surfaces.resumable) && Object.isFrozen(C.surfaces.resumable) && C.surfaces.resumable.every((s) => s in C.surfaces.display)),
+    `${n}: surfaces is null or {ownsExec, name, display: {surface: word}, resumable: [surfaces whose recorded app is a resume target]}`);
+    // The blocking exchange declared to the transport (ruling 2026-09-05): the client's per-tool
+    // timeout KEY this adapter's MCP registration writes, or null when the client needs none
+    // (Claude Code's ≈28h default) or documents none (Cursor).
+    assert.ok(C.mcpToolTimeout === null || (typeof C.mcpToolTimeout.key === 'string' && C.mcpToolTimeout.unit === 'sec' && Object.isFrozen(C.mcpToolTimeout)),
+      `${n}: mcpToolTimeout is null or {key, unit: 'sec'}`);
     for (const flag of ['engine', 'wireable', 'launchable', 'splashOnLaunch', 'hookDialect', 'verifierCommand', 'extractVerifierText', 'traceStore', 'newestTrace', 'atifProjector']) {
       assert.equal(C[flag], undefined, `${n}: the flag/static '${flag}' must not exist — ask the capability`);
     }
@@ -84,11 +123,11 @@ test('capability roll-call: each capability is a frozen object with its contract
 
 test('the GOLDEN capability table — the definition of a supported harness; a row change is a reviewed change', () => {
   assert.deepEqual(capabilityTable(), {
-    claude: { wiring: true, hooks: true, launch: true, headless: true, traces: true, surfaces: true, contextFiles: true, globalContextFiles: false, synthetic: false, install: true, docs: true, attestation: { claude: 'hooks' } },
-    codex: { wiring: true, hooks: true, launch: true, headless: true, traces: true, surfaces: true, contextFiles: true, globalContextFiles: true, synthetic: true, install: true, docs: true, attestation: { codex: 'hooks', chatgpt: 'hookless' } },
-    cursor: { wiring: true, hooks: true, launch: true, headless: true, traces: false, surfaces: true, contextFiles: true, globalContextFiles: false, synthetic: false, install: true, docs: true, attestation: { cursor: 'hooks' } },
-    cowork: { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: true, attestation: null },
-    'chatgpt-web': { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: false, attestation: null },
+    claude: { wiring: true, hooks: true, launch: true, headless: true, traces: true, surfaces: true, contextFiles: true, globalContextFiles: false, synthetic: false, install: true, docs: true, attestation: { claude: 'hooks' }, mcpToolTimeout: false },
+    codex: { wiring: true, hooks: true, launch: true, headless: true, traces: true, surfaces: true, contextFiles: true, globalContextFiles: true, synthetic: true, install: true, docs: true, attestation: { codex: 'hooks', chatgpt: 'hookless' }, mcpToolTimeout: true },
+    cursor: { wiring: true, hooks: true, launch: true, headless: true, traces: false, surfaces: true, contextFiles: true, globalContextFiles: false, synthetic: false, install: true, docs: true, attestation: { cursor: 'hooks' }, mcpToolTimeout: false },
+    cowork: { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: true, attestation: null, mcpToolTimeout: false },
+    'chatgpt-web': { wiring: false, hooks: false, launch: false, headless: false, traces: false, surfaces: false, contextFiles: false, globalContextFiles: false, synthetic: false, install: false, docs: false, attestation: null, mcpToolTimeout: false },
   });
 });
 
@@ -99,6 +138,22 @@ test('attestation is a touchpoint (ruling 2026-09-04): every surface an adapter 
   assert.deepEqual(attestationFor('cursor'), { harness: 'cursor', attestation: 'hooks' });
   assert.equal(attestationFor('nobody'), null, 'an unknown surface is nobody\'s — the gate refuses it');
   assert.equal(attestationFor(null), null);
+  // Where work lives (ruling 2026-09-05): a surface's DISPLAY word and whether its recorded app
+  // is a place the glass can resume INTO — the adapter's facts, asked by surface name.
+  assert.equal(displayFor('chatgpt'), 'ChatGPT');
+  assert.equal(displayFor('codex'), 'Codex');
+  assert.equal(displayFor('claude'), 'Claude Code');
+  assert.equal(displayFor('cursor'), 'Cursor');
+  assert.equal(displayFor('nobody'), null);
+  assert.equal(appResumable('chatgpt'), true, 'the desktop app is where the work lives — opening it IS the resumption');
+  for (const s of ['codex', 'claude', 'cursor', 'nobody', null]) assert.equal(appResumable(s), false, `${s}: a terminal is not a place to resume into`);
+  // The engine's own words, read by its adapter alone: codex's "requires a newer version" is `outdated`.
+  assert.equal(byName('codex').headless.diagnose("ERROR: The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade"), 'outdated');
+  assert.equal(byName('codex').headless.diagnose('usage limit reached'), null, 'an unrecognized failure stays what it is — R2 advice, never a guess');
+  assert.equal(byName('claude').headless.diagnose('anything'), null, 'unmeasured words: null, stated');
+  assert.deepEqual(byName('codex').install.update('/x/codex'), ['/x/codex', ['update']], 'codex updates itself in place (`codex update`)');
+  assert.deepEqual(byName('claude').install.update('/x/claude'), ['/x/claude', ['update']]);
+  assert.equal(byName('cursor').install.update, null);
   for (const C of HARNESS_CLASSES) {
     if (C.surfaces === null) { assert.equal(C.attestation, null, `${C.harnessName}: a surface that never speaks declares null`); continue; }
     assert.ok(C.attestation && Object.keys(C.attestation).length > 0, `${C.harnessName} declares attestation per owned surface`);
@@ -264,7 +319,9 @@ test('detection is STRUCTURED — presence {app, cli, configHome}; installed is 
   const seen = Object.fromEntries(withBins.map((h) => [h.name, h.detect()]));
   for (const d of Object.values(seen)) {
     assert.deepEqual(Object.keys(d).sort(), ['installed', 'name', 'presence']);
-    assert.deepEqual(Object.keys(d.presence).sort(), ['app', 'cli', 'configHome']);
+    assert.deepEqual(Object.keys(d.presence).sort(), ['app', 'cli', 'cliPath', 'configHome']);
+    assert.ok(d.presence.cliPath === null || path.isAbsolute(d.presence.cliPath), 'cliPath is the measured address or null');
+    assert.equal(d.presence.cli, d.presence.cliPath !== null, 'cli is cliPath\'s boolean face');
     assert.equal(typeof d.presence.cli, 'boolean');
   }
   assert.equal(seen.claude.installed, true); assert.equal(seen.claude.presence.cli, true);
@@ -327,16 +384,18 @@ test('MCP client recognition is an adapter fact (clientNames), not a substring g
 test('wiring describes itself from the same data it writes — every wired adapter says what init will touch, with paths', () => {
   const { home, env, exec } = sandbox({ scratchDb: 'unused' });
   const paths = { packageRoot: '/pkg' };
-  for (const h of buildWireable({ home, envPath: env.PATH, paths, exec })) {
+  const config = new OatheConfig({ env, cwd: home }); // describe() speaks the values init will write — the codex budget among them
+  for (const h of buildWireable({ home, envPath: env.PATH, paths, exec, config })) {
     assert.equal(typeof h.onboard, 'function', `${h.name}: onboard`);
     assert.equal(typeof h.offboard, 'function', `${h.name}: offboard`);
     const lines = h.describe();
     assert.ok(Array.isArray(lines) && lines.length > 0, `${h.name}: describe() returns lines`);
     assert.ok(lines.every((l) => typeof l === 'string' && l.length > 0));
   }
-  const by = Object.fromEntries(buildWireable({ home, envPath: env.PATH, paths, exec }).map((h) => [h.name, h.describe().join('\n')]));
+  const by = Object.fromEntries(buildWireable({ home, envPath: env.PATH, paths, exec, config }).map((h) => [h.name, h.describe().join('\n')]));
   assert.match(by.claude, /settings\.json/); assert.match(by.claude, /claude plugin install/);
   assert.match(by.codex, /config\.toml/); assert.match(by.codex, /AGENTS/);
+  assert.match(by.codex, /tool_timeout_sec = 900/, 'the codex row says the budget it stamps (UX rule 2: from the write\'s own data)');
   assert.match(by.cursor, /mcp\.json/); assert.match(by.cursor, /hooks\.json/);
   // ONE address at ONE rigor (connection-lane plan, 2026-09-04): every wired adapter's MCP
   // entry speaks the shim — the same touchpoint may never sit at three rigors again (the
@@ -394,9 +453,11 @@ test('DRIFT: every declared doc page exists in the snapshot sources, and every s
 });
 
 test('install facts: how a fresh runner gets each REAL CLI', () => {
-  assert.deepEqual(byName('claude').install, { npm: '@anthropic-ai/claude-code', bin: 'claude', versionArgs: ['--version'] });
-  assert.deepEqual(byName('codex').install, { npm: '@openai/codex', bin: 'codex', versionArgs: ['--version'] });
-  assert.deepEqual(byName('cursor').install, { installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'] });
+  // `update` is the CLI's own in-place updater (a function) or null — pinned by shape in the roll-call and by value in the surfaces test.
+  const facts = (h) => Object.fromEntries(Object.entries(byName(h).install).filter(([k]) => k !== 'update'));
+  assert.deepEqual(facts('claude'), { npm: '@anthropic-ai/claude-code', bin: 'claude', versionArgs: ['--version'] });
+  assert.deepEqual(facts('codex'), { npm: '@openai/codex', bin: 'codex', versionArgs: ['--version'] });
+  assert.deepEqual(facts('cursor'), { installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'] });
 });
 
 test('the declared binary is the one the pinned install docs verify with — a renamed CLI cannot drift silently', (t) => {

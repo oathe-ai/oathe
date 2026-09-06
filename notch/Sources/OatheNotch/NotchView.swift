@@ -329,8 +329,8 @@ struct NotchView: View {
             // The kind word and the act word are the frame's (Node's one table) — the glass
             // composes no sentence. A judgment in flight (busy) reads `verifying` from the
             // frame; the glass adds the spinner, drops the amber, and offers no act. Every act
-            // the package decides is a button — a copy-only act copies its line and flashes
-            // `copied` — so no row dead-ends (ruling 2026-09-04).
+            // the package decides is a button; a row the package can resume nowhere carries no
+            // act and shows none (ruling 2026-09-05) — never a fake one.
             let busy = breach.busy == true
             rowLine(title: breach.task_id, tone: busy ? Glass.ink : Glass.amber,
                     meta: "\(breach.kind_word) · \(NotchModel.age(from: breach.at))",

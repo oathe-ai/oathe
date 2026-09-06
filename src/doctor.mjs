@@ -8,8 +8,31 @@ import path from 'node:path';
 import { buildContext, packageVersion } from './context.mjs';
 import { FencedBlock, FENCE_STYLES, JsonEntries } from './blocks.mjs';
 import { sha256Hex } from './manifest.mjs';
+import { spawnSync } from 'node:child_process';
 import { launchdJob } from './notch.mjs';
+import { agentPathEnv } from './launchd.mjs';
+
+/**
+ * A manifest the doctor cannot read is a broken install, said loudly (zero legacy, founder
+ * 2026-09-05): a row of a kind this tree does not know, or a row missing a field this tree's
+ * writer always records, is never a status line — the fix is named.
+ */
+export class DoctorError extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.name = 'DoctorError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
+const REINSTALL = 'uninstall with the oathe that wrote it, then run oathe init';
+function malformed(row, what) {
+  return new DoctorError('OATHE_MANIFEST_ROW_MALFORMED',
+    `manifest row ${row.kind} for ${row.file} carries no ${what} — not a row this oathe writes; ${REINSTALL}`, { row });
+}
 import { defaultExec } from './harnesses/harness.mjs';
+import { byName } from './harnesses/catalog.mjs';
 
 function verifyJsonRow(row) {
   if (!fs.existsSync(row.file)) return 'file-missing';
@@ -24,15 +47,26 @@ function verifyJsonRow(row) {
   return sha256Hex(JSON.stringify(entries)) === row.sha256 ? 'ok' : 'user-edited';
 }
 
+/** The fence style every fence row records (fence.mjs); a row without one is not ours. */
+export function fenceStyleOf(row) {
+  const style = FENCE_STYLES[row.detail?.style];
+  if (!style) throw malformed(row, 'known fence style');
+  return style;
+}
+
 function verifyFenceRow(row) {
+  const block = new FencedBlock({ style: fenceStyleOf(row) }); // the row's shape first — a malformed row is malformed whatever the file does
   if (!fs.existsSync(row.file)) return 'file-missing';
-  const block = new FencedBlock({ style: FENCE_STYLES[row.detail?.style ?? 'hash'] });
   const seen = block.read(fs.readFileSync(row.file, 'utf8'));
   if (!seen.present) return 'removed';
   return sha256Hex(seen.blockText) === row.sha256 ? 'ok' : 'user-edited';
 }
 
 function verifyCliRow(row) {
+  // Two sub-shapes, both written today: a parsed JSON entry (detail.command) or proof lines
+  // (detail.proofs). The row's shape is checked before the file — malformed is malformed.
+  const proofs = row.detail?.command !== undefined ? null : row.detail?.proofs;
+  if (proofs !== null && (!Array.isArray(proofs) || proofs.length === 0)) throw malformed(row, 'proofs');
   if (!fs.existsSync(row.file)) return 'file-missing';
   const text = fs.readFileSync(row.file, 'utf8');
   // A JSON file the CLI owns (claude's ~/.claude.json): the proof is the PARSED entry — a
@@ -44,7 +78,9 @@ function verifyCliRow(row) {
     if (entry === null) return 'removed';
     return entry.command === row.detail.command ? 'ok' : 'user-edited';
   }
-  return text.includes(row.detail?.proof) ? 'ok' : 'removed';
+  // Every proof line must stand (the codex stanza carries the address AND the timeout budget the
+  // CLI's re-add drops).
+  return proofs.every((p) => text.includes(p)) ? 'ok' : 'removed';
 }
 
 function verifyJsonArrayRow(row) {
@@ -103,10 +139,20 @@ function verifyWholeFileRow(row) {
   return sha256Hex(fs.readFileSync(row.file, 'utf8')) === row.sha256 ? 'ok' : 'user-edited';
 }
 
-const VERIFIERS = {
+// A CLI's recorded address (ruling 2026-09-05: engines are addresses) is proved by the
+// SUPERVISOR'S ANSWER, not a stat: `<address> <versionArgs>` runs under the LaunchAgent's PATH —
+// the world the notch feed and the serve daemon spawn a judgment from — and exit 0 is ok. This
+// catches what X_OK misses: a node-script CLI whose interpreter that PATH no longer names.
+function verifyCliAddressRow(row, { probe }) {
+  if (!fs.existsSync(row.file)) return 'file-missing';
+  return probe(row.file, byName(row.harness).install.versionArgs).status === 0 ? 'ok' : 'unreachable';
+}
+
+/** Every manifest kind this tree writes, with its verifier — the machine surface (docs/PRODUCT.md §3). */
+export const VERIFIERS = {
   'json-path': verifyJsonRow, fence: verifyFenceRow, 'cli-managed': verifyCliRow, 'json-array': verifyJsonArrayRow,
   'launch-agent': verifyLaunchAgentRow, 'notch-app': verifyNotchAppRow, 'oathe-shim': verifyWholeFileRow,
-  'device-id': verifyWholeFileRow,
+  'device-id': verifyWholeFileRow, 'cli-address': verifyCliAddressRow,
 };
 
 /**
@@ -139,8 +185,18 @@ export async function runSurfaceReport({ env = process.env, cwd = () => process.
 }
 
 /** @returns {Promise<{rows: object[], substrate: object, plugin: {resolves: boolean, detail: string|null}}>} */
+function verifierFor(row) {
+  const verify = VERIFIERS[row.kind];
+  if (!verify) {
+    throw new DoctorError('OATHE_MANIFEST_KIND_UNKNOWN',
+      `manifest row kind '${row.kind}' (${row.file}) is not one this oathe writes (${Object.keys(VERIFIERS).join(', ')}) — ${REINSTALL}`, { row });
+  }
+  return verify;
+}
+
 export async function runDoctor({ env = process.env, exec = defaultExec } = {}) {
   const launchd = (label) => launchdJob({ label, exec });
+  const probe = (file, args) => spawnSync(file, args, { encoding: 'utf8', env: { ...env, PATH: agentPathEnv() }, timeout: 20_000 });
   const ctx = buildContext({ env });
   const { manifest, substrate, paths, harnesses } = ctx;
   try {
@@ -155,7 +211,7 @@ export async function runDoctor({ env = process.env, exec = defaultExec } = {}) 
       file: row.file,
       kind: row.kind,
       block_version: row.block_version,
-      status: (VERIFIERS[row.kind] ?? (() => 'unknown-kind'))(row, { launchd }),
+      status: verifierFor(row)(row, { launchd, probe }),
     }));
     // The trace-contract monitor: both vendors disclaim transcript-schema stability, so the
     // doctor validates the NEWEST live record in each engine's store against docs/traces.md and
@@ -186,7 +242,11 @@ export async function runDoctor({ env = process.env, exec = defaultExec } = {}) 
         const fidelity = await fidelityOf({
           store, project: (file) => projectAnnotated(file, { home }), fidelity: capability.fidelity, files, traceStatus: traceStatusOf,
         });
+        // The staging gate (B1, 2026-09-06): the adapter says whether the newest rollout's writer ran
+        // from a dir it knows as staging — the day the desktop moves again, this line says so.
+        const stagingDrift = capability.stagingDrift?.(store.describe(newest), { home }) ?? null;
         const failures = [
+          ...(stagingDrift ? [stagingDrift] : []),
           ...census.undeclared.map((u) => `undeclared ${u.channel}.${u.type} ×${u.count} (first: ${u.example})`),
           ...fidelity.projectionErrors.filter((p) => p.status === 'DRIFT').map((p) => `${p.file}: ${p.detail}`),
           ...fidelity.probes.flatMap((p) => p.failed.map((f) => `${p.probe}: ${f.file}: ${f.detail}`)),

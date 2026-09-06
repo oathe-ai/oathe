@@ -9,6 +9,38 @@ import { randomUUID } from 'node:crypto';
 
 import { notchLabel } from '../src/notch.mjs';
 import { serveLabel } from '../src/serve.mjs';
+import { ContractRef, Place, PlaceEvidence } from '../src/home.mjs';
+import { linkPlace } from '../src/statements.mjs';
+
+/**
+ * Seed a CLAIM the way the tools make one: the task row (kept if it exists), the substrate's
+ * `claim_work` with the ledger's contract_ref, and the PLACE statement the pickup records
+ * (ruling 2026-09-05: a claim without a place does not exist — a fixture must not fake one).
+ * Intervals are Postgres interval strings ('2 hours', '3 days', '1 minute').
+ * @param {{substrate: {query: Function}, taskId: string, workspace: string, principal?: string,
+ *          objective?: string, claimedAgo?: string, lease?: string, leaseFrom?: 'now'|'claim',
+ *          verifyBy?: string, createdAgo?: string, orgId?: string}} o
+ *   leaseFrom — 'now': lease = now() + lease (a live claim); 'claim': lease = claimed_at + lease (an
+ *   old claim whose lease may already be gone — the pager's overdue fixtures)
+ * @returns {Promise<{workClaimId: string}>}
+ */
+export async function seedClaim({
+  substrate, taskId, workspace, principal = 'founder', objective = `seeded ${taskId}`,
+  claimedAgo = '0 hours', lease = '4 hours', leaseFrom = 'now', verifyBy = '1 day', createdAgo = claimedAgo, orgId = 'oathe',
+}) {
+  await substrate.query(
+    `INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan, verify_by, claim_mode, created_at)
+     VALUES ($1, $2, 'founder', $3, 'minted_at_claim', '{"plan_status":"unknown"}'::jsonb, now() + $4::interval, 'exclusive', now() - $5::interval)
+     ON CONFLICT DO NOTHING`,
+    [orgId, taskId, objective, verifyBy, createdAgo]);
+  const workClaimId = randomUUID();
+  const leaseSql = leaseFrom === 'claim' ? 'now() - $5::interval + $6::interval' : 'now() + $6::interval';
+  await substrate.query(
+    `SELECT cell.claim_work($1, $2, $3, NULL, NULL, $4, 'founder', 'exclusive', ${leaseSql}, $7, now() - $5::interval, gen_random_uuid())`,
+    [orgId, taskId, workClaimId, principal, claimedAgo, lease, String(new ContractRef({ workspace, orgId, taskId }))]);
+  await linkPlace({ client: substrate, identity: { orgId, principalId: principal }, taskId, place: Place.workspace(workspace), evidence: new PlaceEvidence({}), workClaimId });
+  return { workClaimId };
+}
 
 // A sandbox's machine side effects die with the process. A test that runs `oathe init`
 // through the REAL bin (cli.test's picker moment, init.test's machine-wide verifier run)
@@ -72,7 +104,7 @@ export async function linkClaudeTrace({ substrate, taskId, workClaimId, principa
  * @param {{scratchDb: string, claudeScript?: string}} o
  *   claudeScript: shell body for the fake `claude` binary (default: print and exit 0)
  */
-export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', withCursor = true }) {
+export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', codexScript = '', withCursor = true }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-sb-'));
   sandboxHomes.push(home);
   fs.mkdirSync(path.join(home, '.claude'));
@@ -84,7 +116,7 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
   const bin = path.join(home, 'bin');
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\n${claudeScript}\n`);
-  fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(bin, 'codex'), `#!/bin/sh\n${codexScript}\n`);
   // A resolvable absolute `oathe` for wiring that must never record a bare name (cursor).
   fs.writeFileSync(path.join(bin, 'oathe'), '#!/bin/sh\n');
   for (const name of ['claude', 'codex', 'oathe']) fs.chmodSync(path.join(bin, name), 0o755);
@@ -120,8 +152,10 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
       if (args.includes('remove')) {
         // A marketplace stanza carries its source line; an mcp stanza its command (as the
         // real config.toml does).
+        // `codex mcp remove` drops the WHOLE table (probed live, 2026-09-05: the stamped
+        // tool_timeout_sec went with it) — so does the fake.
         const pattern = key === 'marketplace' ? new RegExp(`\\[marketplaces\\.oathe\\]\\n(source = "[^"]*"\\n)?`)
-          : key === 'mcp' ? new RegExp(`\\[mcp_servers\\.oathe\\]\\n(command = "[^"]*"\\n)?`)
+          : key === 'mcp' ? new RegExp(`\\[mcp_servers\\.oathe\\]\\n(?:(?!\\[)[^\\n]*\\n?)*`)
             : `${line}\n`;
         fs.writeFileSync(configPath, prior.replace(pattern, ''));
         return { status: 0, stdout: '', stderr: '' };
@@ -135,10 +169,14 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
         return { status: 0, stdout: '', stderr: '' };
       }
       if (key === 'mcp') {
-        // `codex mcp add <name> -- <command> <args…>` records the command it was handed.
-        const command = args[args.indexOf('--') + 1];
-        const next = prior.includes(line) ? prior.replace(new RegExp(`(\\[mcp_servers\\.oathe\\]\\n)command = "[^"]*"\\n`), `$1command = "${command}"\n`)
-          : `${prior}${line}\ncommand = "${command}"\n`;
+        // `codex mcp add <name> -- <command> <args…>` REWRITES the whole stanza — command and
+        // args — and drops any other key in it (probed live, codex-cli 0.150.0, 2026-09-05:
+        // a hand-written tool_timeout_sec did not survive a re-add). The fake does the same,
+        // so the adapter's stamp-after-add is what the tests exercise.
+        const sep = args.indexOf('--');
+        const stanza = `${line}\ncommand = "${args[sep + 1]}"\nargs = ${JSON.stringify(args.slice(sep + 2))}\n`;
+        const block = new RegExp(`\\[mcp_servers\\.oathe\\]\\n(?:(?!\\[)[^\\n]*\\n?)*`);
+        const next = prior.includes(line) ? prior.replace(block, stanza) : `${prior}${stanza}`;
         if (next !== prior) fs.writeFileSync(configPath, next);
         return { status: 0, stdout: '', stderr: '' };
       }

@@ -46,6 +46,12 @@ export function noticeFor(kind, taskId, via = null) {
   if (kind === 'rejected') return { text: `✗ '${taskId}' reopened — verification rejected.`, tone: 'amber' };
   if (kind === 'settled') return { text: `✓ '${taskId}' verified — settled.`, tone: 'sage' };
   if (kind === 'verify_failed') return { text: `✗ verification of '${taskId}' failed${via ? ` (${via})` : ''} — retry from the glass.`, tone: 'amber' };
+  // The engine update (ruling 2026-09-05): via = the engine's display name (and, failing, the CLI's tail).
+  if (kind === 'engine_updated') return { text: `✓ ${via} updated — re-verifying.`, tone: 'sage' };
+  if (kind === 'engine_update_failed') {
+    const [name, ...tail] = String(via ?? 'engine').split(': ');
+    return { text: `✗ ${name} update failed${tail.length ? ` — ${tail.join(': ')}` : ''}.`, tone: 'amber' };
+  }
   return null;
 }
 
@@ -54,7 +60,7 @@ export async function emit(client, { kind, task_id, via, app }) {
     await client.query('SELECT pg_notify($1, $2)',
       [WIRE_CHANNEL, JSON.stringify({
         kind, task_id: task_id ?? null, via: via ?? null,
-        app: app ?? null, // the act's living app {bundle, pid} — a homeless task still knows where it is spoken from
+        app: app ?? null, // the act's living app {bundle, pid} — the glass can switch to it before the record is re-read
         at: new Date().toISOString(),
       })]);
   } catch (e) {

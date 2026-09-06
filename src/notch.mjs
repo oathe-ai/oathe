@@ -105,13 +105,13 @@ export function wireNotch({ home, manifest, config, version, exec = defaultExec,
 
   // Replaced wholesale on every wire: the manifest rows say what exists NOW (upsert keys on
   // detail, so a moved app path would otherwise accumulate rows instead of replacing them).
-  // A replaced agent under a DIFFERENT name (a legacy bare label, a moved home) is booted
+  // A replaced agent under a DIFFERENT name (an earlier wiring's label, a moved home) is booted
   // out and removed here — otherwise the old job lingers loaded beside the new one. The
   // sweep is scoped to the NOTCH'S OWN rows (phase 2): the serve daemon's launch agent is
   // another owner's — a kind-wide sweep would boot it out on every init.
   for (const row of manifest.removeWhere((r) => r.harness === 'notch' && (r.kind === 'launch-agent' || r.kind === 'notch-app'))) {
     if (row.kind === 'launch-agent' && row.file !== file) {
-      exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]); // result unread: a legacy label that is not loaded answers 'Could not find service' — nothing to do either way
+      exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]); // result unread: a replaced label that is not loaded answers 'Could not find service' — nothing to do either way
       if (fs.existsSync(row.file)) fs.rmSync(row.file);
     }
   }

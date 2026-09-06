@@ -35,8 +35,12 @@ export function agentPathFor(home, label) {
  * bare PATH and a login shell never sources .zshrc — but this IS oathe running, so it knows
  * where the bin lives), every interpolation XML-escaped.
  */
+export function agentPathEnv(nodeBinDir = path.dirname(process.execPath)) {
+  return [nodeBinDir, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'].join(':');
+}
+
 export function launchAgentPlistFor({ label, programArguments, nodeBinDir = path.dirname(process.execPath) }) {
-  const agentPath = [nodeBinDir, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'].join(':');
+  const agentPath = agentPathEnv(nodeBinDir);
   const args = programArguments.map((a) => `<string>${xmlEscape(a)}</string>`).join('');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

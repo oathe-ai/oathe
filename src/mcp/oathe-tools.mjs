@@ -13,12 +13,12 @@
 import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
 
-import { standardPlan, verificationTaskId, verificationObjective, isVerificationTask } from '../plans.mjs';
+import { standardPlan, verificationTaskId, verificationObjective, systemTaskOf, VERIFICATION_PREFIX } from '../plans.mjs';
 import { verifierCapable, attestationFor, harnessForClient } from '../harnesses/catalog.mjs';
-import { ContractRef, HomeBoard } from '../home.mjs';
+import { ContractRef, HomeBoard, Pickup, Place, PlaceEvidence } from '../home.mjs';
 import {
-  amendSubjectRef, attributionWhy, isTraceSubjectSql, judgeHoldSql, latestVerdictSql, latestProgressSql, latestTracePathSql, linkTrace,
-  rejectedIntervalSql,
+  amendSubjectRef, attributionWhy, holdSql, isTraceSubjectSql, latestVerdictSql, latestProgressSql, latestTracePathSql, linkPlace,
+  linkTrace, rejectedIntervalSql,
   spawnParentSql, spawnParentFor, linkSpawn, taskTraceLinksSql,
 } from '../statements.mjs';
 import { Pager } from '../pager.mjs';
@@ -175,11 +175,14 @@ export function makeToolDefs() {
  *   activation — the central-registry seam (src/activation.mjs ActivationSeam): every
  *     successful call registers the workspace; oathe_claim activates through the ONE writer.
  *   oathe_claim (write intent) activates it, and the claim result discloses what happened.
- *   synthetic — the session sits on a synthetic workspace (R-BOARD-SCOPE): its mints are
- *   HOMELESS and its claims never adopt (R-HOME-BOARD).
+ *   synthetic — the session sits on a synthetic workspace (R-BOARD-SCOPE): it serves the full
+ *   board, and its claims are picked up by the app the speaker was measured under (R-PLACE).
  */
 export function createOatheTools({
   client, identity, workspace, executionActor, successor, config, verifier, activation, synthetic = false,
+  // The directory this surface speaks from (the resolver's `dir`): an app pickup records it as
+  // evidence — the ChatGPT project folder its files live in (ruling 2026-09-05).
+  dir = null,
   // The SPEAKER primitive (founder ruling 2026-08-30): who is speaking — {surface, app,
   // session} resolved from the writer's own ancestry (src/speaker.mjs). REQUIRED wherever
   // it is consumed: a serving surface (one with the activation seam, whose writes ride the
@@ -191,16 +194,32 @@ export function createOatheTools({
   attention = true,
 }) {
   const { orgId, principalId, department } = identity;
-  const homeBoard = new HomeBoard({ client, orgId });
+  // WHERE this surface picks work up (ruling 2026-09-05): a folder session's workspace, else
+  // the app the speaker was measured under (the ChatGPT desktop — no folder, the app IS the
+  // place); a surface with neither records no place. One answer for the ledger's workspace
+  // slot, the claim's receipt, and the place statement every act writes.
+  // The PICKUP (src/home.mjs): where this surface picks work up and what it knows — one value,
+  // computed once. A work task's claim requires a place (refused before anything is written);
+  // a SYSTEM task (a judgment, an update) needs none and records none — it lives where its work does.
+  const pickup = Pickup.of({ workspace, synthetic, dir, speaker });
+  const placeFor = (taskId) => (systemTaskOf(taskId) !== null ? null : pickup.require(taskId));
+  /** A pickup records its place on the interval it began — the claim and the re-seat, nowhere else. */
+  async function recordPlace(taskId, workClaimId) {
+    const place = placeFor(taskId);
+    if (place !== null) await linkPlace({ client, identity, taskId, place, evidence: pickup.evidence, workClaimId });
+    return place;
+  }
   // The breaches are the pager's conditions read per call — stateless: a line repeats while
   // its condition holds and vanishes when it clears — under the ONE digest (src/breach-
   // digest.mjs): scoped to this board (a synthetic surface sees the machine), grouped,
   // ordered, budgeted. Attention words the fix bucket for the model's response channel —
   // rejected and verify-failed work, the one thing a session can act on now — so a background
   // rejection reaches it at its next act; the SessionStart hook covers new sessions.
-  if (attention && !config) {
-    throw new OatheToolError('OATHE_ATTENTION_NEEDS_CONFIG',
-      'attention reads the pager, whose thresholds come from config — pass config, or attention:false for a read-only composition');
+  // Every tunable comes from config (src/config.mjs is the ONE place a default is named) —
+  // the tools never shadow one with a literal.
+  if (!config) {
+    throw new OatheToolError('OATHE_TOOLS_NEED_CONFIG',
+      'the tools read every tunable (lease, verify_by, the verifier principal, the pager thresholds) from config — pass an OatheConfig');
   }
   const pager = attention ? new Pager({ client, identity, config }) : null;
   const breachesFor = async (machine) => (await pager.digest()).scoped(machine ? null : workspace);
@@ -216,8 +235,8 @@ export function createOatheTools({
     const more = pullPointer('attention', fix.more);
     return more ? [...lines, more] : lines;
   };
-  const leaseHours = config?.get('leaseHours') ?? 4;
-  const verifyByHours = config?.get('verifyByHours') ?? 24;
+  const leaseHours = config.get('leaseHours');
+  const verifyByHours = config.get('verifyByHours');
   const actor = executionActor
     ?? (process.env.OATHE_EXECUTION_ATTEMPT_ID
       ? `attempt:${process.env.OATHE_EXECUTION_ATTEMPT_ID}`
@@ -274,10 +293,13 @@ export function createOatheTools({
     const verdict = verdictRows[0]?.verdict ?? null;
     if (verdict === null || !verdict.startsWith('rejected')) return null; // the verdict contract's own word (verifier.mjs VERDICTS)
     const { rows: vtask } = await client.query(
-      "SELECT created_at FROM cell.task WHERE org_id = $1 AND task_id = 'verify:' || $2", [orgId, taskId]);
+      `SELECT created_at FROM cell.task WHERE org_id = $1 AND task_id = '${VERIFICATION_PREFIX}' || $2`, [orgId, taskId]);
+    // The holder's own words: progress and completions — never an observation (the verifier
+    // binding, the place, a spawn) and never a trace link.
     const { rows: priorWords } = await client.query(
       `SELECT proposition FROM cell.agent_statement s
-        WHERE s.org_id = $1 AND s.task_id = $2 AND NOT ${isTraceSubjectSql('s.subject_ref')}
+        WHERE s.org_id = $1 AND s.task_id = $2 AND s.statement_type IN ('progress', 'completion')
+          AND NOT ${isTraceSubjectSql('s.subject_ref')}
         ORDER BY s.asserted_at DESC LIMIT 3`, [orgId, taskId]);
     // The task's trace links — the same read the verifier judges from (taskTraceLinksSql),
     // shaped here to a couple of pointers.
@@ -320,6 +342,7 @@ export function createOatheTools({
       `SELECT contract_ref, to_char(ownership_valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI"Z"') AS lease_until
          FROM cell.work_claim WHERE work_claim_id = $1`, [workClaimId]);
     const verifier = await bindVerifier(taskId, workClaimId);
+    await recordPlace(taskId, workClaimId); // a re-seat is a pickup: it says where the work lives now
     return {
       work_claim_id: workClaimId, contract_ref: seated[0].contract_ref, lease: `until ${seated[0].lease_until}`,
       verifier, rejection: await rejectionBundle(taskId),
@@ -358,13 +381,15 @@ export function createOatheTools({
     async oathe_claim({ task_id, objective }) {
       const { rows: existing } = await client.query(
         'SELECT origin FROM cell.task WHERE org_id = $1 AND task_id = $2', [orgId, task_id]);
-      // R-HOME-BOARD: an existing task keeps the home its ledger already decided; a homeless
-      // task is ADOPTED by the first real folder that claims it; a synthetic surface neither
-      // stamps nor adopts — its mints and re-claims stay homeless.
-      const priorHome = existing.length > 0 ? await homeBoard.of(task_id) : null;
-      const home = priorHome ?? (synthetic ? null : workspace);
-      const adopted = existing.length > 0 && priorHome === null && home !== null;
-      let contractRef = String(new ContractRef({ workspace: home, orgId, taskId: task_id }));
+      // The ledger's own field records THIS claim's folder (or `none` for an app pickup) — the
+      // place statement recorded at the pickup is the read, and the last pickup is where the
+      // work resides (ruling 2026-09-05: no inheritance, no adoption, no rank). A surface that
+      // names no place is refused here, before anything is written.
+      const place = placeFor(task_id);
+      // The ledger slot: a folder pickup's ref; `none` for an app pickup; a system task carries the
+      // seat's own workspace (null from a synthetic dir — never a minted id).
+      const slot = place === null ? workspace : (place.isFolder ? place.ref : null);
+      let contractRef = String(new ContractRef({ workspace: slot, orgId, taskId: task_id }));
       let rejection = null; // the recovery bundle, set on a reclaim of rejected work
       if (existing.length === 0) {
         if (!objective) {
@@ -396,22 +421,27 @@ export function createOatheTools({
         const seat = await reseat(task_id, prior);
         ({ work_claim_id: workClaimId, contract_ref: contractRef, lease, verifier, rejection } = seat);
       } else {
-        await client.query(
-          `SELECT cell.claim_work($1, $2, $3, NULL, NULL, $4, $5, 'exclusive',
-                  now() + make_interval(hours => $6), $7, now(), $8)`,
-          [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
+        try {
+          await client.query(
+            `SELECT cell.claim_work($1, $2, $3, NULL, NULL, $4, $5, 'exclusive',
+                    now() + make_interval(hours => $6), $7, now(), $8)`,
+            [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
+        } catch (e) {
+          // The substrate's own typed vocabulary (FC003 WORK_ALREADY_CLAIMED, 002_claim.sql) —
+          // surfaced as a typed refusal, never a raw pg error a caller sniffs words from.
+          if (/^WORK_ALREADY_CLAIMED:/.test(String(e?.message ?? ''))) {
+            throw new OatheToolError('OATHE_WORK_ALREADY_CLAIMED', String(e.message), { task_id });
+          }
+          throw e;
+        }
         verifier = await bindVerifier(task_id, workClaimId);
+        await recordPlace(task_id, workClaimId);
       }
       const effective = ContractRef.parse(contractRef);
+      const where = place === null ? 'a judgment lives where its work does' : `it lives at ${place}`;
       const note = existing.length === 0
-        ? (effective.isHomeless
-          ? "task minted HOMELESS from a synthetic workspace — the first real folder to claim it adopts it; plan_status is honestly 'unknown'"
-          : "task minted at claim — plan_status is honestly 'unknown'; a real cell pages you at verify_by")
-        : adopted
-          ? `existing homeless task claimed and ADOPTED onto this folder's board (${effective.workspace})`
-          : effective.isHomeless
-            ? 'existing homeless task claimed — still homeless (a synthetic surface never adopts)'
-            : 'existing task claimed';
+        ? `task minted at claim — ${where}; plan_status is honestly 'unknown'; a real cell pages you at verify_by`
+        : `existing task picked up — ${where}`;
       return {
         claimed: true,
         task_id,
@@ -419,6 +449,7 @@ export function createOatheTools({
         work_claim_id: workClaimId,
         contract_ref: contractRef,
         home: effective.workspace,
+        place: place === null ? null : String(place),
         lease,
         verifier,
         note,
@@ -429,15 +460,16 @@ export function createOatheTools({
       // R-BOARD-SCOPE: scope is a per-surface fact. A synthetic workspace has no folder to
       // lens through, so it serves the full board whatever the caller asked.
       const full = all || synthetic;
-      // R-HOME-BOARD: a task's board is its HOME (the home rule, src/home.mjs, projected into
-      // SQL once). The scoped board = tasks homed here + homeless tasks (unclaimed or minted
-      // from a synthetic surface — visible everywhere so a real folder can adopt them).
-      const filter = full ? '' : 'AND (latest.home = $2 OR latest.home IS NULL)';
-      const params = full ? [orgId] : [orgId, workspace];
+      // Where work lives (ruling 2026-09-05, src/home.mjs): a folder's board = every task some
+      // claim picked up HERE (any interval — visibility is history) + every UNCLAIMED task (no
+      // claim yet: open work anyone may pick up, visible everywhere). Each row carries its
+      // RESIDENCE (the last pickup) and every place.
+      const filter = full ? '' : 'AND ($2 = ANY(latest.places) OR cardinality(latest.places) = 0)';
+      const params = full ? [orgId] : [orgId, String(Place.workspace(workspace))];
       // ONE row per task: the latest claim in view wins (a task reclaimed after a yield is one
       // task, not a history lesson — statements carry the history).
-      const { rows } = await client.query(
-        `SELECT task_id, objective, origin, state, principal_id, contract_ref, home, settled_at,
+      const { rows: raw } = await client.query(
+        `SELECT task_id, objective, origin, state, principal_id, contract_ref, place, place_evidence, places, settled_at,
                 lease_until, last_progress, last_progress_at, last_word_at, trace_path, trace_session_id, rejected_after,
                 verifying, parent, parent_objective FROM (
            SELECT DISTINCT ON (t.task_id)
@@ -447,7 +479,7 @@ export function createOatheTools({
                   -- and whether a judge holds it right now (UX rule 22: one spelling with the pager).
                   ${rejectedIntervalSql({ claim: 'w' })} AS rejected_after,
                   (j.claimed_at IS NOT NULL) AS verifying,
-                  ${HomeBoard.homeSql('t')} AS home,
+                  res.place, res.place_evidence, ${HomeBoard.placesSql('t')} AS places,
                   w.settled_at,
                   to_char(w.ownership_valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI\"Z\"') AS lease_until,
                   p.proposition AS last_progress,
@@ -459,14 +491,17 @@ export function createOatheTools({
              LEFT JOIN LATERAL (${latestProgressSql({ task: 't', claim: 'w' })}) p ON true
              LEFT JOIN LATERAL (${latestTracePathSql({ task: 't' })}) tr ON true
              LEFT JOIN LATERAL (${spawnParentSql({ task: 't' })}) sp ON true
-             LEFT JOIN LATERAL (${judgeHoldSql({ task: 't', asOf: 'now()' })}) j ON true
+             LEFT JOIN LATERAL (${holdSql({ kind: 'verify', orgId: 't.org_id', subject: 't.task_id', asOf: 'now()' })}) j ON true
+             LEFT JOIN LATERAL (${HomeBoard.residenceSql('t')}) res ON true
             WHERE t.org_id = $1
             ORDER BY t.task_id, w.claimed_at DESC NULLS LAST
          ) latest WHERE true ${filter} ORDER BY created_at DESC`,
         params);
+      // The residence's evidence back to facts: the app it was spoken from, the device.
+      const rows = raw.map(({ place_evidence, ...row }) => ({ ...row, ...PlaceEvidence.parse(place_evidence).row() }));
       // Lineage (UX rule 21): a child never surfaces top-level while its parent is in view —
       // it is counted on the parent's row. A child whose parent is off the board (settled,
-      // or homed elsewhere) stands on its own.
+      // or residing elsewhere) stands on its own.
       const inView = new Set(rows.filter((r) => !r.settled_at).map((r) => r.task_id));
       const childrenOf = new Map();
       for (const row of rows) {
@@ -542,9 +577,9 @@ export function createOatheTools({
       if (!why || !String(why).trim()) {
         throw new OatheToolError('OATHE_AMEND_WHY_REQUIRED', 'an amendment records WHY the definition moved', { task_id });
       }
-      if (isVerificationTask(task_id)) {
+      if (systemTaskOf(task_id) !== null) {
         throw new OatheToolError('OATHE_AMEND_VERIFY_TASK',
-          `'${task_id}' is a verification task — its objective is generated (src/plans.mjs), never amended`, { task_id });
+          `'${task_id}' is a system task (${systemTaskOf(task_id).kind}) — its objective is generated (src/plans.mjs), never amended`, { task_id });
       }
       const { rows: authority } = await client.query(
         'SELECT seats FROM cell.acceptance_authority WHERE org_id = $1', [orgId]);
@@ -556,7 +591,7 @@ export function createOatheTools({
         throw new OatheToolError('OATHE_AMEND_UNAUTHORIZED',
           `'${principalId}' is not in the seats roster [${authority[0].seats.join(', ')}] — an amendment is signed by the acceptance seat`, { task_id });
       }
-      if (principalId === (config?.get('verifierPrincipal') ?? 'oathe-verifier')) {
+      if (principalId === config.get('verifierPrincipal')) {
         throw new OatheToolError('OATHE_AMEND_UNAUTHORIZED',
           `'${principalId}' is the verifier — the judge must not move the bar it judges`, { task_id });
       }
@@ -646,14 +681,19 @@ export function createOatheTools({
       //    carrying the engine assigned at claim time. A verification task does not mint a
       //    verifier for ITSELF — that regress ends at the deterministic bar.
       let verificationTask = null;
-      if (!isVerificationTask(task_id)) {
+      if (systemTaskOf(task_id) === null) { // a system task (a judgment, an update) settles at the deterministic bar — it mints no judge of its own
         const { rows: engineRows } = await client.query(
           `SELECT subject_ref FROM cell.agent_statement
             WHERE org_id = $1 AND work_claim_id = $2 AND subject_ref LIKE 'verifier:%'
             ORDER BY asserted_at DESC LIMIT 1`,
           [orgId, workClaimId]);
-        const engine = engineRows[0]?.subject_ref.slice('verifier:'.length)
-          ?? config.get('verifier');
+        // Every claim binds its verifier at the pickup (bindVerifier, on claim and reseat) — a
+        // claim without the binding is not one the tools made; refuse, never fall back.
+        if (engineRows.length === 0) {
+          throw new OatheToolError('OATHE_VERIFIER_UNBOUND',
+            `'${task_id}' carries no verifier binding on its claim — not a claim this oathe made; claim it again through oathe_claim`, { task_id, work_claim_id: workClaimId });
+        }
+        const engine = engineRows[0].subject_ref.slice('verifier:'.length);
         verificationTask = verificationTaskId(task_id);
         await client.query(
           `INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
@@ -672,19 +712,21 @@ export function createOatheTools({
         note: verificationTask
           ? `completion ASSERTED, not settled. Verification task '${verificationTask}' is on the `
             + 'board. A DIFFERENT principal must verify (FC010 — you cannot verify your own work, '
-            + 'including via your own sub-agents): run `oathe verify` from any terminal, or leave '
+            + 'including via your own sub-agents). Locally this call WAITS for the verdict and returns it '
+            + '(progress ticks ride the call; Claude Code moves a call past two minutes to a background task '
+            + 'and delivers the verdict as its notification). Otherwise run `oathe verify` from any terminal, or leave '
             + 'it for another session to claim.'
           : 'completion ASSERTED, not settled — the deterministic acceptance bar settles verification tasks',
       };
     },
 
-    async oathe_verify({ task_id, engine }) {
+    async oathe_verify({ task_id, engine }, { progress } = {}) {
       if (!verifier) {
         throw new OatheToolError('OATHE_VERIFY_UNAVAILABLE',
           'the verification lane is not wired into this server — run `oathe verify` from a '
           + 'terminal instead; verification cannot pretend', { task_id });
       }
-      return verifier({ taskId: task_id, engine });
+      return verifier({ taskId: task_id, engine, ...(progress && { progress }) });
     },
 
     async oathe_pickup({ task_id }) {
@@ -726,8 +768,8 @@ export function createOatheTools({
   // Attention rides EVERY response, activation or not: the act succeeded — a failing
   // attention read is reported beside it (attention_error), never converted into a tool error.
   if (pager) {
-    toolMap = Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args) => {
-      const out = await fn(args);
+    toolMap = Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args, ctx = {}) => {
+      const out = await fn(args, ctx);
       try {
         const lines = await attentionLines();
         if (lines.length > 0) out.attention = lines;
@@ -792,23 +834,28 @@ export function createOatheTools({
     }
     return attributionWhy({ surface: speaker.surface, walked: true }); // hookless by design: admitted, disclosed
   };
-  return Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args) => {
+  // `ctx` is the transport's per-call context: `progress(message)` when the client asked for
+  // progress on this request (connection.mjs) — the blocking done and verify hand it to the seam.
+  return Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args, ctx = {}) => {
     const admittedWhy = name === 'oathe_claim' ? gate() : null;
     // Lineage is decided BEFORE a claim lands (a refused parent leaves nothing behind) and
     // recorded right after it, on the parent's claim — the `spawn:<child>` observation.
     const spawn = name === 'oathe_claim'
       ? await spawnParentFor({ client, identity, session: speaker.session, taskId: args.task_id, parent: args.parent })
       : null;
-    const out = await fn(args);
+    const out = await fn(args, ctx);
     if (WIRE_KINDS[name]) {
-      if (args?.task_id && LINKABLE.has(name)) {
-        // A link that waits, or one that cannot exist (an admitted session-less surface), is
-        // disclosed on the act — never assumed, never silent.
+      // Attribution rides the act (SPEAKER primitive): the session's transcript as evidence — a
+      // link that waits, or one that cannot exist on an admitted session-less surface, is
+      // disclosed, never assumed, never silent. (The PLACE is the pickup's fact, recorded by
+      // the claim and the re-seat themselves — ruling 2026-09-05.)
+      const attribute = async () => {
         const link = speaker.session
           ? await linkTrace({ client, identity, taskId: args.task_id, session: speaker.session })
           : { linked: false, why: admittedWhy ?? attributionWhy({ surface: speaker.surface, walked: speaker.walked !== false }) };
         if (link.why) out.trace_link = link;
-      }
+      };
+      if (args?.task_id && LINKABLE.has(name)) await attribute();
       if (name === 'oathe_claim') {
         if (spawn) {
           await linkSpawn({
@@ -825,7 +872,7 @@ export function createOatheTools({
       // whatever happens — a seam failure is disclosed, and the pager pages the miss.
       if (name === 'oathe_done' && verifier) {
         try {
-          const outcome = await verifier({ taskId: args.task_id });
+          const outcome = await verifier({ taskId: args.task_id, ...(ctx.progress && { progress: ctx.progress }) });
           out.verification = outcome?.verdict === 'rejected'
             ? { ...outcome, your_options: REJECTION_FORK }
             : outcome;
@@ -845,6 +892,7 @@ export function createOatheTools({
         if (prior?.rejected && prior.origin === 'reopened' && prior.principal_id === principalId) {
           const seat = await reseat(args.task_id, prior);
           Object.assign(out, seatFields(seat), { judged_claim_id: prior.work_claim_id, work_claim_id: seat.work_claim_id });
+          if (LINKABLE.has(name)) await attribute(); // the NEW seat carries the session's link in the same act
         }
       }
       out.spoken_from = {
@@ -922,14 +970,14 @@ const okText = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }
 const errText = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }], isError: true });
 
 /** One tools/call: a throwing tool becomes a TYPED tool error — never a bland success. */
-export async function handleToolCall(params, tools) {
+export async function handleToolCall(params, tools, ctx = {}) {
   const name = params?.name;
   const fn = tools[name];
   if (typeof fn !== 'function') {
     return errText({ status: 'ERROR', error_type: 'unknown_tool', reason: `no such oathe tool '${name}'` });
   }
   try {
-    return okText(await fn(params?.arguments || {}));
+    return okText(await fn(params?.arguments || {}, ctx));
   } catch (e) {
     return errText({
       status: 'ERROR',
@@ -950,15 +998,15 @@ export async function handleToolCall(params, tools) {
  */
 export function lazyTools(loader, { names = makeToolDefs().map((t) => t.name) } = {}) {
   // No memo here: deduplication (and invalidation) is the LOADER's job — one cache, one owner.
-  return Object.fromEntries(names.map((name) => [name, async (args) => {
+  return Object.fromEntries(names.map((name) => [name, async (args, ctx = {}) => {
     const context = await loader();
-    return context.tools[name](args);
+    return context.tools[name](args, ctx);
   }]));
 }
 
 /** The pure JSON-RPC dispatcher — a response object, or null for a notification. `version`
  *  is the package version the server names at initialize (the connection reads it once). */
-export async function dispatch(msg, { tools, version }) {
+export async function dispatch(msg, { tools, version, progress = null }) {
   const { id, method, params } = msg || {};
   const isNotification = id === undefined || id === null;
   if (method === 'notifications/initialized' || method === 'initialized') return null;
@@ -973,7 +1021,7 @@ export async function dispatch(msg, { tools, version }) {
       case 'tools/list':
         return { tools: makeToolDefs() };
       case 'tools/call':
-        return handleToolCall(params, tools);
+        return handleToolCall(params, tools, progress ? { progress } : {});
       case 'ping':
         return {};
       default:

@@ -24,7 +24,7 @@ import { OatheConfig } from '../src/config.mjs';
 import { WorkspaceRegistry } from '../src/registry.mjs';
 import { standardPlan } from '../src/plans.mjs';
 import { StandaloneRuntimeProvider } from '../src/runtime/provider.mjs';
-import { linkClaudeTrace } from './helpers.mjs';
+import { linkClaudeTrace, seedClaim as seedClaimShared } from './helpers.mjs';
 
 const paths = buildPaths({});
 const SCRATCH_DB = `oathe_pager_test_${process.pid}`;
@@ -61,18 +61,9 @@ async function assertDone(taskId, objective) {
 }
 
 /** A claim taken `hoursAgo` hours ago by `principal`, straight through the governed verb. */
-async function seedClaim(taskId, { hoursAgo, principal = OPERATOR, leaseHours = 4, workspace = WS }) {
-  await substrate.query(
-    `INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                            verify_by, claim_mode, created_at)
-     VALUES ('oathe', $1, 'founder', $2, 'minted_at_claim', '{"plan_status":"unknown"}'::jsonb,
-             now() + interval '30 days', 'exclusive', now() - make_interval(hours => $3))`,
-    [taskId, `seeded ${taskId}`, hoursAgo]);
-  await substrate.query(
-    `SELECT cell.claim_work('oathe', $1, gen_random_uuid(), NULL, NULL, $2, 'founder', 'exclusive',
-            now() - make_interval(hours => $3) + make_interval(hours => $4), $5,
-            now() - make_interval(hours => $3), gen_random_uuid())`,
-    [taskId, principal, hoursAgo, leaseHours, `workspace:${workspace};contract:oathe/${taskId}@v1`]);
+/** An OLD claim: made hoursAgo, its lease counted from the claim (so it may be gone) — the one shared seed, in pager terms. */
+function seedClaim(taskId, { hoursAgo, principal = OPERATOR, leaseHours = 4, workspace = WS }) {
+  return seedClaimShared({ substrate, taskId, workspace, principal, claimedAgo: `${hoursAgo} hours`, lease: `${leaseHours} hours`, leaseFrom: 'claim', verifyBy: '30 days' });
 }
 
 const ids = (rows, kind) => rows.filter((r) => r.kind === kind).map((r) => r.task_id);
@@ -212,25 +203,33 @@ test('condition-based: two renders agree and nothing is written anywhere', async
   assert.deepEqual(afterwards, before, 'no read-state, no cursor file');
 });
 
-test('homes are shown as folders through the registry; a homeless task says so', async () => {
+test('where a breach lives is its RESIDENCE: a folder through the registry, an app by the surface\'s display name (there is no homeless)', async () => {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-pager-reg-')));
   const registry = new WorkspaceRegistry({ registryPath: path.join(home, 'workspaces.json') });
   const folder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-pager-folder-')));
   const { workspaceRef } = await import('../src/workspace.mjs');
   await registry.register({ cwd: folder, source: 'test' });
   await seedClaim('homed-1', { hoursAgo: 72, workspace: workspaceRef(folder) });
-  const synthetic = createOatheTools({ client: substrate, identity: IDENTITY, workspace: 'ws-synthetic0000', config: scratchConfig(), synthetic: true });
-  const minted = await synthetic.oathe_claim({ task_id: 'homeless-1', objective: 'minted from ChatGPT' });
-  await linkTrace('homeless-1', minted.work_claim_id);
-  await synthetic.oathe_done({ task_id: 'homeless-1', proposition: 'done', evidence_ref: 'x' });
+  // A ChatGPT desktop speaker — the wrapper records the app place.
+  const chatgpt = createOatheTools({
+    client: substrate, identity: IDENTITY, workspace: 'ws-synthetic0000', config: scratchConfig(), synthetic: true, dir: '/tmp/g-p-pager',
+    activation: { register: async () => ({}), activate: async () => ({}) },
+    speaker: { surface: 'chatgpt', app: { bundle: '/Applications/ChatGPT.app', pid: 4242 }, session: null, walked: true, client: 'codex', pid: 4242, device: null },
+  });
+  const spoken = await chatgpt.oathe_claim({ task_id: 'in-the-app-1', objective: 'spoken from ChatGPT' });
+  await linkTrace('in-the-app-1', spoken.work_claim_id);
+  await chatgpt.oathe_done({ task_id: 'in-the-app-1', proposition: 'done', evidence_ref: 'x' });
   const rows = await pager({ at: hoursFromNow(48), registry }).breaches();
-  assert.equal(rows.find((r) => r.task_id === 'homed-1')?.home, folder);
-  assert.equal(rows.find((r) => r.task_id === 'homeless-1')?.home, 'homeless');
-  assert.equal(rows.find((r) => r.task_id === 'quiet-2')?.home, WS, 'unregistered refs stay raw');
-  // The raw ref rides beside the label: a digest scopes on the ref, a person reads the folder.
-  assert.equal(rows.find((r) => r.task_id === 'homed-1')?.home_ref, workspaceRef(folder));
-  assert.equal(rows.find((r) => r.task_id === 'homeless-1')?.home_ref, null);
-  assert.equal(rows.find((r) => r.task_id === 'quiet-2')?.home_ref, WS);
+  const by = (id) => rows.find((r) => r.task_id === id);
+  assert.equal(by('homed-1')?.home, folder);
+  assert.equal(by('in-the-app-1')?.home, 'ChatGPT', 'an app residence reads as the surface\'s display name — the adapter\'s word');
+  assert.equal(by('quiet-2')?.home, WS, 'unregistered refs stay raw');
+  // Beside the label: the place itself, the folder ref a digest scopes on, and every place that picked it up.
+  assert.deepEqual([by('homed-1')?.place, by('homed-1')?.home_ref, by('homed-1')?.places], [`workspace:${workspaceRef(folder)}`, workspaceRef(folder), [`workspace:${workspaceRef(folder)}`]]);
+  assert.deepEqual([by('in-the-app-1')?.place, by('in-the-app-1')?.home_ref, by('in-the-app-1')?.place_app, by('in-the-app-1')?.place_dir], ['app:chatgpt', null, '/Applications/ChatGPT.app', '/tmp/g-p-pager']);
+  assert.equal(by('homed-1')?.place_dir, null, 'a folder pickup carries no project dir');
+  assert.equal(by('quiet-2')?.home_ref, WS);
+  assert.ok(rows.every((r) => r.home !== 'homeless' && r.home !== null), 'no breach wears a third word');
 });
 
 test('ordering: SHARPEST first — rejected/stalled work needs a person; never-verified drains itself (done auto-dispatches). Oldest first within a kind', async () => {
@@ -483,30 +482,30 @@ test('UX rule 19: attention is budgeted — a flood of rejections on this board 
     `a line is the kind word, the task, the verdict, the act: ${lines[0]}`);
 });
 
-test('UX rule 22: judgesInFlight is THE ONE MAP — a judge holding the verify claim is `verifying` on the board\'s asserted row and busy on any breach, from the same SQL; released, both clear together', async () => {
+test('UX rule 22: inFlight is THE ONE MAP — a judge holding the verify claim is `verifying` on the board\'s asserted row and busy on any breach, from the same SQL; released, both clear together', async () => {
   await assertDone('agree-1', 'judged by one map');
   const bench = createOatheTools({
     client: substrate, identity: { orgId: 'oathe', principalId: VERIFIER, department: 'verification' }, workspace: WS, config: scratchConfig(),
   });
   const asOf = () => new Date().toISOString();
-  assert.ok(!(await pager().judgesInFlight(asOf())).has('agree-1'), 'no judge yet');
+  assert.ok(!(await pager().inFlight(asOf())).verify.has('agree-1'), 'no judge yet');
   assert.equal((await tools.oathe_board({})).sections.asserted.find((r) => r.task_id === 'agree-1').judgment, 'awaiting');
   await bench.oathe_claim({ task_id: 'verify:agree-1' });
-  const held = await pager().judgesInFlight(asOf());
+  const held = (await pager().inFlight(asOf())).verify;
   assert.ok(held.has('agree-1'), 'the judge\'s hold is in the map');
   assert.match(held.get('agree-1'), /^\d{4}-\d\d-\d\dT\d\d:\d\dZ$/, 'the judgment\'s start, UTC');
   assert.equal((await tools.oathe_board({})).sections.asserted.find((r) => r.task_id === 'agree-1').judgment, 'verifying',
-    'the board says what the map says — one SQL spelling (judgeHoldSql), never two computations');
+    'the board says what the map says — one SQL spelling (holdSql), never two computations');
   assert.ok(!(await pager().breaches()).some((r) => r.task_id === 'agree-1'), 'a healthy hold inside verify_by breaches nothing');
   // Past the hold's lease the judge is dead, not running: the map drops it and the assertion
   // pages overdue — un-busy — with its own clock (the same clock the frame's judged row would
   // have lost; one map, both surfaces agree).
   const at48 = hoursFromNow(48);
-  assert.ok(!(await pager({ at: at48 }).judgesInFlight(at48.toISOString())).has('agree-1'), 'a hold past its lease is a dead judge');
+  assert.ok(!(await pager({ at: at48 }).inFlight(at48.toISOString())).verify.has('agree-1'), 'a hold past its lease is a dead judge');
   const late = (await pager({ at: at48 }).breaches()).find((r) => r.task_id === 'agree-1');
   assert.deepEqual([late?.kind, late?.busy], ['overdue', false]);
   await bench.oathe_yield({ task_id: 'verify:agree-1', note: 'released' });
-  assert.ok(!(await pager().judgesInFlight(asOf())).has('agree-1'));
+  assert.ok(!(await pager().inFlight(asOf())).verify.has('agree-1'));
   assert.equal((await tools.oathe_board({})).sections.asserted.find((r) => r.task_id === 'agree-1').judgment, 'awaiting');
 });
 
@@ -521,4 +520,80 @@ test('REDEMPTION silences: rejected → redone → ACCEPTED pages nothing, forev
   assert.equal(out.settled, true);
   const rows = (await pager({ at: hoursFromNow(72) }).breaches()).filter((r) => r.task_id === 'redeemed-1');
   assert.deepEqual(rows, [], 'acceptance is the LAST word — a settled task never pages as rejected again');
+});
+
+// ---------------------------------------------------------------- engine failures have causes; the update is a claim (2026-09-05)
+
+/** A verifier whose engine dies the given way — the stall the pager must word. */
+function dyingVerifier(failure) {
+  return new Verifier({
+    substrate, paths, workspace: WS, config: scratchConfig(), operatorPrincipal: OPERATOR,
+    provider: new StandaloneRuntimeProvider({ paths }),
+    engineRunner: async () => { const e = new Error(failure.message); e.code = failure.code; e.details = failure.details ?? {}; throw e; },
+  });
+}
+
+test('a stall carries WHO died and WHY: engine + cause parsed from the one ref; the detail names the honest gesture per cause — update for outdated, oathe init for missing, R2 otherwise', async () => {
+  for (const [task, failure, expect] of [
+    ['stall-outdated', { code: 'OATHE_ENGINE_FAILED', message: "requires a newer version of Codex", details: { cause: 'outdated' } },
+      (d) => /Codex is out of date/.test(d) && /oathe engine update codex/.test(d) && !/set another verifier/.test(d)],
+    ['stall-missing', { code: 'OATHE_ENGINE_MISSING', message: 'codex: no address was recorded and it is not on PATH' },
+      (d) => /not reachable/.test(d) && /oathe init/.test(d) && !/set another verifier/.test(d)],
+    // An unrecognized death on an engine the config does not point at: the plain retry (R2 unchanged).
+    ['stall-plain', { code: 'OATHE_ENGINE_FAILED', message: 'usage limit reached', details: { cause: null } },
+      (d) => /^retry: \/oathe:verify stall-plain/.test(d) && /usage limit reached/.test(d) && !/out of date|oathe init/.test(d)],
+  ]) {
+    const minted = await tools.oathe_claim({ task_id: task, objective: `engine death: ${task}` });
+    await linkTrace(task, minted.work_claim_id);
+    await tools.oathe_done({ task_id: task, proposition: 'done', evidence_ref: 'x' });
+    const dying = dyingVerifier(failure);
+    try { await assert.rejects(dying.verify({ taskId: task, engine: 'codex' })); } finally { await dying.close(); }
+    const row = (await pager().breaches()).find((b) => b.task_id === task);
+    assert.equal(row?.kind, 'stalled', task);
+    assert.equal(row.engine, 'codex', `${task}: the engine that died rides the row`);
+    assert.equal(row.cause, failure.code === 'OATHE_ENGINE_MISSING' ? 'missing' : failure.details.cause, `${task}: its cause rides too`);
+    assert.ok(expect(row.detail), `${task}: ${row.detail}`);
+  }
+});
+
+test('the update is a claim on update:<engine>: while a seat holds it, every stall that names that engine as outdated is busy "updating Codex" — from the same inFlight map; released, they idle again with their update failure beside the cause', async () => {
+  for (const task of ['upd-a', 'upd-b']) {
+    const minted = await tools.oathe_claim({ task_id: task, objective: `outdated engine: ${task}` });
+    await linkTrace(task, minted.work_claim_id);
+    await tools.oathe_done({ task_id: task, proposition: 'done', evidence_ref: 'x' });
+    const dying = dyingVerifier({ code: 'OATHE_ENGINE_FAILED', message: 'requires a newer version of Codex', details: { cause: 'outdated' } });
+    try { await assert.rejects(dying.verify({ taskId: task, engine: 'codex' })); } finally { await dying.close(); }
+  }
+  // A codex stall of ANOTHER cause is not updating — the update only speaks for what it fixes.
+  const other = await tools.oathe_claim({ task_id: 'upd-other', objective: 'a plain death' });
+  await linkTrace('upd-other', other.work_claim_id);
+  await tools.oathe_done({ task_id: 'upd-other', proposition: 'done', evidence_ref: 'x' });
+  const plain = dyingVerifier({ code: 'OATHE_ENGINE_FAILED', message: 'usage limit', details: { cause: null } });
+  try { await assert.rejects(plain.verify({ taskId: 'upd-other', engine: 'codex' })); } finally { await plain.close(); }
+
+  const bench = createOatheTools({
+    client: substrate, identity: { orgId: 'oathe', principalId: VERIFIER, department: 'verification' }, workspace: WS, config: scratchConfig(),
+  });
+  const asOf = () => new Date().toISOString();
+  assert.ok(!(await pager().inFlight(asOf())).update.has('codex'), 'no update yet');
+  await bench.oathe_claim({ task_id: 'update:codex', objective: 'update the Codex CLI' });
+  const held = await pager().inFlight(asOf());
+  assert.ok(held.update.has('codex'), 'the update hold is in the map, keyed by the engine it updates');
+  const during = await pager().breaches();
+  for (const task of ['upd-a', 'upd-b']) {
+    const row = during.find((b) => b.task_id === task);
+    assert.deepEqual([row.kind, row.busy, row.busy_word], ['stalled', true, 'updating Codex'], `${task}: busy with the update word`);
+    assert.equal(row.at, held.update.get('codex'), 'the row\'s clock is the update\'s start');
+    assert.match(row.busy_detail, /Codex/);
+  }
+  assert.equal(during.find((b) => b.task_id === 'upd-other').busy, false, 'a plain codex death is not updating');
+
+  // The update fails: its statement (the stall grammar\'s sibling) rides the stall detail, and the rows idle again.
+  await bench.oathe_statement({ task_id: 'update:codex', proposition: 'update of codex failed: npm ERR! EACCES', evidence_ref: 'update-failure:codex' });
+  await bench.oathe_yield({ task_id: 'update:codex', note: 'the CLI refused to update' });
+  assert.ok(!(await pager().inFlight(asOf())).update.has('codex'));
+  const after = (await pager().breaches()).find((b) => b.task_id === 'upd-a');
+  assert.equal(after.busy, false);
+  assert.match(after.detail, /Codex is out of date/, 'the cause still leads');
+  assert.match(after.detail, /last update failed: update of codex failed: npm ERR! EACCES/, 'the last update failure rides beside it — the person sees why the click did not help');
 });

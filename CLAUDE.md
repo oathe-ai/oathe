@@ -1,11 +1,3 @@
-<!-- >>> oathe v0.4.5 >>> -->
-## Oathe
-
-This folder has an Oathe board (workspace `ws-6fb73e6686d6`). Claims are speech acts:
-claim before you build, record progress as statements, yield what you cannot finish —
-via the `oathe_*` MCP tools. Where your session opens on this folder, the board loads
-with it; `continue <task>` picks work back up.
-<!-- <<< oathe <<< -->
 
 ## Working on this package (outside the oathe fence — contributors' rules)
 
@@ -26,3 +18,12 @@ with it; `continue <task>` picks work back up.
 - The house rules (no hardcoding — every tunable through `OatheConfig`; fail loud with typed
   refusals; OOP core, thin functional edges, one implementation per concept; TDD red-first)
   and the full technical handoff are in `docs/PRODUCT.md`; the decision trail is the git history.
+
+<!-- >>> oathe v0.4.5 >>> -->
+## Oathe
+
+This folder has an Oathe board (workspace `ws-6fb73e6686d6`). Claims are speech acts:
+claim before you build, record progress as statements, yield what you cannot finish —
+via the `oathe_*` MCP tools. Where your session opens on this folder, the board loads
+with it; `continue <task>` picks work back up.
+<!-- <<< oathe <<< -->

@@ -14,6 +14,8 @@
 // Nothing about a kind is spelled twice: the glass reads the words off the frame, the
 // renderers read them off the rows.
 
+import { Place } from './home.mjs';
+
 /** The resumption's word — a breach that continues into the work, and every working claim. */
 export const CONTINUE_ACT = 'continue ↗';
 export const KINDS = Object.freeze({
@@ -22,20 +24,33 @@ export const KINDS = Object.freeze({
   overdue: Object.freeze({ word: 'never verified', bucket: 'verify', act: 'verify ↗' }),
   quiet: Object.freeze({ word: 'quiet', bucket: 'quiet', act: CONTINUE_ACT }),
 });
+/** The act a stall whose engine is out of date offers instead of retry (ruling 2026-09-05). */
+export const UPDATE_ACT = 'update ↗';
+/** The one sentence an open-app act shows on the row it expands (ruling 2026-09-05): the line is on the clipboard, the app's word is its adapter's. */
+export const OPEN_APP_FLASH = (app) => `command copied — paste in ${app} to continue`;
 /**
- * The in-flight state ON a breach (ruling 2026-09-04): a verifier holds the verify claim, so
- * the judgment is running — the row says so, wears no failure, offers no act (the glass never
- * offers an act it would refuse), and is not counted (nothing to act on). One spelling.
+ * The in-flight states ON a breach — ONE table (rulings 2026-09-04/05): a system claim is held,
+ * so the machine is doing the thing the row would otherwise ask for. `verify`: a judge holds
+ * `verify:<task>`. `update`: the machine holds `update:<engine>` and the row's stall names that
+ * engine as out of date. Either way the row says so, wears no failure, offers no act (the glass
+ * never offers an act it would refuse), and is not counted (nothing to act on). The pager stamps
+ * a row's `busy_word`/`busy_detail` from here; the digest and the glass render them and add nothing.
  */
-export const BUSY = Object.freeze({ word: 'verifying', detail: 'a verifier holds it — the verdict lands on the glass' });
+export const IN_FLIGHT = Object.freeze({
+  verify: Object.freeze({ word: 'verifying', detail: 'a verifier holds it — the verdict lands on the glass' }),
+  update: Object.freeze({
+    word: (name) => `updating ${name}`,
+    detail: (name) => `${name} is updating — the judgment re-runs when it lands`,
+  }),
+});
 /**
  * The judgment an ASSERTED claim awaits (ruling 2026-09-04: nothing is invisible between done
- * and verdict): `verifying` while a judge holds the verify claim — the same word BUSY speaks,
+ * and verdict): `verifying` while a judge holds the verify claim — IN_FLIGHT.verify's word,
  * spelled once, with the spinner — and `awaiting` until one does. Keyed by the board's
  * `judgment`; every surface renders these words and adds nothing.
  */
 export const JUDGMENT = Object.freeze({
-  verifying: Object.freeze({ word: BUSY.word, busy: true }),
+  verifying: Object.freeze({ word: IN_FLIGHT.verify.word, busy: true }),
   awaiting: Object.freeze({ word: 'awaiting verdict', busy: false }),
 });
 /** The push buckets, in the order the one ambient line speaks them. */
@@ -106,11 +121,21 @@ function pushLine(counts) {
 }
 
 /** A member's word: the kind's, unless its judgment is in flight. */
-const wordOf = (breach) => (breach.busy ? BUSY.word : KINDS[breach.kind].word);
+// A busy row wears the in-flight words the pager stamped (IN_FLIGHT); a busy row without them is
+// not a row the pager made — refused, never defaulted (zero legacy, 2026-09-05).
+const busyWords = (breach) => {
+  if (typeof breach.busy_word !== 'string' || typeof breach.busy_detail !== 'string') {
+    throw new DigestError('OATHE_DIGEST_BUSY_UNWORDED', `busy breach '${breach.task_id}' carries no busy_word/busy_detail — the pager stamps both`, { task_id: breach.task_id });
+  }
+  return { word: breach.busy_word, detail: breach.busy_detail };
+};
+const busyWord = (breach) => busyWords(breach).word;
+const busyDetail = (breach) => busyWords(breach).detail;
+const wordOf = (breach) => (breach.busy ? busyWord(breach) : KINDS[breach.kind].word);
 
 function single(breach) {
   return breach.busy
-    ? { ...breach, busy: true, kind_word: BUSY.word, detail: BUSY.detail, group: null }
+    ? { ...breach, busy: true, kind_word: busyWord(breach), detail: busyDetail(breach), group: null }
     : { ...breach, busy: false, kind_word: KINDS[breach.kind].word, group: null };
 }
 
@@ -133,8 +158,8 @@ function groupRow(own, children) {
   const more = children.length - shown.length;
   const lead = own ?? members[0];
   const detail = [
-    ...(own ? [own.busy ? BUSY.detail : own.detail] : []),
-    ...shown.map((child) => `${child.task_id} · ${wordOf(child)} · ${child.busy ? BUSY.detail : child.detail}`),
+    ...(own ? [own.busy ? busyDetail(own) : own.detail] : []),
+    ...shown.map((child) => `${child.task_id} · ${wordOf(child)} · ${child.busy ? busyDetail(child) : child.detail}`),
     ...(more > 0 ? [`+${more} more`] : []),
   ].join('\n');
   // The one act a verify-led group offers targets its oldest child whose judgment is NOT in
@@ -145,12 +170,14 @@ function groupRow(own, children) {
     kind_word: [
       ...(own ? [wordOf(own)] : []),
       countWords(byKind),
-      ...(busyChildren > 0 ? [`${busyChildren} ${BUSY.word}`] : []),
+      ...(busyChildren > 0 ? [`${busyChildren} ${IN_FLIGHT.verify.word}`] : []),
     ].filter(Boolean).join(' · '),
     task_id: own ? own.task_id : children[0].parent,
     objective: own ? own.objective : children[0].parent_objective,
     home: lead.home,
     home_ref: lead.home_ref,
+    place: lead.place ?? null,
+    places: lead.places ?? [],
     detail,
     at: members[0].at,
     busy: own?.busy === true,
@@ -206,9 +233,12 @@ export class BreachDigest {
   }
 
   /** This board's digest — the facts homed on `homeRef`; `null` is the whole machine (this). */
-  scoped(homeRef) {
-    if (homeRef === null) return this;
-    return new BreachDigest({ breaches: this.#breaches.filter((breach) => breach.home_ref === homeRef) });
+  scoped(workspaceRef) {
+    if (workspaceRef === null) return this;
+    // A breach belongs to EVERY folder that ever picked its task up (ruling 2026-09-05) — the
+    // row's `places` — never only to where it resides now.
+    const here = String(Place.workspace(workspaceRef));
+    return new BreachDigest({ breaches: this.#breaches.filter((breach) => (breach.places ?? []).includes(here)) });
   }
 
   /** The digest over the rows `keep` accepts — a group is kept or dropped whole. */

@@ -48,37 +48,71 @@ export class CodexHarness extends Harness {
   static surfaces = Object.freeze({
     ownsExec: (exec) => path.basename(exec) === 'codex',
     name: ({ appBundle }) => (appBundle !== null && path.basename(appBundle) === 'ChatGPT.app' ? 'chatgpt' : 'codex'),
+    // The word each surface wears where work lives, and which of them is an app the glass
+    // resumes INTO by opening it (ruling 2026-09-05): the desktop app has no folder — it IS
+    // the place; a codex terminal is a folder's session.
+    display: Object.freeze({ codex: 'Codex', chatgpt: 'ChatGPT' }),
+    resumable: Object.freeze(['chatgpt']),
   });
   // Codex reads its global instructions before any work, in EVERY session — the one channel
   // that reaches a ChatGPT-desktop session, whose staging cwd carries no folder fence. Its
   // rule (docs, agents-md): AGENTS.override.md if it exists, otherwise AGENTS.md.
   static globalContextFiles = Object.freeze(['AGENTS.override.md', 'AGENTS.md']);
-  // The ChatGPT desktop app runs every conversation from a directory it stages under the
-  // config home — not a project folder. Sessions there serve the FULL board and are never
-  // activated (R-BOARD-SCOPE); this member is the only place the staging path is spelled.
-  static syntheticWorkspaceParent = '.chatgpt-projects';
+  // The ChatGPT desktop app runs every conversation from a directory it stages — not a project
+  // folder — and it stages TWO ways (measured): a ChatGPT project under the config home
+  // (`.chatgpt-projects/g-p-<id>`), and a "Codex work" conversation (rollout originator
+  // codex_work_desktop, codex 0.153.4, 2026-09-06) under ~/Documents/Codex/<date>/<slug> with
+  // outputs/ and work/ inside. Sessions there serve the FULL board and are never activated
+  // (R-BOARD-SCOPE); these members are the only place the staging paths are spelled. A claim from
+  // one is picked up by the app and says so in its place statement (the dir rides as evidence).
+  // `originators` names the desktop in a rollout's session_meta so doctor can say when the app
+  // moves again (traces.stagingDrift) — the day this list is stale, doctor says DRIFT, not a
+  // claim silently picked up as a folder (B1, launch/2026-09-06-0.4.5-release-review.md).
+  static synthetic = Object.freeze({
+    dirs: (home) => [path.join(CodexHarness.configHomeFor(home), '.chatgpt-projects'), path.join(home, 'Documents', 'Codex')],
+    originators: Object.freeze(['codex_work_desktop']),
+  });
 
   static isSyntheticWorkspaceDir({ dir, home }) {
-    const parent = realpathOr(path.join(this.configHomeFor(home), this.syntheticWorkspaceParent));
-    return realpathOr(dir).startsWith(`${parent}${path.sep}`);
+    const real = realpathOr(dir);
+    return this.synthetic.dirs(home).some((parent) => real.startsWith(`${realpathOr(parent)}${path.sep}`));
   }
 
   // The CLI registers through hooks; the ChatGPT desktop app embeds codex and runs NONE —
   // its claims are admitted on discovery (the measured app bundle names the surface).
   static attestation = Object.freeze({ codex: 'hooks', chatgpt: 'hookless' });
-  static install = Object.freeze({ npm: '@openai/codex', bin: 'codex', versionArgs: ['--version'] });
+  // The blocking exchange declared to the transport (ruling 2026-09-05): codex — and the
+  // ChatGPT desktop app, which reads this same config.toml — caps a tool call at
+  // `tool_timeout_sec` (default 60, codex/mcp.md:178; no documented maximum), and a `done`
+  // waits minutes for its verdict. `codex mcp add` has no timeout flag and a re-add drops a
+  // hand-written key (probed live, codex-cli 0.150.0), so onboard STAMPS the line into the
+  // stanza after every add and the proof carries it.
+  static mcpToolTimeout = Object.freeze({ key: 'tool_timeout_sec', unit: 'sec' });
+  // `codex update` — "Update Codex to the latest version" (codex --help, 0.150.0, 2026-09-05).
+  static install = Object.freeze({ npm: '@openai/codex', bin: 'codex', versionArgs: ['--version'], update: (address) => [address, ['update']] });
   // Non-interactive auth: CODEX_API_KEY "provides an API key to a non-interactive Codex
   // process" (codex/environment-variables.md:49, pinned 2026-08-29).
   static headless = Object.freeze({
     auth: ['CODEX_API_KEY'],
     command: (prompt, model = null) => ['codex', ['exec', '--skip-git-repo-check', ...(model ? ['-m', model] : []), prompt]],
     extract: (stdout) => stdout,
+    // Live 2026-09-05 (codex-cli 0.150.0): "The 'gpt-6-astra' model requires a newer version of
+    // Codex. Please upgrade to the latest app or CLI and try again." — the one cause we act on.
+    diagnose: (stderrTail) => (/requires a newer version of Codex/i.test(String(stderrTail ?? '')) ? 'outdated' : null),
   });
   static traces = Object.freeze({
     store: ({ home } = {}) => new CodexTraceStore({ home, harness: this.harnessName }),
     newest: (store) => store.newestRollout(),
     projector: async ({ store }) => new (await import('./codex-rollout.mjs')).CodexAtifProjector({ store }),
     ownsPath: (file) => String(file).includes(`${path.sep}.codex${path.sep}`),
+    // The gate on the staging convention: a desktop rollout (session_meta.originator names the
+    // desktop) that ran from a dir this adapter does not know as staging is DRIFT, named — read
+    // by doctor over the newest rollout. Null for a terminal session (it runs anywhere) or a
+    // known staging dir.
+    stagingDrift: (described, { home }) => (CodexHarness.synthetic.originators.includes(described.originator)
+      && !CodexHarness.isSyntheticWorkspaceDir({ dir: described.cwd ?? '', home })
+      ? `desktop rollout ${described.path} ran from ${described.cwd} — not a staging dir this adapter knows (synthetic.dirs): ChatGPT moved its staging convention; measure it and add it`
+      : null),
     roster: CODEX_ROLLOUT_ROSTER,
     kindOf: codexKindOf,
     recent: (store, { days, maxFiles }) => store.recentRollouts({ days, maxFiles }),
@@ -155,33 +189,46 @@ export class CodexHarness extends Harness {
     return path.join(this.configHome, 'config.toml');
   }
 
+  /** The budget line the mcp stanza carries — valued from config, never a literal second. */
+  #timeoutLine() {
+    if (!this.config) {
+      throw new HarnessOnboardError('CODEX_CONFIG_REQUIRED',
+        `the codex MCP stanza carries ${this.constructor.mcpToolTimeout.key} from config (mcpToolTimeoutSec) — `
+        + 'this adapter was built without one', {});
+    }
+    return `${this.constructor.mcpToolTimeout.key} = ${this.config.get('mcpToolTimeoutSec')}`;
+  }
+
   /**
-   * The sanctioned registrations, each with the CLI that makes it, the config.toml stanza that
-   * proves it landed, and the CLI that undoes it.
+   * The sanctioned registrations, each with the CLI that makes it, the config.toml lines that
+   * prove it landed (every one must be present — doctor checks each), the CLI that undoes it,
+   * and, for the MCP server, the line the adapter stamps after the CLI's write.
    */
   #registrations() {
     return [
       {
         id: 'marketplace',
         add: ['plugin', 'marketplace', 'add', this.paths.packageRoot],
-        proof: '[marketplaces.oathe]',
+        proofs: ['[marketplaces.oathe]'],
         undo: ['plugin', 'marketplace', 'remove', 'oathe'],
       },
       {
         id: 'plugin',
         add: ['plugin', 'add', PLUGIN_ID],
-        proof: `[plugins."${PLUGIN_ID}"]`,
+        proofs: [`[plugins."${PLUGIN_ID}"]`],
         undo: ['plugin', 'remove', PLUGIN_ID],
       },
       {
         id: 'mcp-server',
         // The shim, literal: config.toml has no interpolation (codex/config-reference.md,
         // pinned), and the ChatGPT desktop app reads this same config (codex/mcp.md) — one
-        // write serves both. A bare `oathe` died on every GUI PATH (2026-09-04). The proof
-        // is the COMMAND LINE, not the stanza (review F3): an old init stomping the address
-        // back to bare must read as drift in doctor, never as ok over a dead lane.
+        // write serves both. A bare `oathe` died on every GUI PATH (2026-09-04). The proofs
+        // are the COMMAND LINE, not the stanza (review F3): a re-add that drops the address
+        // back to bare must read as drift in doctor, never as ok over a dead lane — and the
+        // timeout line, because a re-add drops it (2026-09-05).
         add: ['mcp', 'add', 'oathe', '--', shimPath(this.home), 'mcp'],
-        proof: `command = "${shimPath(this.home)}"`,
+        proofs: [`command = "${shimPath(this.home)}"`, this.#timeoutLine()],
+        stamp: this.#timeoutLine(),
         undo: ['mcp', 'remove', 'oathe'],
       },
     ];
@@ -190,9 +237,11 @@ export class CodexHarness extends Harness {
   /** What init writes — from the registrations the CLI makes and the global fence target. */
   describe() {
     const globals = this.constructor.globalContextFiles.map((f) => path.join(this.configHome, f)).join(' (or ');
-    const mcp = this.#registrations().find((r) => r.id === 'mcp-server');
+    const regs = this.#registrations();
+    const mcp = regs.find((r) => r.id === 'mcp-server');
     return [
-      `${this.configPath}: ${this.#registrations().map((r) => r.proof).join(', ')} via the codex CLI (marketplace, plugin, MCP server → ${mcp.add.slice(mcp.add.indexOf('--') + 1).join(' ')})`,
+      `${this.configPath}: ${regs.flatMap((r) => r.proofs).join(', ')} via the codex CLI (marketplace, plugin, MCP server → ${mcp.add.slice(mcp.add.indexOf('--') + 1).join(' ')}; `
+        + `${mcp.stamp} stamped into the stanza — the budget a blocking done waits inside, config mcpToolTimeoutSec)`,
       `${globals}${this.constructor.globalContextFiles.length > 1 ? ')' : ''}: the standing Oathe rule for every Codex session — ChatGPT desktop reads it too`,
     ];
   }
@@ -212,27 +261,55 @@ export class CodexHarness extends Harness {
         throw new HarnessOnboardError('CODEX_CLI_FAILED',
           `codex ${reg.add.join(' ')} exited ${result.status}: ${result.stderr.trim()}`, { reg: reg.id });
       }
+      if (reg.stamp) this.#stampInStanza('[mcp_servers.oathe]', reg.stamp);
       const config = fs.existsSync(this.configPath) ? fs.readFileSync(this.configPath, 'utf8') : '';
-      if (!config.includes(reg.proof)) {
+      const missing = reg.proofs.find((p) => !config.includes(p));
+      if (missing !== undefined) {
         throw new HarnessOnboardError('CODEX_VERIFICATION_FAILED',
           `verification failed: codex ${reg.add.join(' ')} reported success but ${this.configPath} `
-          + `carries no ${reg.proof} stanza — refusing to record an install that cannot be proven`,
+          + `carries no ${missing} line — refusing to record an install that cannot be proven`,
           { reg: reg.id });
       }
       manifest.upsert({
         harness: this.name,
         file: this.configPath,
         kind: 'cli-managed',
-        detail: { id: reg.id, proof: reg.proof, undo: reg.undo },
+        detail: { id: reg.id, proofs: reg.proofs, undo: reg.undo },
         blockVersion: version,
-        sha256: sha256Hex(reg.proof),
+        sha256: sha256Hex(reg.proofs.join('\n')),
       });
     }
     return this.#registrations().map((r) => ({ action: `codex-${r.id}` }));
   }
 
+  /**
+   * Converge ONE `key = value` line inside a stanza the CLI owns: replace the key's line if the
+   * stanza has one, else append it at the stanza's end; every other line stays byte-identical.
+   * The one hand-write on this file besides the hooks-state sweep, for the one key the CLI
+   * cannot be told and does not keep.
+   */
+  #stampInStanza(header, line) {
+    const key = line.split('=')[0].trim();
+    const lines = fs.readFileSync(this.configPath, 'utf8').split('\n');
+    const start = lines.findIndex((l) => l.trim() === header);
+    if (start === -1) return; // no stanza: the proof check below names the failure
+    let end = lines.findIndex((l, i) => i > start && l.trimStart().startsWith('['));
+    if (end === -1) end = lines.length;
+    const existing = lines.findIndex((l, i) => i > start && i < end && l.split('=')[0].trim() === key);
+    if (existing !== -1) {
+      lines[existing] = line;
+    } else {
+      // Insert after the stanza's last non-blank line, keeping any trailing blank spacing.
+      let at = end;
+      while (at > start + 1 && lines[at - 1].trim() === '') at -= 1;
+      lines.splice(at, 0, line);
+    }
+    if (lines.at(-1) !== '') lines.push(''); // a toml file ends in a newline, whatever the CLI left
+    fs.writeFileSync(this.configPath, lines.join('\n'));
+  }
+
   offboard({ manifest }) {
-    const rows = manifest.removeWhere((r) => r.harness === this.name);
+    const rows = this.takeWiringRows(manifest);
     const actions = [];
     // Undo in reverse install order, so the plugin is gone before its marketplace is.
     for (const row of rows.reverse()) {

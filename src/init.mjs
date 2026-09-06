@@ -33,7 +33,7 @@ export async function runInit({
     // 2026-08-29).
     const machine = OatheConfig.global({ env: ctx.config.env });
     // DECLARATIVE: the screen shows the wiring state and Enter makes the machine match it.
-    const wiredNow = new Set(manifest.rows.map((r) => r.harness).filter((h) => wired.some((a) => a.name === h)));
+    const wiredNow = new Set(wired.map((a) => a.name).filter((h) => manifest.wiringRowsFor(h).length > 0));
     const plan = SetupPlan.from({
       adapters: wired, census: seen, surfaces, machine, home: ctx.home, paths: ctx.paths, fallbackVerifier: ctx.config.get('verifier'), wiredNow,
     });
@@ -136,6 +136,12 @@ export async function runInit({
     const { writeDevice } = await import('./device.mjs');
     const [deviceAction] = writeDevice({ devicePath: ctx.paths.devicePath, manifest, version });
     actions.push({ harness: 'device', ...deviceAction });
+    // Every harness's CLI ADDRESS (ruling 2026-09-05: engines are addresses, never recipes): a
+    // machine fact recorded whether or not the harness is wired — the verifier can be any CLI
+    // here — so a judgment spawned from launchd's bare PATH (the feed, the daemon) still finds it.
+    for (const harness of wired) {
+      for (const action of harness.recordCliAddress({ manifest, version })) actions.push({ harness: harness.name, ...action });
+    }
     for (const step of plan.steps) {
       if (!step.installed) {
         actions.push({ harness: step.name, action: 'skipped-not-installed' });

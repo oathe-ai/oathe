@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 
 import { buildPaths } from '../src/paths.mjs';
 import { Substrate } from '../src/substrate.mjs';
-import { sandbox } from './helpers.mjs';
+import { sandbox, seedClaim } from './helpers.mjs';
 
 const paths = buildPaths({});
 const pkg = JSON.parse(fs.readFileSync(path.join(paths.packageRoot, 'package.json'), 'utf8'));
@@ -140,15 +140,7 @@ test('render-board prints this workspace board as markdown at SessionStart', asy
   try {
     const { workspaceRef } = await import('../src/workspace.mjs');
     const ws = workspaceRef(dir);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'render-me', 'founder', 'shown on the board', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'render-me', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/render-me@v1`]);
+    await seedClaim({ substrate, taskId: 'render-me', workspace: ws, objective: 'shown on the board' });
     // Second render: the first activates the folder (its write receipt speaks once, pinned
     // elsewhere); every session after that is the ruling's target — an already-managed folder.
     runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' }, { OATHE_PRINCIPAL: 'founder' });
@@ -246,15 +238,7 @@ test('R-QUIET: breaches PUSH — a breached promise is the one thing that speaks
   try {
     // A quiet breach: an active claim whose holder has said nothing past the threshold. The
     // claim is 2h old; only this test's 1h threshold sees it — the other renders stay clean.
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'gone-quiet', 'founder', 'claimed then abandoned', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '7 days', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'gone-quiet', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', 'workspace:ws-000000000000;contract:oathe/gone-quiet@v1',
-              now() - interval '2 hours', gen_random_uuid())`);
+    await seedClaim({ substrate, taskId: 'gone-quiet', workspace: 'ws-000000000000', objective: 'claimed then abandoned', claimedAgo: '2 hours', createdAgo: '0 hours', verifyBy: '7 days' });
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
       { OATHE_PRINCIPAL: 'founder', OATHE_PAGER_QUIET_HOURS: '1' });
     assert.equal(out.status, 0, out.stderr);
@@ -360,14 +344,7 @@ test('a RESUMED session links the transcript it actually writes: the hook is tol
   ].map((r) => JSON.stringify(r)).join('\n'));
   try {
     const { workspaceRef } = await import('../src/workspace.mjs');
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan, verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'resumed-task', 'founder', 'linked after a resume', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'resumed-task', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
-      [`workspace:${workspaceRef(dir)};contract:oathe/resumed-task@v1`]);
+    await seedClaim({ substrate, taskId: 'resumed-task', workspace: workspaceRef(dir), objective: 'linked after a resume' });
     const ghost = path.join(projectDir, `${resumed}.jsonl`);
     const out = runHook('heartbeat.mjs', { cwd: dir, hook_event_name: 'Stop', session_id: resumed, transcript_path: ghost },
       { OATHE_PRINCIPAL: 'founder' });
@@ -433,15 +410,7 @@ test('heartbeat (Stop) renews the active lease for this workspace', async () => 
   try {
     const { workspaceRef } = await import('../src/workspace.mjs');
     const ws = workspaceRef(dir);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'beat-me', 'founder', 'lease renewal', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'beat-me', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '1 minute', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/beat-me@v1`]);
+    await seedClaim({ substrate, taskId: 'beat-me', workspace: ws, objective: 'lease renewal', lease: '1 minute' });
     const { rows: pre } = await substrate.query(
       "SELECT ownership_valid_until FROM cell.work_claim WHERE task_id = 'beat-me' AND state = 'active'");
     const out = runHook('heartbeat.mjs', { cwd: dir, hook_event_name: 'Stop' }, { OATHE_PRINCIPAL: 'founder' });
@@ -491,24 +460,8 @@ test('heartbeat LINKS the session trace ONLY to claims the session acted on — 
   try {
     const { workspaceRef } = await import('../src/workspace.mjs');
     const ws = workspaceRef(dir);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'link-me', 'founder', 'trace linkage', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'link-me', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/link-me@v1`]);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'bystander', 'founder', 'never touched by this session', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'bystander', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/bystander@v1`]);
+    await seedClaim({ substrate, taskId: 'link-me', workspace: ws, objective: 'trace linkage' });
+    await seedClaim({ substrate, taskId: 'bystander', workspace: ws, objective: 'never touched by this session' });
     const transcript = writeSessionFixture(dir, 'sess-link-0001', [['oathe_statement', 'link-me']]);
     const hookInput = {
       cwd: dir, hook_event_name: 'Stop',
@@ -682,19 +635,11 @@ test('frame-note (PreCompact) records a compaction statement against active clai
   try {
     const { workspaceRef } = await import('../src/workspace.mjs');
     const ws = workspaceRef(dir);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'note-me', 'founder', 'compaction note', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'note-me', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/note-me@v1`]);
+    await seedClaim({ substrate, taskId: 'note-me', workspace: ws, objective: 'compaction note' });
     const out = runHook('frame-note.mjs', { cwd: dir, hook_event_name: 'PreCompact' }, { OATHE_PRINCIPAL: 'founder' });
     assert.equal(out.status, 0, out.stderr);
     const { rows } = await substrate.query(
-      "SELECT proposition FROM cell.agent_statement WHERE task_id = 'note-me'");
+      "SELECT proposition FROM cell.agent_statement WHERE task_id = 'note-me' AND statement_type <> 'observation'"); // the seed's place statement is an observation, not a word
     assert.equal(rows.length, 1);
     assert.match(rows[0].proposition, /compact/i);
   } finally {
@@ -707,15 +652,7 @@ test('R3 §5.5#1: a planning-only session links NO claim evidence', async () => 
   try {
     const { workspaceRef } = await import('../src/workspace.mjs');
     const ws = workspaceRef(dir);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'planned-around', 'founder', 'discussed, never acted on', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'planned-around', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/planned-around@v1`]);
+    await seedClaim({ substrate, taskId: 'planned-around', workspace: ws, objective: 'discussed, never acted on' });
     const out = runHook('heartbeat.mjs', {
       cwd: dir, hook_event_name: 'Stop',
       session_id: 'sess-planning', transcript_path: writeSessionFixture(dir, 'sess-planning', []),
@@ -734,15 +671,7 @@ test('R3 §5.5#9: a LATER session (any harness) linking the same durable claim g
   try {
     const { workspaceRef } = await import('../src/workspace.mjs');
     const ws = workspaceRef(dir);
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'two-sessions', 'founder', 'worked across sessions', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'two-sessions', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now(), gen_random_uuid())`,
-      [`workspace:${ws};contract:oathe/two-sessions@v1`]);
+    await seedClaim({ substrate, taskId: 'two-sessions', workspace: ws, objective: 'worked across sessions' });
     for (const sid of ['sess-first', 'sess-second']) {
       const out = runHook('heartbeat.mjs', {
         cwd: dir, hook_event_name: 'Stop',
@@ -765,19 +694,13 @@ test('R3 §5.5#2/#10: rendering the board writes NOTHING and focuses nothing —
     const { renderBoard } = await import('../src/board-render.mjs');
     const ws = workspaceRef(dir);
     for (const t of ['neutral-a', 'neutral-b']) {
-      await substrate.query(`
-        INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                               verify_by, claim_mode, created_at)
-        VALUES ('oathe', $1, 'founder', 'one of several', 'minted_at_claim',
-                '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`, [t]);
-      await substrate.query(
-        `SELECT cell.claim_work('oathe', $1, gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-                'exclusive', now() + interval '4 hours', $2, now(), gen_random_uuid())`,
-        [t, `workspace:${ws};contract:oathe/${t}@v1`]);
+      await seedClaim({ substrate, taskId: t, workspace: ws, objective: 'one of several' });
     }
     const before = await substrate.query('SELECT count(*)::int AS n FROM cell.agent_statement');
+    const { OatheConfig } = await import('../src/config.mjs');
     const seen = await renderBoard({
-      client: substrate, identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' }, workspace: ws });
+      client: substrate, identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' }, workspace: ws,
+      config: new OatheConfig({ env: { HOME: dir, OATHE_HOME: path.join(dir, '.oathe') }, cwd: dir }) });
     assert.equal(seen.sections.mine.length, 2, 'both claims presented');
     const after1 = await substrate.query('SELECT count(*)::int AS n FROM cell.agent_statement');
     assert.equal(after1.rows[0].n, before.rows[0].n, 'presentation writes no statements');
@@ -795,15 +718,7 @@ test('R3 §5.5#2/#10: rendering the board writes NOTHING and focuses nothing —
 // is not the boundary of your obligations.
 
 async function seedForeignHomedClaim(taskId) {
-  await substrate.query(`
-    INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                           verify_by, claim_mode, created_at)
-    VALUES ('oathe', $1, 'founder', 'homed on another board', 'minted_at_claim',
-            '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`, [taskId]);
-  await substrate.query(
-    `SELECT cell.claim_work('oathe', $1, gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-            'exclusive', now() + interval '4 hours', $2, now(), gen_random_uuid())`,
-    [taskId, `workspace:ws-foreignhome00;contract:oathe/${taskId}@v1`]);
+  await seedClaim({ substrate, taskId, workspace: 'ws-foreignhome00', objective: 'homed on another board' });
 }
 
 test('heartbeat links trace evidence for a claim homed on ANOTHER board — custody is the principal\'s', async () => {
@@ -856,15 +771,7 @@ test('render-board on a ChatGPT-desktop staging dir serves the FULL board and wr
 test('render-board carries the machine-wide breach digest in context — a quiet claim from ANOTHER folder pages here', async () => {
   const dir = fs.mkdtempSync(path.join(paths.packageRoot, 'tmp-ws-'));
   try {
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'quiet-elsewhere', 'founder', 'claimed three days ago, not a word since', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '30 days', 'exclusive', now() - interval '3 days')`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'quiet-elsewhere', gen_random_uuid(), NULL, NULL, 'athena', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now() - interval '3 days', gen_random_uuid())`,
-      ['workspace:ws-000000000aaa;contract:oathe/quiet-elsewhere@v1']);
+    await seedClaim({ substrate, taskId: 'quiet-elsewhere', workspace: 'ws-000000000aaa', principal: 'athena', objective: 'claimed three days ago, not a word since', claimedAgo: '3 days', verifyBy: '30 days' });
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' });
     assert.equal(out.status, 0, out.stderr);
     const context = JSON.parse(out.stdout).hookSpecificOutput.additionalContext;
@@ -941,15 +848,7 @@ test('UX rule 18 at session start: forty quiet claims are ONE push line, eight c
   try {
     for (let i = 0; i < 40; i++) {
       const id = `budget-${String(i).padStart(2, '0')}`;
-      await substrate.query(`
-        INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                               verify_by, claim_mode, created_at)
-        VALUES ('oathe', $1, 'founder', 'one of forty', 'minted_at_claim',
-                '{"plan_status":"unknown"}'::jsonb, now() + interval '7 days', 'exclusive', now())`, [id]);
-      await substrate.query(
-        `SELECT cell.claim_work('oathe', $1, gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-                'exclusive', now() + interval '4 hours', $2, now() - interval '2 hours', gen_random_uuid())`,
-        [id, `workspace:ws-000000000000;contract:oathe/${id}@v1`]);
+      await seedClaim({ substrate, taskId: id, workspace: 'ws-000000000000', objective: 'one of forty', claimedAgo: '2 hours', createdAgo: '0 hours', verifyBy: '7 days' });
     }
     const out = runHook('render-board.mjs', { cwd: dir, hook_event_name: 'SessionStart' },
       { OATHE_PRINCIPAL: 'founder', OATHE_PAGER_QUIET_HOURS: '1' });

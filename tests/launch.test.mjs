@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { sandbox } from './helpers.mjs';
+import { sandbox, seedClaim } from './helpers.mjs';
 import { preflight, runHarness, ensureVerifierChoice } from '../src/launch.mjs';
 import { runInit } from '../src/init.mjs';
 import { Substrate } from '../src/substrate.mjs';
@@ -192,15 +192,7 @@ test('a still-default verifier is announced on stderr — never silently assumed
 test('R-PAGER: the codex splash carries the breach digest — a quiet claim anywhere on the machine is paged', async () => {
   const substrate = new Substrate({ database: SCRATCH_DB, paths, env: process.env });
   try {
-    await substrate.query(`
-      INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                             verify_by, claim_mode, created_at)
-      VALUES ('oathe', 'splash-quiet', 'founder', 'went quiet', 'minted_at_claim',
-              '{"plan_status":"unknown"}'::jsonb, now() + interval '30 days', 'exclusive', now() - interval '2 days')`);
-    await substrate.query(
-      `SELECT cell.claim_work('oathe', 'splash-quiet', gen_random_uuid(), NULL, NULL, 'athena', 'founder',
-              'exclusive', now() + interval '4 hours', $1, now() - interval '2 days', gen_random_uuid())`,
-      ['workspace:ws-000000000bbb;contract:oathe/splash-quiet@v1']);
+    await seedClaim({ substrate, taskId: 'splash-quiet', workspace: 'ws-000000000bbb', principal: 'athena', objective: 'went quiet', claimedAgo: '2 days', verifyBy: '30 days' });
   } finally {
     await substrate.close();
   }

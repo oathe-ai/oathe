@@ -263,3 +263,34 @@ test('a close() racing an in-flight context build closes the late-built context 
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(closed, 1, 'the context that finished building after close is not a leaked pg client');
 });
+
+test('a tools/call carrying _meta.progressToken gets notifications/progress while the tool works — monotonic, on that token, before the result; no token → the tool gets no emitter and nothing is sent', async () => {
+  const dir = scratch();
+  const { send, waitFor, outLines } = harnessed({
+    env: { OATHE_WORKSPACE_DIR: dir },
+    toolContextFactory: async () => ({
+      tools: {
+        oathe_done: async (args, ctx = {}) => {
+          ctx.progress?.('verifying x — 15s');
+          ctx.progress?.('verifying x — 30s');
+          return { done: true, saw_emitter: typeof ctx.progress === 'function' };
+        },
+      },
+      close: async () => {},
+    }),
+  });
+  send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { capabilities: {} } });
+  send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'oathe_done', arguments: { task_id: 'x' }, _meta: { progressToken: 'tok-7' } } });
+  const result = await waitFor((m) => m.id === 2);
+  assert.equal(JSON.parse(result.result.content[0].text).saw_emitter, true);
+  const progress = outLines.filter((m) => m.method === 'notifications/progress');
+  assert.deepEqual(progress.map((m) => m.params), [
+    { progressToken: 'tok-7', progress: 1, message: 'verifying x — 15s' },
+    { progressToken: 'tok-7', progress: 2, message: 'verifying x — 30s' },
+  ], 'standard MCP progress: the client\'s token, a rising counter, the server\'s words');
+  assert.ok(outLines.indexOf(progress[1]) < outLines.indexOf(result), 'the ticks arrive before the answer');
+  send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'oathe_done', arguments: { task_id: 'x' } } });
+  const plain = await waitFor((m) => m.id === 3);
+  assert.equal(JSON.parse(plain.result.content[0].text).saw_emitter, false, 'no token, no emitter — never a notification nobody asked for');
+  assert.equal(outLines.filter((m) => m.method === 'notifications/progress').length, 2);
+});

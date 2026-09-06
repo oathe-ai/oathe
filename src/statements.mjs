@@ -6,6 +6,7 @@
 // read "last word" through this one fragment).
 
 import fs from 'node:fs';
+import { SYSTEM_TASKS } from './plans.mjs';
 
 export const TRACE_SUBJECT_PREFIX = 'trace:';
 
@@ -64,6 +65,53 @@ export async function linkTrace({ client, identity, taskId, session }) {
 }
 
 /**
+ * WHERE an act was spoken (founder ruling 2026-09-05): the PLACE — a folder (`workspace:<ref>`)
+ * or an app (`app:<surface>`, the grammar is src/home.mjs Place) — recorded as ONE observation
+ * per claim × place, subject `place:<place>`, evidence the pickup knows (src/home.mjs
+ * PlaceEvidence: `app:<bundle>` / `device:<id>` / `dir:<project folder>`, each only when known).
+ * `observation`, not `progress`: a place is a fact about the act, never the holder's word, so
+ * it stays out of last-word, the quiet clock, and the verifier's reads. Idempotent by
+ * (work_claim_id, subject_ref) like the trace link. A statement, so it rides Cloud State
+ * unchanged (the `spawn:` argument) — the device on it is why.
+ */
+export const PLACE_SUBJECT_PREFIX = 'place:';
+export function placeSubjectRef(place) {
+  return `${PLACE_SUBJECT_PREFIX}${place}`;
+}
+/**
+ * @param {{client: {query: Function}, identity: {orgId: string, principalId: string}, taskId: string,
+ *          place: {toString: Function}, evidence: {app: string|null, refs: string[]}, workClaimId?: string}} o
+ *   workClaimId — the interval to stamp; default: the principal's open claim (active or asserted), as linkTrace picks it
+ * @returns {Promise<{linked: boolean}>}
+ */
+export async function linkPlace({ client, identity, taskId, place, evidence, workClaimId = null }) {
+  let claimId = workClaimId;
+  if (claimId === null) {
+    const { rows } = await client.query(
+      `SELECT work_claim_id FROM cell.work_claim
+        WHERE org_id = $1 AND principal_id = $2 AND task_id = $3 AND settled_at IS NULL
+          AND state IN ('active', 'completion_asserted')
+        ORDER BY claimed_at DESC LIMIT 1`,
+      [identity.orgId, identity.principalId, taskId]);
+    if (rows.length === 0) return { linked: false };
+    claimId = rows[0].work_claim_id;
+  }
+  const { randomUUID } = await import('node:crypto');
+  await client.query(
+    `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+            execution_actor, claim_principal, statement_type, subject_ref, proposition,
+            evidence_refs, epistemic_status, asserted_at)
+     SELECT $1, $2, $3, $4, $5, $6, 'observation', $7, $8, $9::jsonb, 'observed', now()
+      WHERE NOT EXISTS (
+        SELECT 1 FROM cell.agent_statement
+         WHERE org_id = $2 AND work_claim_id = $4 AND subject_ref = $7)`,
+    [randomUUID(), identity.orgId, taskId, claimId, 'oathe-operator', identity.principalId,
+      placeSubjectRef(String(place)), `picked up at ${String(place)}${evidence.app ? ` from ${evidence.app}` : ''}`,
+      JSON.stringify(evidence.refs)]);
+  return { linked: true };
+}
+
+/**
  * The latest non-trace progress statement of one claim, as a LATERAL body:
  * `LEFT JOIN LATERAL (${latestProgressSql({ task: 't', claim: 'w' })}) p ON true` yields
  * p.proposition / p.asserted_at (NULL when the holder has said nothing yet).
@@ -77,8 +125,22 @@ export async function linkTrace({ client, identity, taskId, session }) {
  */
 /** Engine-failure evidence shape: 'engine-failure:<engine>' — a verify child that lost its
  *  engine records this on the verify task before releasing its claim. */
-export function engineFailureRef(engine) {
-  return `engine-failure:${engine}`;
+export function engineFailureRef(engine, cause = null) {
+  return `${ENGINE_FAILURE_PREFIX}${engine}${cause ? `:${cause}` : ''}`;
+}
+const ENGINE_FAILURE_PREFIX = 'engine-failure:';
+/** The one reader of the grammar: `{engine, cause}` (cause null when the ref carries none), or null for another ref. */
+export function parseEngineFailure(ref) {
+  if (typeof ref !== 'string' || !ref.startsWith(ENGINE_FAILURE_PREFIX)) return null;
+  const [engine, cause = null] = ref.slice(ENGINE_FAILURE_PREFIX.length).split(':');
+  return { engine, cause };
+}
+/** An engine UPDATE that failed (`oathe engine update`) — the stall grammar's sibling, on the update task's statement. */
+export function updateFailureRef(harness) {
+  return `update-failure:${harness}`;
+}
+export function isUpdateFailureSql(column) {
+  return `EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) er WHERE er LIKE 'update-failure:%')`;
 }
 export function isEngineFailureSql(column) {
   return `EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) er WHERE er LIKE 'engine-failure:%')`;
@@ -226,15 +288,17 @@ export function rejectedIntervalSql({ claim }) {
 }
 
 /**
- * The judge's live hold on `task`: its verify claim, active inside its lease at `asOf` (a SQL
- * expression — `now()`, or a bound parameter for a clock a caller injects). An active verify
- * claim past its lease is a judge that died without releasing, not a running one. The one
- * spelling of "a judgment is in flight" — the pager's busy and the board's `verifying` agree
- * by construction (UX rule 22).
+ * The hold on a SYSTEM task (UX rule 22 — the ONE in-flight read): an active claim inside its
+ * lease on `<kind>:<subject>` (`verify:<task>` → a judge is running; `update:<harness>` → the
+ * machine is updating that engine) at `asOf` (a SQL expression — `now()`, or a bound parameter
+ * for a clock a caller injects). An active claim past its lease is a holder that died without
+ * releasing, not a running one. `orgId`/`subject` are SQL expressions too — a task's own row
+ * (`t.org_id`, `t.task_id`) or a literal both fit. The board's `verifying`, the pager's busy rows
+ * and the glass all read this and nothing else, so they never disagree.
  */
-export function judgeHoldSql({ task, asOf }) {
+export function holdSql({ kind, orgId, subject, asOf }) {
   return `SELECT c.claimed_at FROM cell.work_claim c
-           WHERE c.org_id = ${task}.org_id AND c.task_id = 'verify:' || ${task}.task_id
+           WHERE c.org_id = ${orgId} AND c.task_id = '${SYSTEM_TASKS[kind]}' || ${subject}
              AND c.state = 'active' AND c.settled_at IS NULL AND c.ownership_valid_until > ${asOf}
            ORDER BY c.claimed_at DESC LIMIT 1`;
 }

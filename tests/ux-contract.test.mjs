@@ -76,3 +76,14 @@ test('PRODUCT.md §3 names every file a wiring adapter says init writes — the 
     }
   }
 });
+
+test('there is no homeless (ruling 2026-09-05): a claim is picked up at a place or refused, a task no claim picked up is unclaimed — the word never comes back quietly to a surface', () => {
+  const surfaces = ['src', 'bin', 'plugin', 'notch/Sources', 'notch/README.md', 'docs/UX.md', 'docs/PRODUCT.md'];
+  const files = (p) => (fs.statSync(path.join(root, p)).isDirectory()
+    ? fs.readdirSync(path.join(root, p), { recursive: true }).map((f) => path.join(p, f)).filter((f) => /\.(mjs|swift|md)$/.test(f))
+    : [p]);
+  for (const file of surfaces.flatMap(files)) {
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.ok(!/homeless/i.test(text), `${file} still speaks of homelessness`);
+  }
+});

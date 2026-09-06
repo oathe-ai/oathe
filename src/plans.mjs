@@ -35,20 +35,59 @@ export function standardPlan({ verifierEngine = null } = {}) {
   };
 }
 
-/** The one owner of the verification-task naming: `verify:<task>`. */
-export const VERIFICATION_PREFIX = 'verify:';
+/**
+ * The machine's OWN tasks (ruling 2026-09-05): one grammar, `<kind>:<subject>` — the judgment
+ * of a task (`verify:<task>`) and the update of an engine (`update:<harness>`). A system task is
+ * a claim like any other (that is how every surface reads "verifying"/"updating" off one fact)
+ * but never a WORK row: boards and pagers ask `systemTaskOf`, and no prefix literal lives
+ * outside this table.
+ */
+export const SYSTEM_TASKS = Object.freeze({ verify: 'verify:', update: 'update:' });
+
+export function systemTaskId(kind, subject) {
+  const prefix = SYSTEM_TASKS[kind];
+  if (!prefix) throw new Error(`no system task kind '${kind}' — kinds: ${Object.keys(SYSTEM_TASKS).join(', ')}`);
+  return `${prefix}${subject}`;
+}
+
+/** @returns {{kind: string, subject: string}|null} */
+export function systemTaskOf(taskId) {
+  for (const [kind, prefix] of Object.entries(SYSTEM_TASKS)) {
+    if (taskId.startsWith(prefix)) return { kind, subject: taskId.slice(prefix.length) };
+  }
+  return null;
+}
+
+/** SQL: is `column` a system task of any kind — the one exclusion every work-row query applies. */
+export function isSystemTaskSql(column) {
+  return `(${Object.values(SYSTEM_TASKS).map((p) => `${column} LIKE '${p}%'`).join(' OR ')})`;
+}
+
+/** The verification kind's helpers — thin calls on the grammar. */
+export const VERIFICATION_PREFIX = SYSTEM_TASKS.verify;
 
 export function verificationTaskId(taskId) {
-  return `${VERIFICATION_PREFIX}${taskId}`;
+  return systemTaskId('verify', taskId);
 }
 
 export function isVerificationTask(taskId) {
-  return taskId.startsWith(VERIFICATION_PREFIX);
+  return systemTaskOf(taskId)?.kind === 'verify';
 }
 
 /** The task a verification task judges, or null for a non-verification id. */
 export function verifiedTaskId(taskId) {
-  return isVerificationTask(taskId) ? taskId.slice(VERIFICATION_PREFIX.length) : null;
+  const system = systemTaskOf(taskId);
+  return system?.kind === 'verify' ? system.subject : null;
+}
+
+/** The update kind's helpers. */
+export function updateTaskId(harness) {
+  return systemTaskId('update', harness);
+}
+
+export function updateObjective(harness, address) {
+  return `Update the '${harness}' CLI in place at ${address} — the engine a judgment named as out of date; `
+    + 'the machine claims this, runs the CLI\'s own updater, records the version before and after, and re-verifies.';
 }
 
 export function verificationObjective(taskId) {

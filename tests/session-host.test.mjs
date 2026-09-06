@@ -10,6 +10,7 @@ import { createOatheTools } from '../src/mcp/oathe-tools.mjs';
 import { OatheConfig } from '../src/config.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
+import { seedClaim } from './helpers.mjs';
 
 const paths = buildPaths({});
 const SCRATCH_DB = `oathe_host_test_${process.pid}`;
@@ -28,7 +29,8 @@ before(async () => {
   // must never read the developer's real ~/.oathe.
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-host-cfg-')));
   const config = new OatheConfig({ env: { HOME: home, OATHE_HOME: path.join(home, '.oathe') }, cwd: home });
-  tools = createOatheTools({ client: substrate, identity, config });
+  // A claim is picked up at a place (ruling 2026-09-05): the host's tools speak from the folder it launched in.
+  tools = createOatheTools({ client: substrate, identity, config, workspace: 'ws-host00000000' });
 });
 
 after(async () => {
@@ -76,7 +78,7 @@ test('BORN-RED SEMANTIC: a killed cage stops the renewals and the lease is left 
   assert.equal(await exactHorizon('killed'), before, 'death changes nothing on the claim either');
   const { rows } = await substrate.query(
     "SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'killed' "
-    + "AND subject_ref NOT LIKE 'verifier:%'"); // the claim-time engine assignment is not a session statement
+    + "AND subject_ref NOT LIKE 'verifier:%' AND subject_ref NOT LIKE 'place:%'"); // the claim-time engine assignment and the pickup's place are not session statements
   assert.equal(rows[0].n, 0, 'NO statement fabricated for a death nobody witnessed');
 });
 
@@ -98,15 +100,7 @@ test('a clean exit records the exit statement — terminal from exit', async () 
 });
 
 test('R-HOME-BOARD: the clean exit speaks on a claim homed on ANOTHER board — custody is the principal\'s', async () => {
-  await substrate.query(`
-    INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                           verify_by, claim_mode, created_at)
-    VALUES ('oathe', 'foreign-exit', 'founder', 'homed elsewhere', 'minted_at_claim',
-            '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-  await substrate.query(
-    `SELECT cell.claim_work('oathe', 'foreign-exit', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-            'exclusive', now() + interval '4 hours', 'workspace:ws-foreignhome00;contract:oathe/foreign-exit@v1',
-            now(), gen_random_uuid())`);
+  await seedClaim({ substrate, taskId: 'foreign-exit', workspace: 'ws-foreignhome00', objective: 'homed elsewhere' });
   const host = new SessionHost({
     client: substrate, identity,
     liveness: () => true, observeIntervalMs: 40,

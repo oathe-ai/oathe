@@ -115,8 +115,23 @@ export class McpConnection {
       await this.#invalidate();
       return;
     }
-    const out = await dispatch(msg, { tools: this.served, version: this.version });
+    const out = await dispatch(msg, { tools: this.served, version: this.version, progress: this.#progressFor(msg) });
     if (out) this.#write(out);
+  }
+
+  /**
+   * Standard MCP progress for a request that asked for it (`params._meta.progressToken`): the
+   * emitter a long tool call (a blocking done awaiting its verdict) ticks, each tick one
+   * `notifications/progress` on the client's token with a rising counter and Node's words —
+   * the client's per-tool clock learns the judgment is still running. No token, no emitter.
+   */
+  #progressFor(msg) {
+    const token = msg?.params?._meta?.progressToken;
+    if (token === undefined || token === null) return null;
+    let n = 0;
+    return (message) => this.#tryWrite({
+      jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress: ++n, message },
+    });
   }
 
   #write(obj) {
@@ -237,6 +252,7 @@ export function defaultToolContextFactory({ env, speakerPid = undefined }) {
       config,
       workspace: resolution.ref,
       synthetic: resolution.synthetic,
+      dir: resolution.dir, // the directory the surface speaks from — an app pickup records it as evidence
       activation,
       // The SPEAKER primitive — resolved FRESH per context build: our own ancestry never
       // changes, but the device session registry does (a /clear, a rotation), and a stale
@@ -253,6 +269,7 @@ export function defaultToolContextFactory({ env, speakerPid = undefined }) {
         query: (sql, params) => substrate.query(sql, params),
         paths,
         cwd: resolution.dir,
+        progressIntervalMs: config.get('mcpProgressIntervalSec') * 1000, // the wait says it is still judging
       }),
       successor: async (o) => {
         if (!successorPromise) {

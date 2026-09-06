@@ -16,7 +16,7 @@ import path from 'node:path';
 import { atomicWriteJson, withFileLock } from './fslock.mjs';
 import { defaultExec } from './harnesses/harness.mjs';
 
-const SESSIONS_FORMAT = 1;
+export const SESSIONS_FORMAT = 1;
 const ANCESTRY_DEPTH_CAP = 32; // loop guard for a corrupt ps snapshot — a bound, not a tunable
 
 export class SessionRegistryError extends Error {
@@ -112,12 +112,20 @@ export class SessionRegistry {
   /** @returns {{format: number, saved_at?: string, sessions: object}} */
   load() {
     if (!fs.existsSync(this.sessionsPath)) return { format: SESSIONS_FORMAT, sessions: {} };
+    let doc;
     try {
-      return JSON.parse(fs.readFileSync(this.sessionsPath, 'utf8'));
+      doc = JSON.parse(fs.readFileSync(this.sessionsPath, 'utf8'));
     } catch (e) {
       throw new SessionRegistryError('OATHE_SESSIONS_MALFORMED',
         `${this.sessionsPath} is not valid JSON: ${e.message}`, { file: this.sessionsPath });
     }
+    // The format is the gate (zero legacy, 2026-09-05): another oathe's file is refused by name.
+    if (doc?.format !== SESSIONS_FORMAT || typeof doc.sessions !== 'object' || doc.sessions === null) {
+      throw new SessionRegistryError('OATHE_SESSIONS_FORMAT',
+        `${this.sessionsPath} is format ${JSON.stringify(doc?.format)}; this oathe reads format ${SESSIONS_FORMAT} — move it aside (sessions re-register on their next hook)`,
+        { file: this.sessionsPath, found: doc?.format, expected: SESSIONS_FORMAT });
+    }
+    return doc;
   }
 
   /**
@@ -176,7 +184,7 @@ export class SessionRegistry {
       let best = null;
       for (const [sessionId, row] of Object.entries(sessions)) {
         if (row.pid !== pid) continue;
-        if (!best || String(row.last_seen_at ?? '') > String(best.row.last_seen_at ?? '')) {
+        if (!best || String(row.last_seen_at) > String(best.row.last_seen_at)) { // every row is written with last_seen_at
           best = { sessionId, row };
         }
       }

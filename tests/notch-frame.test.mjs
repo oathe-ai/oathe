@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NotchFrame } from '../src/notch-frame.mjs';
-import { BreachDigest, DIGEST_ROW_CAP, KINDS, CONTINUE_ACT, BUSY, JUDGMENT } from '../src/breach-digest.mjs';
+import { BreachDigest, DIGEST_ROW_CAP, KINDS, CONTINUE_ACT, IN_FLIGHT, JUDGMENT, UPDATE_ACT, OPEN_APP_FLASH } from '../src/breach-digest.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const swift = (file) => fs.readFileSync(path.join(root, 'notch/Sources/OatheNotch', file), 'utf8');
@@ -56,21 +56,29 @@ function conforms(structs, name, value, where) {
 
 const NOW = Date.now();
 const stamp = (ms) => new Date(ms).toISOString().replace(/:\d\d\.\d{3}Z$/, 'Z');
+// Rows carry where the work lives (ruling 2026-09-05): `place` is the residence — a folder
+// (`workspace:<ref>`) or an app (`app:<surface>`) — with the app it was spoken from.
 const breach = (kind, task_id, extra = {}) => ({
   kind, task_id, objective: `objective of ${task_id}`, home: '/srv/app', home_ref: 'ws-a',
+  place: 'workspace:ws-a', places: ['workspace:ws-a'], place_app: null, place_device: null, place_dir: null,
   detail: `detail of ${task_id}`, at: stamp(NOW - 3_600_000), ...extra,
 });
 const work = (task_id, extra = {}) => ({
-  task_id, objective: `objective of ${task_id}`, state: 'active', principal_id: 'founder', home: 'ws-a',
+  task_id, objective: `objective of ${task_id}`, state: 'active', principal_id: 'founder',
+  place: 'workspace:ws-a', places: ['workspace:ws-a'], place_app: null, place_device: null,
   lease_until: '2026-09-02T10:00Z', last_progress: null, last_progress_at: null,
   last_word_at: stamp(NOW - 30_000), trace_path: null, trace_session_id: null, ...extra,
 });
+/** A task that resides in the ChatGPT desktop app — no folder, the app is the place. */
+const IN_CHATGPT = { home: 'ChatGPT', home_ref: null, place: 'app:chatgpt', places: ['app:chatgpt'], place_app: '/Applications/ChatGPT.app' };
+/** A row whose claim recorded no place — a broken record (every pickup records one); the frame says so loudly. */
+const BROKEN_RECORD = { home: null, home_ref: null, place: null, places: [], place_app: null };
 
 function facts() {
   const digest = new BreachDigest({
     breaches: [
       breach('reopened', 'r1'), breach('stalled', 's1'), breach('overdue', 'o1'), breach('quiet', 'q1'),
-      breach('stalled', 'b1', { busy: true, at: stamp(NOW - 30_000) }), // a retry in flight
+      breach('stalled', 'b1', { busy: true, busy_word: IN_FLIGHT.verify.word, busy_detail: IN_FLIGHT.verify.detail, at: stamp(NOW - 30_000) }), // a retry in flight
       ...[0, 1, 2].map((i) => breach('stalled', `c${i}`, { parent: 'P', parent_objective: 'fan out', at: stamp(NOW - (3 - i) * 3_600_000) })),
       ...[0, 1].map((i) => breach('reopened', `d${i}`, { parent: 'Q', parent_objective: 'fan again' })),
       ...[0, 1, 2, 3, 4, 5].map((i) => breach('quiet', `x${i}`)),
@@ -142,15 +150,43 @@ test('acts: never-judged and engine-failed DISPATCH the judgment headless — no
   assert.equal(by.P.kind_word, '3 verify failed');
 });
 
-test('the glass can speak an act UP the feed: Feed.swift declares send, and the dispatch branch writes the one request line — {"act":"verify",task_id,cwd}', () => {
+test('the glass can speak an act UP the feed: Feed.swift declares send, and the dispatch branch writes the one request line the package gave — {act, task_id, harness?, cwd?} — with no kind logic of its own', () => {
   const feed = swift('Feed.swift');
   assert.match(feed, /func send\(_ line: String\)/, 'FeedClient declares the upward line');
   const model = swift('NotchModel.swift');
   assert.match(model, /case "dispatch":/, 'the act switch executes a dispatch');
-  assert.match(model, /"act": "verify"/, 'the request names the act');
+  assert.match(model, /let act = resume\?\.act/, 'the request carries the act word Node gave — verify, update — never a literal of the glass\'s');
+  assert.match(model, /"act": act\b/);
+  assert.doesNotMatch(model, /"act": "verify"/, 'no act literal in the glass');
   assert.match(model, /"task_id"/, 'and the task');
+  assert.match(model, /"harness"/, 'and the harness, when the act names one');
   assert.doesNotMatch(model.split('case "dispatch":')[1].split('case ')[0], /spawnTerminal|resume\.command/,
     'a dispatch opens no terminal and writes no resume.command');
+  const structs = decodables(feed);
+  assert.ok(structs.Resume.some((f) => f.field === 'act' && f.optional), 'Resume decodes act');
+  assert.ok(structs.Resume.some((f) => f.field === 'harness' && f.optional), 'Resume decodes harness');
+});
+
+test('a stall whose cause is an OUTDATED engine the adapter can update offers the update act — the one dispatch line, the harness named, the command the feed runs; other stalls keep retry; an unupdatable engine offers retry; a busy row offers nothing', () => {
+  const digest = new BreachDigest({ breaches: [
+    breach('stalled', 'u1', { engine: 'codex', cause: 'outdated' }),
+    breach('stalled', 'u2', { engine: 'cursor', cause: 'outdated' }),
+    breach('stalled', 'u3', { engine: 'codex', cause: 'missing' }),
+    breach('stalled', 'u4', { engine: 'codex', cause: null }),
+    breach('stalled', 'u5', { engine: 'codex', cause: 'outdated', busy: true, busy_word: 'updating Codex', busy_detail: 'Codex is updating' }),
+  ] });
+  const frame = new NotchFrame({
+    registry: { rootOf: () => '/srv/app' }, sessions: () => ({}), defaultAgent: 'claude', motionWindowMs: 600_000, operatorHome: '/Users/someone',
+  }).build({ digest, sections: { mine: [], open: [], asserted: [], held: [] } });
+  const by = Object.fromEntries(frame.breaches.map((b) => [b.task_id, b]));
+  assert.deepEqual([by.u1.act.kind, by.u1.act.act, by.u1.act.harness, by.u1.act.task_id, by.u1.act.word],
+    ['dispatch', 'update', 'codex', 'u1', UPDATE_ACT], 'the update is a dispatch the feed executes — the glass learns nothing new');
+  assert.equal(by.u1.act.command, '"/Users/someone/.oathe/bin/oathe" engine update codex --then-verify', 'the verb the feed runs, spelled by Node');
+  assert.equal(by.u1.kind_word, KINDS.stalled.word, 'the kind word is unchanged — the ACT changes');
+  assert.deepEqual([by.u2.act.act, by.u2.act.word], ['verify', KINDS.stalled.act], 'cursor declares no updater — retry stays honest');
+  assert.deepEqual([by.u3.act.act, by.u4.act.act], ['verify', 'verify'], 'missing and unrecognized causes retry');
+  assert.equal(by.u5.act, null, 'updating — no act the machine would refuse');
+  assert.equal(by.u5.kind_word, 'updating Codex', 'the in-flight word the pager stamped');
 });
 
 test('work rows carry what the card says: the objective, the children line, and the resumption with its word', () => {
@@ -160,7 +196,7 @@ test('work rows carry what the card says: the objective, the children line, and 
   for (const row of [...frame.motion, ...frame.idle]) {
     assert.equal(row.objective, `objective of ${row.task_id}`);
     assert.ok('children_line' in row, 'the children line rides (null until the claim spawns)');
-    assert.equal(row.resume.word, KINDS.quiet.act, 'the resumption\'s word is the continue word, from Node');
+    assert.equal(row.resume.word, KINDS.quiet.act, 'a row with a place to go has the continue word, from Node (a row with none has resume null — pinned below)');
   }
   const live = frame.motion.find((r) => r.task_id === 'm1');
   assert.equal(live.resume.kind, 'activate', 'a living session is switched to');
@@ -177,27 +213,68 @@ test('the wire\'s word is liveness: a task heard on the wire is in motion until 
   assert.equal(heard.surface, 'codex', 'the wire\'s live word names the surface');
 });
 
-test('no dead-end rows (ruling 2026-09-04): a homeless rejected task heard from a living app resumes INTO it; unheard, the clipboard is the act — an act either way, and the glass buttons every act', () => {
-  const digest = new BreachDigest({ breaches: [breach('reopened', 'hz', { home: 'homeless', home_ref: null })] });
+test('continue goes WHERE THE WORK LIVES (ruling 2026-09-05): a task residing in the ChatGPT app opens the app, cold; a living app is switched to; a folder spawns the agent there; an app nobody resumes into offers NO act — never a fake one (copy-only is gone); a row with no place is a broken record, refused loudly', () => {
   const frame = new NotchFrame({ registry: { rootOf: () => null }, sessions: () => ({}), defaultAgent: 'claude', motionWindowMs: 600_000, operatorHome: '/Users/someone' });
   const sections = { mine: [], open: [], asserted: [], held: [] };
-  const cold = frame.build({ digest, sections }).breaches.find((b) => b.task_id === 'hz');
-  assert.deepEqual(cold.act, { kind: 'copy-only', word: CONTINUE_ACT }, 'homeless, unheard: the clipboard is the act — never nothing');
-  frame.hear('hz', { at: Date.now(), via: 'codex', app: { pid: process.pid, bundle: '/Applications/ChatGPT.app' } });
-  const warm = frame.build({ digest, sections }).breaches.find((b) => b.task_id === 'hz');
-  assert.deepEqual(warm.act, { kind: 'activate', app_pid: process.pid, bundle: '/Applications/ChatGPT.app', word: CONTINUE_ACT },
-    'heard from a living app (ChatGPT\'s embedded codex — no hooks, no registry row): continue switches to it, the ladder a moving row already climbs');
-  // The glass buttons every act the package decides — hiding one kind was the dead end.
+  const rowFor = (extra) => frame.build({ digest: new BreachDigest({ breaches: [breach('reopened', 'hz', extra)] }), sections }).breaches.find((b) => b.task_id === 'hz');
+  // A claim with no recorded place cannot exist (every pickup records one; a placeless claim is refused): the frame does not invent a word for it.
+  assert.throws(() => rowFor(BROKEN_RECORD), (e) => e.code === 'OATHE_PLACE_UNKNOWN', 'there is no "homeless" — a missing place is a broken record, said loudly');
+  // Cold, residing in the app: the recorded app IS the place — open it. Survives every feed restart.
+  assert.deepEqual(rowFor(IN_CHATGPT).act,
+    { kind: 'open-app', bundle: '/Applications/ChatGPT.app', word: CONTINUE_ACT, paste: 'continue hz', flash: OPEN_APP_FLASH('ChatGPT') },
+    'the durable place resumes without the wire\'s memory — and the act carries the line to paste and the sentence the row shows (Node\'s words)');
+  assert.equal(OPEN_APP_FLASH('ChatGPT'), 'command copied — paste in ChatGPT to continue');
+  assert.equal(rowFor(IN_CHATGPT).place_dir, null, 'no project folder recorded on this fixture');
+  assert.equal(rowFor({ ...IN_CHATGPT, place_dir: '/Users/x/.codex/.chatgpt-projects/g-p-1' }).place_dir, '/Users/x/.codex/.chatgpt-projects/g-p-1', 'the project folder rides the row for the card');
+  assert.ok(!('paste' in (rowFor({ home: '/srv/app', home_ref: 'ws-a', place: 'workspace:ws-a', places: ['workspace:ws-a'], place_app: null }).act)), 'a folder resumption pastes nothing — the terminal gets the line itself');
+  assert.equal(rowFor(IN_CHATGPT).home, 'ChatGPT', 'the row wears the place\'s word');
+  // A recorded app on a surface whose adapter does not resume by opening (a terminal) is not a place to open.
+  assert.equal(rowFor({ ...IN_CHATGPT, home: 'Codex', place: 'app:codex', places: ['app:codex'], place_app: '/Applications/iTerm.app' }).act, null,
+    'only an adapter-declared app surface opens (appResumable) — never "some bundle we saw"');
+  // A living app still wins: activate, as before.
+  frame.hear('hz', { at: Date.now(), via: 'chatgpt', app: { pid: process.pid, bundle: '/Applications/ChatGPT.app' } });
+  assert.deepEqual(rowFor(IN_CHATGPT).act, { kind: 'activate', app_pid: process.pid, bundle: '/Applications/ChatGPT.app', word: CONTINUE_ACT },
+    'heard from a living app: continue switches to it');
+  // The glass buttons every act the package decides and nothing else; no copy rung exists anywhere.
   assert.match(swift('NotchView.swift'), /actFor: breach\.act != nil \? breach\.task_id : nil/, 'NotchView gates the button on the act\'s presence, never its kind');
   assert.doesNotMatch(swift('NotchView.swift'), /\["spawn-terminal", "dispatch"\]\.contains/, 'no kind list in the glass');
+  // The clipboard is a HELPER on a real act, never an act: open-app pastes Node's line and shows
+  // Node's sentence; no copy-only rung, no sentence composed in Swift.
+  for (const file of ['Feed.swift', 'NotchModel.swift', 'NotchView.swift']) {
+    assert.doesNotMatch(swift(file), /copy-only|"copied"|command copied/, `${file}: no copy rung, no sentence of its own`);
+  }
+  const model = swift('NotchModel.swift');
+  assert.equal((model.match(/setString\(/g) ?? []).length, 1, 'the clipboard is written in exactly one place');
+  assert.match(model.split('case "open-app":')[1].split('case ')[0], /if let paste = resume\?\.paste[\s\S]*setString\(paste/, 'and that place is the open-app act, fed by resume.paste');
+  assert.match(model, /if let flash = resume\?\.flash \{ expandedId = id/, 'a flash sentence expands the row it belongs to');
+  // A sentence needs longer on the row than a word: the two durations are named once, and the act's
+  // own `flash` decides which — no kind logic, no sentence composed here.
+  assert.match(model, /enum Flash \{[\s\S]*static let word = 1\.6[\s\S]*static let sentence = 3\.0/, 'the two flash durations are named once');
+  assert.match(model, /for: [a-z.?]+\.flash != nil \? Flash\.sentence : Flash\.word/, 'a sentence flashes for Flash.sentence, a word for Flash.word');
+  const structs = decodables(swift('Feed.swift'));
+  assert.ok(structs.Resume.some((f) => f.field === 'paste' && f.optional) && structs.Resume.some((f) => f.field === 'flash' && f.optional), 'Resume decodes paste and flash');
+  assert.doesNotMatch(fs.readFileSync(path.join(root, 'src/notch-frame.mjs'), 'utf8'), /copy-only/, 'Node never emits it either');
+});
+
+test('a WORK row resides somewhere too: its home_path is the folder, or the app\'s word; its surface falls back to the recorded place after a feed restart; a placeless work row is a broken record', () => {
+  const frame = new NotchFrame({ registry: { rootOf: (ref) => (ref === 'ws-a' ? '/srv/app' : null) }, sessions: () => ({}), defaultAgent: 'claude', motionWindowMs: 600_000, operatorHome: '/Users/someone' });
+  const digest = new BreachDigest({ breaches: [] });
+  const built = frame.build({ digest, sections: { mine: [work('f1'), work('c1', IN_CHATGPT)], open: [], asserted: [], held: [] } });
+  const by = Object.fromEntries(built.motion.map((r) => [r.task_id, r]));
+  assert.equal(by.f1.home_path, '/srv/app');
+  assert.deepEqual([by.c1.home_path, by.c1.surface, by.c1.resume],
+    ['ChatGPT', 'chatgpt', { kind: 'open-app', bundle: '/Applications/ChatGPT.app', word: CONTINUE_ACT, paste: 'continue c1', flash: OPEN_APP_FLASH('ChatGPT') }],
+    'a work row in the app resumes the same way a breach does: open, paste, the sentence');
+  assert.throws(() => frame.build({ digest, sections: { mine: [work('n1', BROKEN_RECORD)], open: [], asserted: [], held: [] } }),
+    (e) => e.code === 'OATHE_PLACE_UNKNOWN');
 });
 
 test('UX rule 22 on WORK rows: an asserted claim is never invisible — `judged` carries it with the judgment it awaits (verifying + busy while a judge holds it; awaiting otherwise), no act, uncounted; a breached task keeps its one breach row', () => {
   const { frame } = facts();
   assert.deepEqual(frame.judged.map((r) => [r.task_id, r.judgment, r.busy]),
-    [['a1', BUSY.word, true], ['a2', JUDGMENT.awaiting.word, false]],
-    'the words are the one table\'s (JUDGMENT beside BUSY); the spinner rides `busy`, the same key a breach spins on');
-  assert.equal(JUDGMENT.verifying.word, BUSY.word, 'verifying is spelled ONCE — a breach in flight and a claim under judgment read the same word');
+    [['a1', IN_FLIGHT.verify.word, true], ['a2', JUDGMENT.awaiting.word, false]],
+    'the words are the one table\'s (JUDGMENT beside IN_FLIGHT); the spinner rides `busy`, the same key a breach spins on');
+  assert.equal(JUDGMENT.verifying.word, IN_FLIGHT.verify.word, 'verifying is spelled ONCE — a breach in flight and a claim under judgment read the same word');
   for (const row of frame.judged) {
     assert.equal(row.state, 'completion_asserted');
     assert.equal(row.holder, 'founder', 'the asserter stays the holder on the card');
@@ -212,7 +289,9 @@ test('UX rule 22 on WORK rows: an asserted claim is never invisible — `judged`
   const motionRow = Object.fromEntries(structs.MotionRow.map((f) => [f.field, f]));
   assert.deepEqual([motionRow.judgment?.type, motionRow.judgment?.optional], ['String', true], 'MotionRow.judgment: String?');
   assert.deepEqual([motionRow.busy?.type, motionRow.busy?.optional], ['Bool', true], 'MotionRow.busy: Bool?');
-  assert.ok(structs.Frame.some((f) => f.field === 'judged' && f.type === '[MotionRow]'), 'Frame.judged: [MotionRow]');
+  assert.ok(structs.Frame.some((f) => f.field === 'judged' && f.type === '[MotionRow]' && !f.optional), 'Frame.judged: [MotionRow] — required; the feed and the app ship together, no older frame is decoded');
+  assert.ok(structs.Frame.some((f) => f.field === 'more' && f.type === 'Int' && !f.optional), 'Frame.more: Int — every frame carries it');
+  assert.ok(structs.Frame.some((f) => f.field === 'welcome' && f.optional), 'Frame.welcome stays optional — it rides one frame');
   assert.match(swift('NotchModel.swift'), /frame\.judged/, 'the model lists judged rows in the sheet');
   assert.match(swift('NotchView.swift'), /case \.work\(let row\):[\s\S]{0,400}busy: row\.busy/, 'a work row spins on busy exactly as a breach row does');
 });

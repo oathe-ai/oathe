@@ -18,7 +18,7 @@ struct WorkRow: Identifiable {
     let amber: Bool       // deviant state (reopened) only
     let childrenLine: String? // the claim's spawned work, counted by the board
     let progress: String? // the last recorded word, for the expanded row
-    let homePath: String? // where the work lives — the copy-only fallback
+    let homePath: String? // where the work lives — the folder, or the app's word (the card's home line)
     let resume: Resume?   // the package-owned resumption continue executes
     let judgment: String? // an asserted claim: the judgment it awaits — the row's meta, Node's word
     let busy: Bool        // a judge holds it — the spinner, the same key a breach spins on
@@ -84,7 +84,7 @@ final class NotchModel: ObservableObject {
     var entries: [SheetEntry] {
         guard let frame else { return [] }
         let breachIds = Set(frame.breaches.map { $0.task_id })
-        let work = (frame.motion + (frame.judged ?? []) + frame.idle)
+        let work = (frame.motion + frame.judged + frame.idle)
             .filter { !breachIds.contains($0.task_id) }
             .map { row in
                 WorkRow(id: row.task_id,
@@ -123,7 +123,7 @@ final class NotchModel: ObservableObject {
         // notice fires its own tone; otherwise a task never seen before is the claim event
         // (sage). The first frame is baseline — presence, not an event.
         let seen = Set(frame.breaches.map { $0.task_id }
-            + (frame.motion + (frame.judged ?? []) + frame.idle).map { $0.task_id })
+            + (frame.motion + frame.judged + frame.idle).map { $0.task_id })
         if let notice = frame.notice {
             // A verdict earns the winged glyph (✓/✗) — the ring alone went unseen.
             pulse.fire(notice.tone == "amber" ? .amber : .sage, glyph: true)
@@ -200,26 +200,40 @@ final class NotchModel: ObservableObject {
         onChange?()
     }
 
-    /// The one act a row offers: RESUMPTION, never a shrug (founder ruling 2026-08-30) —
-    /// activate the living app; spawn the agent at the task's home in a terminal; open the
-    /// desktop app; else the folder. The clipboard is filled in every branch; the package
-    /// decided which branch (frame.resume) — the glass only executes, and the flash says
-    /// what actually happened.
+    /// The one act a row offers: RESUMPTION, never a shrug (founder rulings 2026-08-30,
+    /// 2026-09-05) — activate the living app; spawn the agent at the folder the work resides
+    /// in; open the app it resides in. The package decided which (frame.resume) — a row with
+    /// nothing to resume into carries none and shows no button. The glass only executes, and
+    /// the flash says what actually happened; nothing happening flashes nothing.
+    /// How long a flash stays: a word in the button, or a sentence on the expanded row — the
+    /// act's own `flash` (Node's sentence) decides which; nothing here reads a kind.
+    private enum Flash {
+        static let word = 1.6
+        static let sentence = 3.0
+    }
+
     func continueAct(_ row: WorkRow) {
-        let word = execute(row.resume, clipboard: "continue \(row.id)", folder: row.homePath)
-        flash(row.id, word)
+        if let word = execute(row.resume, folder: row.homePath) {
+            flash(row.id, word, for: row.resume?.flash != nil ? Flash.sentence : Flash.word)
+            expandFor(row.resume, id: row.id)
+        }
+    }
+
+    /// A flash SENTENCE (Node's words) expands the row it belongs to so it can be read — a
+    /// one-word flash stays in the button.
+    private func expandFor(_ resume: Resume?, id: String) {
+        if let flash = resume?.flash { expandedId = id; _ = flash; onChange?() }
     }
 
     /// A breach's act: verify for overdue/stalled, the resumption otherwise (frame.act).
     func breachAct(_ breach: Breach) {
-        let word = execute(breach.act, clipboard: breach.act?.command ?? "continue \(breach.task_id)", folder: nil)
-        flash(breach.task_id, word)
+        if let word = execute(breach.act, folder: nil) {
+            flash(breach.task_id, word, for: breach.act?.flash != nil ? Flash.sentence : Flash.word)
+            expandFor(breach.act, id: breach.task_id)
+        }
     }
 
-    private func execute(_ resume: Resume?, clipboard: String, folder: String?) -> String {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(clipboard, forType: .string)
+    private func execute(_ resume: Resume?, folder: String?) -> String? {
         switch resume?.kind {
         case "activate":
             // Cooperative activation can DENY a background app's request — the Bool is the
@@ -234,7 +248,7 @@ final class NotchModel: ObservableObject {
                                                    configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
                 return "switched"
             }
-            return openFolder(folder) ? "opened" : "copied"
+            return openFolder(folder) ? "opened" : nil
         case "spawn-terminal":
             spawnTerminal(resume!)
             return "launched"
@@ -242,28 +256,36 @@ final class NotchModel: ObservableObject {
             // A judgment needs no terminal (founder, 2026-09-04): the request rides UP the feed
             // as one line; the feed runs the one dispatcher and the row turns `verifying` on the
             // very next frame — that frame is the confirmation, not a sentence composed here.
-            guard let task = resume?.task_id else { return "copied" }
-            var request: [String: Any] = ["act": "verify", "task_id": task]
+            // The act (verify | update) and its harness are Node's words — the glass has no kind
+            // logic: it relays the line the package gave (ruling 2026-09-05).
+            guard let task = resume?.task_id, let act = resume?.act else { return nil }
+            var request: [String: Any] = ["act": act, "task_id": task]
+            if let harness = resume?.harness { request["harness"] = harness }
             if let cwd = resume?.cwd { request["cwd"] = cwd }
             guard let data = try? JSONSerialization.data(withJSONObject: request),
-                  let line = String(data: data, encoding: .utf8) else { return "copied" }
+                  let line = String(data: data, encoding: .utf8) else { return nil }
             send?(line)
             return "dispatched"
         case "open-app":
-            if let bundle = resume?.bundle {
-                NSWorkspace.shared.open(URL(fileURLWithPath: bundle))
-                return "opened"
+            // The work resides in this app (the place recorded on the act): opening it IS the
+            // resumption. The app cannot be opened to a thread, so the package's line rides the
+            // clipboard and its sentence flashes on the row — the glass composes neither.
+            guard let bundle = resume?.bundle else { return nil }
+            if let paste = resume?.paste {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(paste, forType: .string)
             }
-            return "copied"
+            NSWorkspace.shared.open(URL(fileURLWithPath: bundle))
+            return resume?.flash ?? "opened"
         default:
-            return openFolder(folder) ? "opened" : "copied"
+            return nil
         }
     }
 
-    private func flash(_ id: String, _ word: String) {
+    private func flash(_ id: String, _ word: String, for seconds: Double) {
         flashTask = id
         flashWord = word
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
             if self?.flashTask == id { self?.flashTask = nil; self?.onChange?() }
         }
         onChange?()

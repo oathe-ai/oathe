@@ -289,6 +289,7 @@ export class CodexTraceStore extends TraceStore {
       harness: this.harness,
       session_id: meta.id ?? meta.session_id,
       cwd: meta.cwd ?? null,
+      originator: meta.originator ?? null, // the writer (codex_cli_rs, codex_work_desktop …) — the desktop's staging gate reads it
       source: meta.source ?? null,
       entries: rows.length,
       path: file,

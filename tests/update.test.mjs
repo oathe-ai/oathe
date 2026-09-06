@@ -99,8 +99,8 @@ test('update SWEEPS the stale MCP servers after the install — a replaced tree 
   const order = base.calls.map(([cmd, a]) => (cmd === 'pgrep' || cmd === 'kill' ? cmd : a[0]));
   assert.ok(order.indexOf('pgrep') > order.indexOf('i'), 'the sweep runs AFTER the install replaced the tree');
   const pgrepCall = base.calls.find(([cmd]) => cmd === 'pgrep');
-  assert.deepEqual(pgrepCall[1], ['-u', String(process.getuid()), '-f', '[/]oathe(\\.mjs)? mcp$'],
-    'this user\'s mcp servers only — bare-bin and shim-spawned shapes both match, the notch serve does not');
+  assert.deepEqual(pgrepCall[1], ['-u', String(process.getuid()), '-f', '[/]oathe\\.mjs mcp$'],
+    'this user\'s mcp servers only — the shim-spawned shape, the notch serve does not match');
   assert.deepEqual(base.calls.filter(([cmd]) => cmd === 'kill').map((c) => c[1]), [['111'], ['222']],
     'one kill per pid — one already-dead target must not fail the rest (review F5)');
   assert.match(lines.join(''), /2 stale MCP server/, 'the sweep is said, never silent');

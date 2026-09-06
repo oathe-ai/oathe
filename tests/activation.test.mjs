@@ -142,12 +142,12 @@ test('R-BOARD-SCOPE: a synthetic workspace is never activated — no fences, no 
   assert.equal(manifest.rows.length, 0);
 });
 
-test('the GLOBAL fence body speaks to sessions with no folder: machine-wide board, homeless claims, true in a folder too', async () => {
+test('the GLOBAL fence body speaks to sessions with no folder: machine-wide board, app-resident claims, true in a folder too', async () => {
   const { globalFenceBody, fenceBody, SPEECH_ACT_RULE } = await import('../src/fence.mjs');
   const body = globalFenceBody();
   const flat = body.replaceAll('\n', ' '); // the file is wrapped for people; the sentences are what matter
   assert.ok(body.startsWith('## Oathe'));
-  assert.match(flat, /homeless/);
+  assert.match(flat, /lives in the app until a folder picks it up/, 'where work claimed from the app lives (R-PLACE) — never a third word');
   assert.match(flat, /claim before you build/);
   assert.ok(flat.includes(SPEECH_ACT_RULE), 'one sentence carries the rule everywhere');
   assert.ok(body.split('\n').every((l) => l.length <= 90), 'wrapped for the humans who read the file');

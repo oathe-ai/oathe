@@ -6,6 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 import { Verifier, VerifierError } from '../src/verifier.mjs';
+import { HomeBoard } from '../src/home.mjs';
 import { createOatheTools } from '../src/mcp/oathe-tools.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
@@ -548,7 +549,7 @@ for (const [providerName, makeProvider] of PROVIDERS) {
         await eyed.close();
       }
       assert.equal(seen[0].cwd, '/tmp/the-task-home', 'the engine judges FROM the task home, never the caller\'s folder');
-      assert.match(seen[0].prompt, /task's workspace — check asserted artifacts against the files on disk/,
+      assert.match(seen[0].prompt, /You are running in \/tmp\/the-task-home — the task's folder — check asserted artifacts against the files on disk/,
         'the prompt invites workspace inspection — the engine is the evidence reader');
     });
 
@@ -692,12 +693,12 @@ for (const [providerName, makeProvider] of PROVIDERS) {
         () => verifier.verify({ taskId: 'never-done' }),
         (e) => e instanceof VerifierError && e.code === 'OATHE_NOTHING_TO_VERIFY');
     });
-    it("R-HOME-BOARD: the verification task inherits the WORK's home, not the verifier's folder", async () => {
+    it("the judgment lives where the WORK does (ruling 2026-09-05): the verify task's residence anchors to its parent's, whatever folder the verifier stood in", async () => {
       const claim = await workerTools.oathe_claim({ task_id: 'homed-verify', objective: 'homed in WS' });
       await linkTrace('homed-verify', claim.work_claim_id);
       await workerTools.oathe_done({ task_id: 'homed-verify', proposition: 'done in WS', evidence_ref: 'commit:h' });
-      // A verifier standing in ANOTHER folder judges it — its claim on verify:homed-verify must
-      // carry WS (the parent's home), never the verifier's own workspace (leak #2).
+      // A verifier standing in ANOTHER folder judges it — where the judgment lives is where the
+      // work was picked up (WS), never the verifier's own workspace (leak #2).
       const foreign = new Verifier({
         env: SCRATCH_ENV,
         substrate, paths, workspace: 'ws-fedcba654321', config: scratchConfig(),
@@ -710,8 +711,46 @@ for (const [providerName, makeProvider] of PROVIDERS) {
         await foreign.close();
       }
       const { rows } = await substrate.query(
-        "SELECT contract_ref FROM cell.work_claim WHERE task_id = 'verify:homed-verify' ORDER BY claimed_at ASC LIMIT 1");
-      assert.equal(rows[0].contract_ref, `workspace:${WS};contract:oathe/verify:homed-verify@v1`);
+        `SELECT res.place FROM cell.task t LEFT JOIN LATERAL (${HomeBoard.residenceSql('t')}) res ON true
+          WHERE t.org_id = 'oathe' AND t.task_id = 'verify:homed-verify'`);
+      assert.equal(rows[0].place, `workspace:${WS}`, 'the verification task resides where its parent does — the one anchor');
+      const { rows: parent } = await substrate.query(
+        `SELECT res.place FROM cell.task t LEFT JOIN LATERAL (${HomeBoard.residenceSql('t')}) res ON true
+          WHERE t.org_id = 'oathe' AND t.task_id = 'homed-verify'`);
+      assert.equal(parent[0].place, `workspace:${WS}`, 'a foreign judge picking up the verify task never moves the WORK');
+      const { rows: own } = await substrate.query("SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'verify:homed-verify' AND subject_ref LIKE 'place:%'");
+      assert.equal(own[0].n, 0, 'the judgment records no place of its own — it lives where its work does');
+    });
+
+    it('the engine judges FROM the project folder an app pickup recorded (dir: evidence) — and from the operator home, said in the prompt, when that folder is gone', async () => {
+      const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-g-p-'));
+      const chatgpt = createOatheTools({
+        client: substrate, identity: { orgId: 'oathe', principalId: OPERATOR, department: 'founder' }, workspace: null, synthetic: true, dir: projectDir, config: scratchConfig(),
+        activation: { register: async () => ({}), activate: async () => ({}) },
+        speaker: { surface: 'chatgpt', app: { bundle: '/Applications/ChatGPT.app', pid: 4242 }, session: null, walked: true, client: 'codex', pid: 4242, device: 'dev-1' },
+      });
+      const seen = [];
+      const judge = new Verifier({
+        env: SCRATCH_ENV, substrate, paths, workspace: null, config: scratchConfig(), operatorPrincipal: OPERATOR, provider: makeProvider(),
+        engineRunner: async ({ cwd, prompt }) => { seen.push({ cwd, prompt }); return { verdict: 'accepted', reason: 'judged in place' }; },
+      });
+      try {
+        const a = await chatgpt.oathe_claim({ task_id: 'in-project-a', objective: 'made in a ChatGPT project' });
+        await linkTrace('in-project-a', a.work_claim_id);
+        await chatgpt.oathe_done({ task_id: 'in-project-a', proposition: 'done', evidence_ref: 'x' });
+        await judge.verify({ taskId: 'in-project-a' });
+        assert.equal(seen[0].cwd, projectDir, 'the engine stands in the project folder the pickup recorded');
+        assert.ok(seen[0].prompt.includes(projectDir), 'and the prompt says where it stands');
+        const b = await chatgpt.oathe_claim({ task_id: 'in-project-b', objective: 'its folder is gone by judgment time' });
+        await linkTrace('in-project-b', b.work_claim_id);
+        await chatgpt.oathe_done({ task_id: 'in-project-b', proposition: 'done', evidence_ref: 'x' });
+        fs.rmSync(projectDir, { recursive: true, force: true });
+        await judge.verify({ taskId: 'in-project-b' });
+        assert.equal(seen[1].cwd, os.homedir(), 'a folder that no longer exists falls back to the operator home');
+        assert.ok(seen[1].prompt.includes(os.homedir()), 'said in the prompt — the only place the fallback is spoken');
+      } finally {
+        await judge.close();
+      }
     });
   });
 }
@@ -724,7 +763,7 @@ it('OATHE_ENGINE_FAILED carries the TAIL of stderr — the banner must not eat t
     `#!/bin/sh\nfor i in $(seq 1 40); do echo "BANNER LINE $i padding padding padding" 1>&2; done\necho "usage limit reached - try again at 2:56 AM" 1>&2\nexit 1\n`);
   fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
   await assert.rejects(
-    defaultEngineRunner({ engine: 'claude', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'bin')}:${process.env.PATH}` } }),
+    defaultEngineRunner({ engine: 'claude', prompt: 'p', address: path.join(home, 'bin', 'claude'), env: process.env }),
     (e) => e.code === 'OATHE_ENGINE_FAILED' && /usage limit reached/.test(e.message));
 });
 
@@ -738,7 +777,7 @@ it('defaultEngineRunner hands the engine a CLOSED stdin — an engine that reads
   fs.writeFileSync(path.join(home, 'bin', 'claude'), `#!/bin/sh\ncat > /dev/null\ncat <<'JSON'\n${payload}\nJSON\n`);
   fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
   const out = await Promise.race([
-    defaultEngineRunner({ engine: 'claude', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'bin')}:${process.env.PATH}` } }),
+    defaultEngineRunner({ engine: 'claude', prompt: 'p', address: path.join(home, 'bin', 'claude'), env: process.env }),
     new Promise((_, reject) => { setTimeout(() => reject(new Error('runner hung — stdin pipe never closed')), 8000).unref(); }),
   ]);
   assert.equal(out.verdict, 'accepted');
@@ -755,7 +794,7 @@ it('defaultEngineRunner resolves on ENGINE EXIT even when a grandchild keeps the
   fs.writeFileSync(path.join(home, 'bin', 'claude'), `#!/bin/sh\nsleep 300 &\ncat <<'JSON'\n${payload}\nJSON\nexit 0\n`);
   fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
   const out = await Promise.race([
-    defaultEngineRunner({ engine: 'claude', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'bin')}:${process.env.PATH}` } }),
+    defaultEngineRunner({ engine: 'claude', prompt: 'p', address: path.join(home, 'bin', 'claude'), env: process.env }),
     new Promise((_, reject) => setTimeout(() => reject(new Error('runner hung on close — the grandchild pipe hang')), 8000).unref?.() ?? undefined),
   ]);
   assert.equal(out.verdict, 'accepted');
@@ -772,9 +811,56 @@ it('defaultEngineRunner does not block the event loop — a timer ticks while th
   const timer = setInterval(() => { ticks += 1; }, 25);
   try {
     const out = await defaultEngineRunner({
-      engine: 'claude', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'bin')}:${process.env.PATH}` },
+      engine: 'claude', prompt: 'p', address: path.join(home, 'bin', 'claude'), env: process.env,
     });
     assert.equal(out.verdict, 'accepted');
   } finally { clearInterval(timer); }
   assert.ok(ticks >= 4, `the loop must keep turning during the engine run (ticks: ${ticks})`);
+});
+
+// ---------------------------------------------------------------- engines are addresses; failures have causes (2026-09-05)
+
+it('defaultEngineRunner spawns the recorded ADDRESS and nothing else — an engine whose bin is NOT on this process\'s PATH runs (the launchd feed, the serve daemon); no address is a refusal, never a PATH guess', async () => {
+  const { defaultEngineRunner } = await import('../src/verifier.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-addr-eng-'));
+  fs.mkdirSync(path.join(home, 'elsewhere'));
+  const payload = JSON.stringify({ verdict: 'accepted', reason: 'ran by address' });
+  const address = path.join(home, 'elsewhere', 'codex');
+  fs.writeFileSync(address, `#!/bin/sh\ncat <<'JSON'\n${payload}\nJSON\n`);
+  fs.chmodSync(address, 0o755);
+  const out = await defaultEngineRunner({ engine: 'codex', prompt: 'p', address, env: { ...process.env, PATH: '/usr/bin:/bin' } });
+  assert.equal(out.reason, 'ran by address');
+  // No address: the typed refusal — even with the bin ON this process's PATH, a judgment never guesses.
+  await assert.rejects(defaultEngineRunner({ engine: 'codex', prompt: 'p', env: { ...process.env, PATH: `${path.join(home, 'elsewhere')}:/usr/bin:/bin` } }),
+    (e) => e.code === 'OATHE_ENGINE_MISSING' && /no address was recorded/.test(e.message) && /oathe init/.test(e.message));
+  // A recorded address that is gone: the refusal names IT.
+  await assert.rejects(defaultEngineRunner({ engine: 'codex', prompt: 'p', address: '/gone/codex', env: { ...process.env, PATH: '/usr/bin:/bin' } }),
+    (e) => e.code === 'OATHE_ENGINE_MISSING' && /\/gone\/codex/.test(e.message) && /oathe init/.test(e.message));
+});
+
+it('an engine that dies with words its adapter recognizes carries the CAUSE — codex "requires a newer version" is `outdated`; unrecognized words carry none', async () => {
+  const { defaultEngineRunner } = await import('../src/verifier.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-cause-eng-'));
+  fs.mkdirSync(path.join(home, 'bin'));
+  fs.writeFileSync(path.join(home, 'bin', 'codex'),
+    `#!/bin/sh\necho "ERROR: {\\"type\\":\\"error\\",\\"error\\":{\\"message\\":\\"The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.\\"}}" 1>&2\nexit 1\n`);
+  fs.chmodSync(path.join(home, 'bin', 'codex'), 0o755);
+  await assert.rejects(
+    defaultEngineRunner({ engine: 'codex', prompt: 'p', address: path.join(home, 'bin', 'codex'), env: process.env }),
+    (e) => e.code === 'OATHE_ENGINE_FAILED' && e.details.cause === 'outdated' && /newer version of Codex/.test(e.message));
+  fs.writeFileSync(path.join(home, 'bin', 'codex'), '#!/bin/sh\necho "usage limit reached" 1>&2\nexit 1\n');
+  await assert.rejects(
+    defaultEngineRunner({ engine: 'codex', prompt: 'p', address: path.join(home, 'bin', 'codex'), env: process.env }),
+    (e) => e.code === 'OATHE_ENGINE_FAILED' && e.details.cause === null);
+});
+
+it('a verdict whose reason quotes braces — `{parent,surface}` — still parses: the runner finds the balanced object around "verdict", never a brace-free regex (live refusal 2026-09-05)', async () => {
+  const { defaultEngineRunner } = await import('../src/verifier.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-brace-eng-'));
+  fs.mkdirSync(path.join(home, 'bin'));
+  const payload = JSON.stringify({ result: `Judged. ${JSON.stringify({ verdict: 'accepted', reason: 'codex synthetic {parent,surface} and catalog {a: {b}} hold' })}` });
+  fs.writeFileSync(path.join(home, 'bin', 'claude'), `#!/bin/sh\ncat <<'JSON'\n${payload}\nJSON\n`);
+  fs.chmodSync(path.join(home, 'bin', 'claude'), 0o755);
+  const out = await defaultEngineRunner({ engine: 'claude', prompt: 'p', address: path.join(home, 'bin', 'claude'), env: process.env });
+  assert.deepEqual(out, { verdict: 'accepted', reason: 'codex synthetic {parent,surface} and catalog {a: {b}} hold' });
 });

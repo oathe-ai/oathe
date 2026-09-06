@@ -89,6 +89,15 @@ const KEYS = Object.freeze({
   serveConnectMs: { default: 250, env: 'OATHE_SERVE_CONNECT_MS', check: positiveInt },
   serveRestartSeconds: { default: 10, env: 'OATHE_SERVE_RESTART_SECONDS', check: positiveInt },
   serveRestartPollMs: { default: 100, env: 'OATHE_SERVE_RESTART_POLL_MS', check: positiveInt },
+  // The blocking exchange, declared to the transport (ruling 2026-09-05): `done`/`verify` wait
+  // for the verdict where the work is, so every MCP client that caps a tool call must be told
+  // the budget — each adapter writes it where its client reads it (mcpToolTimeout touchpoint).
+  // 900s: ~3× the longest verify measured on the founder's substrate (p50 80s, p90 177s, max
+  // 315s over 40 runs; codex's 60s default sat below the median), finite so a wedged engine
+  // surfaces as a client timeout, never an hour-long spinner. While it waits the server says
+  // "still judging" this often — a standard MCP progress notification on the call's token.
+  mcpToolTimeoutSec: { default: 900, env: 'OATHE_MCP_TOOL_TIMEOUT_SEC', check: positiveInt },
+  mcpProgressIntervalSec: { default: 15, env: 'OATHE_MCP_PROGRESS_INTERVAL_SEC', check: positiveInt },
 });
 
 function nonEmptyString(v) {

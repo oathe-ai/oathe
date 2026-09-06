@@ -67,15 +67,14 @@ export function writeShim({ home, manifest, version, packageRoot, execPath = pro
  * instance serves stale modules; through an uninstall it loses its floor entirely and answers
  * every speech act with raw ENOENT (measured 2026-09-03). "Just get rid of it for them"
  * (founder, 2026-09-04): sweep them; harnesses respawn a fresh server from the shim. The
- * pattern matches both spawn shapes — the shim's `node …/bin/oathe.mjs mcp` and the legacy
- * bare `…/bin/oathe mcp` — and deliberately not `oathe notch --serve`, whose launchd job has
- * its own restart story (0.4.4).
+ * pattern matches the one spawn shape the shim produces — `node …/bin/oathe.mjs mcp` — and
+ * deliberately not `oathe notch --serve`, whose launchd job has its own restart story.
  */
 export function sweepMcpServers({ exec }) {
   const uid = process.getuid?.();
   // The pattern cannot match the sweeping process itself: our own cmdline ends in `update`
   // or `uninstall`, never ` mcp`.
-  const pgrepArgs = [...(uid === undefined ? [] : ['-u', String(uid)]), '-f', '[/]oathe(\\.mjs)? mcp$'];
+  const pgrepArgs = [...(uid === undefined ? [] : ['-u', String(uid)]), '-f', '[/]oathe\\.mjs mcp$'];
   const found = exec.run('pgrep', pgrepArgs);
   // pgrep speaks in exit codes: 1 is "nothing matched"; anything else is "could not look" —
   // and a founder-mandated sweep that cannot look must say so, never shrug (review F4).

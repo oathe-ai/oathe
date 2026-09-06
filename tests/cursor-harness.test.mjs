@@ -145,3 +145,10 @@ test('an unverifiable write refuses with CURSOR_VERIFICATION_FAILED, recording n
     fs.chmodSync(path.join(home, '.cursor'), 0o755);
   }
 });
+
+test('a recorded hooks.json row without owns_version is not a row this oathe writes — onboard refuses typed instead of guessing false (zero legacy, 2026-09-05)', () => {
+  const { manifest, harness, home } = fixture();
+  fs.writeFileSync(path.join(home, '.cursor/hooks.json'), JSON.stringify({ version: 1, hooks: {} }));
+  manifest.upsert({ harness: 'cursor', file: path.join(home, '.cursor/hooks.json'), kind: 'json-array', detail: { entries: [] }, blockVersion: '0.0.0', sha256: 'x' });
+  assert.throws(() => harness.onboard({ manifest, version: '9.9.9' }), (e) => e.code === 'CURSOR_MANIFEST_ROW_MALFORMED' && /owns_version/.test(e.message));
+});

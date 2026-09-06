@@ -133,3 +133,18 @@ enforcement phase's exit (staging record of 2026-08-22, §3.6; product-record de
   contract does not declare. The contract fails loud on drift by design; public `main` carries
   the same check and the same gap. Declaring the line is its own change, recorded here as the
   gate's honest answer, not folded into the release.
+- **0.4.5, re-cut (recorded 2026-09-06).** The release tree assembled again from `d0-gates`
+  `59216f2` onto public `main` `183934d` (the overlay re-diffed: README and every governance
+  file identical to `main`; the registry metadata `main` gained in #38 carried on `plugin.json`
+  and `marketplace.json` at 0.4.5): gitleaks clean; `npm test` on the assembled tree unit 504 /
+  heavy 317, zero failures (the working tree says 505: one test skips where the release tree has
+  no `.harness-docs` snapshot, by design); 15 packages, licenses MIT/ISC/Apache-2.0 only; workflow
+  policy 7 files. Marker sweep: every hit in the classes above and nothing new — no `/Users/`
+  path outside the synthetic names, no person. One finding in the identity leg, accepted: the
+  release branch stands on `main`, whose history now carries a contributor's commit (#38, a
+  GitHub-noreply identity); it is public `main`'s own record, not this tree's. The upgrade leg
+  on the release machine: `oathe init --yes` twice from the tarball (sha256 `9b32140ad6de…`),
+  notch and daemon each time with the pid launchd reports; the closing `oathe doctor` ended
+  `attention` on the same one row as above, now `undeclared event_msg.context_compacted`
+  (codex 0.153.4), so the leg's script printed FAILED on its doctor gate while its own
+  measurement held. Declaring the line remains its own change.

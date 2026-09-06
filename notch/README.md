@@ -44,9 +44,9 @@ A frame carries:
 
 | Key | What it is |
 |---|---|
-| `breaches` | the breach digest's rows — sharpest first, at most the sheet's row cap, each with `kind_word`, `objective`, `home`, `detail`, `at`, `busy` (a judgment in flight: the word is `verifying`, the failure is gone, no act — the glass adds a spinner), and its `act` (`kind`, `word`, and what to run) |
+| `breaches` | the breach digest's rows — sharpest first, at most the sheet's row cap, each with `kind_word`, `objective`, `home`, `detail`, `at`, `busy` (a system claim in flight: the word is `verifying` or `updating <Engine>`, the failure is gone, no act — the glass adds a spinner), and its `act` (`kind`, `word`, and what to run; a `dispatch` carries `act` — `verify` or `update` — and, for an update, `harness`: the glass relays the line up the feed and decides nothing; an `open-app` carries `paste` — the line the glass puts on the clipboard — and `flash`, the sentence the expanded row shows; rows also carry `place_dir`, the app pickup's project folder) |
 | `more` | how many breaches the budget left out |
-| `motion` | anyone's active claim with a recent word, or one heard live on the wire — each with `objective`, `holder`, `surface`, `session`, `children_line`, and its `resume` |
+| `motion` | anyone's active claim with a recent word, or one heard live on the wire — each with `objective`, `holder`, `surface`, `session`, `children_line`, `home_path` (the folder it resides in, or the app's word), `place_dir` (an app pickup's project folder), and its `resume` (null when there is nothing to resume into — then no button; an `open-app` resume carries `paste` and `flash` like a breach's act) |
 | `judged` | asserted claims awaiting their verdict (never invisible between done and verdict) — the same row shape, with `judgment` (the word: `verifying` while a judge holds it, `awaiting verdict` until one does), `busy` (the spinner, the key a breach spins on), and no `resume` — nothing a person does moves a judgment |
 | `idle` | your held claims gone quiet, after motion and judgment |
 | `sections` | the one board classification (`mine` · `open` · `asserted` · `held`) |

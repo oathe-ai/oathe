@@ -41,7 +41,7 @@ struct SessionRef: Decodable {
 
 /// The package-owned resumption: the glass EXECUTES, it never decides.
 struct Resume: Decodable {
-    let kind: String // activate | spawn-terminal | open-app | copy-only | dispatch
+    let kind: String // activate | spawn-terminal | open-app | dispatch — a row with nothing to resume into carries no Resume at all
     let word: String // the act's word on the button (continue ↗ / verify ↗ / retry ↗) — Node's
     let app_pid: Int32?
     let bundle: String?
@@ -49,8 +49,12 @@ struct Resume: Decodable {
     let cwd: String?
     let terminal_bundle: String?
     let task_id: String? // dispatch: the task the feed judges — spoken UP the pipe, no terminal
+    let act: String? // dispatch: the act word the package chose (verify | update) — the glass relays it, never decides it
+    let harness: String? // dispatch/update: the engine the act names
+    let paste: String? // open-app: the line to put on the clipboard (the app cannot be opened to a thread)
+    let flash: String? // open-app: the sentence the expanded row shows — Node's words
 
-    private enum CodingKeys: String, CodingKey { case kind, word, app_pid, bundle, command, cwd, terminal_bundle, task_id }
+    private enum CodingKeys: String, CodingKey { case kind, word, app_pid, bundle, command, cwd, terminal_bundle, task_id, act, harness, paste, flash }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -62,6 +66,10 @@ struct Resume: Decodable {
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         terminal_bundle = try c.decodeIfPresent(String.self, forKey: .terminal_bundle)
         task_id = try c.decodeIfPresent(String.self, forKey: .task_id)
+        act = try c.decodeIfPresent(String.self, forKey: .act)
+        harness = try c.decodeIfPresent(String.self, forKey: .harness)
+        paste = try c.decodeIfPresent(String.self, forKey: .paste)
+        flash = try c.decodeIfPresent(String.self, forKey: .flash)
     }
 }
 
@@ -99,13 +107,13 @@ struct Welcome: Decodable {
 /// sheet's rows carry the words — no push line rides the frame.
 struct Frame: Decodable {
     let breaches: [Breach]
-    let more: Int?
+    let more: Int // the count beyond the rows — every frame carries it
     let motion: [MotionRow]
-    let judged: [MotionRow]? // asserted claims awaiting their verdict — optional so an old feed's frames stay decodable
+    let judged: [MotionRow] // asserted claims awaiting their verdict — every frame carries it (the feed and this app ship together)
     let idle: [MotionRow]
     let sections: Sections
     let notice: Notice?
-    let welcome: Welcome? // optional — an old feed's frames stay decodable
+    let welcome: Welcome? // present only on the one frame that carries the one-time welcome (bin/oathe.mjs serveFrame)
     let default_agent: String? // the machine's chosen agent — the glass reads no config
 }
 

@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 
 import { buildContext } from './context.mjs';
-import { FencedBlock, FENCE_STYLES, sweepCreatedResidue } from './blocks.mjs';
+import { FencedBlock, sweepCreatedResidue } from './blocks.mjs';
+import { fenceStyleOf } from './doctor.mjs';
 
 /** @returns {Promise<{actions: object[], database_dropped: boolean}>} */
 export async function runUninstall({ env = process.env, exec, purgeDb = false } = {}) {
@@ -14,16 +15,20 @@ export async function runUninstall({ env = process.env, exec, purgeDb = false } 
   try {
     const actions = [];
     for (const harness of harnesses) {
-      if (!manifest.rows.some((r) => r.harness === harness.name)) continue;
+      if (manifest.wiringRowsFor(harness.name).length === 0) continue;
       for (const action of harness.offboard({ manifest })) {
         actions.push({ harness: harness.name, ...action });
       }
+    }
+    // The CLI addresses init measured: rows only — the files are the harnesses', never ours.
+    for (const row of manifest.removeWhere((r) => r.kind === 'cli-address')) {
+      actions.push({ harness: row.harness, action: 'cli-address-forgotten', file: row.file });
     }
     // Every fence: the folder ones (CLAUDE.md/AGENTS.md written by activation) and the global
     // one in an adapter's instructions file (written by init) — one row shape, one removal.
     for (const row of manifest.removeWhere((r) => r.kind === 'fence')) {
       if (!fs.existsSync(row.file)) continue;
-      const block = new FencedBlock({ style: FENCE_STYLES[row.detail?.style ?? 'hash'] });
+      const block = new FencedBlock({ style: fenceStyleOf(row) });
       const { content, changed } = block.remove(fs.readFileSync(row.file, 'utf8'));
       if (!changed) continue;
       const createdByUs = manifest.backups.find((b) => b.file === row.file)?.absent_before === true;

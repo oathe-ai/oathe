@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { SessionRegistry, SessionRegistryError, processAncestry, nearestAppBundle, pidAlive } from '../src/sessions.mjs';
+import { SessionRegistry, SessionRegistryError, SESSIONS_FORMAT, processAncestry, nearestAppBundle, pidAlive } from '../src/sessions.mjs';
 
 function scratch() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-sessions-')));
@@ -182,4 +182,13 @@ test('two concurrent ensure() calls both land — no lost update', async () => {
   ]);
   const doc = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
   assert.ok(doc.sessions.a && doc.sessions.b);
+});
+
+test('the sessions file\'s format is its gate: another format, or no sessions object, refuses OATHE_SESSIONS_FORMAT by name (zero legacy, 2026-09-05)', () => {
+  const sessionsPath = scratch();
+  fs.writeFileSync(sessionsPath, JSON.stringify({ format: SESSIONS_FORMAT + 1, sessions: {} }));
+  assert.throws(() => new SessionRegistry({ sessionsPath }).load(),
+    (e) => e instanceof SessionRegistryError && e.code === 'OATHE_SESSIONS_FORMAT' && e.message.includes(sessionsPath) && e.message.includes(`format ${SESSIONS_FORMAT}`));
+  fs.writeFileSync(sessionsPath, JSON.stringify({ format: SESSIONS_FORMAT }));
+  assert.throws(() => new SessionRegistry({ sessionsPath }).load(), (e) => e.code === 'OATHE_SESSIONS_FORMAT');
 });

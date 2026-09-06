@@ -10,16 +10,19 @@
 // whose last word is younger than notchMotionMinutes, or one the wire just heard (hear(),
 // ephemeral by design). Idle-held work is `oathe ls`'s business.
 
-import { launchable, ownerOfTracePath, surfaceForSession } from './harnesses/catalog.mjs';
+import { appResumable, displayFor, launchable, ownerOfTracePath, surfaceForSession, updatable } from './harnesses/catalog.mjs';
+import { HomeError, Place } from './home.mjs';
 import { pidAlive } from './sessions.mjs';
-import { KINDS, CONTINUE_ACT, JUDGMENT } from './breach-digest.mjs';
+import { KINDS, CONTINUE_ACT, JUDGMENT, UPDATE_ACT, OPEN_APP_FLASH } from './breach-digest.mjs';
 import { shimPath } from './shim.mjs';
-import { isVerificationTask } from './plans.mjs';
+import { systemTaskOf } from './plans.mjs';
 
 /** The system terminal — an OS fact, the fallback when no session names its own. */
 export const TERMINAL_FALLBACK = '/System/Applications/Utilities/Terminal.app';
 
 const shellQuote = (s) => `'${String(s).replaceAll("'", "'\\''")}'`;
+/** The one line that resumes a task — typed into a terminal by the spawn, or pasted into an app. */
+const continueLine = (taskId) => `continue ${taskId}`;
 /** A kind whose one act is a judgment (never-judged, engine-failed) rather than a resumption. */
 const judges = (kind) => KINDS[kind].act !== CONTINUE_ACT;
 
@@ -32,7 +35,7 @@ export class NotchFrame {
    *          motionWindowMs: number, operatorHome: string, now?: () => number}} o
    *   sessions — the device session registry, read per frame (its failure is the caller's
    *   fail-soft: an empty map costs the frame its session refs, never the frame);
-   *   operatorHome — where a homeless judgment runs.
+   *   operatorHome — where a judgment of work residing in an app runs.
    */
   constructor({ registry, sessions, defaultAgent, motionWindowMs, operatorHome, now = () => Date.now() }) {
     this.registry = registry;
@@ -58,9 +61,12 @@ export class NotchFrame {
   }
 
   /**
-   * Continue is a RESUMPTION, never a shrug (founder ruling 2026-08-30): activate the living
-   * app; else spawn the agent at the task's home in a terminal; else open the desktop app;
-   * else the clipboard is the act. The package decides — the glass executes.
+   * Continue goes WHERE THE WORK LIVES (founder rulings 2026-08-30, 2026-09-05): activate the
+   * living app; else spawn the agent at the folder the task resides in; else open the app it
+   * resides in (the recorded place — durable, so a feed restart forgets nothing); else there
+   * is nothing to resume into and the row offers NO act — never a clipboard dressed as one.
+   * The package decides — the glass executes.
+   * @returns {object|null}
    */
   resumeFor(base, ref) {
     const word = CONTINUE_ACT;
@@ -74,21 +80,41 @@ export class NotchFrame {
     if (agent && typeof base.home_path === 'string' && base.home_path.startsWith('/')) {
       return {
         kind: 'spawn-terminal',
-        command: `"${this.oatheBin}" ${agent} ${shellQuote(`continue ${base.task_id}`)}`,
+        command: `"${this.oatheBin}" ${agent} ${shellQuote(continueLine(base.task_id))}`,
         cwd: base.home_path,
-        terminal_bundle: ref?.bundle ?? TERMINAL_FALLBACK,
+        terminal_bundle: ref?.bundle ?? base.place_app ?? TERMINAL_FALLBACK, // the terminal it was spoken from, when known
         word,
       };
     }
-    if (ref?.bundle) return { kind: 'open-app', bundle: ref.bundle, word };
-    return { kind: 'copy-only', word };
+    // An APP residence opens — only when its adapter says that app is a place to resume into
+    // (appResumable); a recorded terminal bundle is not one.
+    const residence = Place.parseOrNull(base.place ?? null);
+    const appSurface = residence !== null && !residence.isFolder ? residence.ref : surface;
+    const bundle = ref?.bundle ?? base.place_app ?? null;
+    if (bundle && appResumable(appSurface)) {
+      // Opening the app IS the resumption; the line rides the clipboard and the row says so
+      // (ruling 2026-09-05) — the app cannot be opened to a thread, so the person pastes.
+      return { kind: 'open-app', bundle, word, paste: continueLine(base.task_id), flash: OPEN_APP_FLASH(displayFor(appSurface) ?? appSurface) };
+    }
+    return null;
+  }
+
+  /** The word a place wears on the glass: the folder path, or the app's display word. A row on
+   *  the glass is a claim's, and every claim has a place — none is a broken record, said loudly. */
+  #homePath(place) {
+    const residence = Place.parseOrNull(place ?? null);
+    if (residence === null) {
+      throw new HomeError('OATHE_PLACE_UNKNOWN', 'a claim on the glass has no recorded place — the record is broken (every pickup records one)');
+    }
+    if (residence.isFolder) return this.registry.rootOf(residence.ref) ?? residence.ref;
+    return displayFor(residence.ref) ?? residence.ref;
   }
 
   /**
    * Where a task can be resumed INTO: the durable registry row outranks the wire's ephemeral
-   * word; either way the ref carries surface + the focusable app, so a HOMELESS task heard
-   * from a living app (ChatGPT's embedded codex — no hooks, no registry row) still resolves
-   * to a switch. One resolver for a moving row and a breach row alike.
+   * word; either way the ref carries surface + the focusable app, so a task heard from a
+   * living app (ChatGPT's embedded codex — no hooks, no registry row) still resolves to a
+   * switch. One resolver for a moving row and a breach row alike.
    */
   #refFor(taskId, traceSessionId, sess) {
     const row = (traceSessionId && sess[traceSessionId]) || null;
@@ -113,14 +139,17 @@ export class NotchFrame {
   glassRow(r, sess) {
     const heard = this.#heard.get(r.task_id);
     const ref = this.#refFor(r.task_id, r.trace_session_id, sess);
+    const residence = Place.parseOrNull(r.place ?? null);
     const base = {
       task_id: r.task_id, objective: r.objective, holder: r.principal_id, state: r.state,
       last_word_at: r.last_word_at, last_progress: r.last_progress,
       children_line: r.children?.line ?? null,
-      home_path: this.registry.rootOf(r.home) ?? r.home ?? 'homeless',
-      // The surface speaking on the claim: the wire's live word wins; the durable fallback
-      // is the latest trace-link statement's transcript, mapped by its owning store.
-      surface: heard?.via ?? (r.trace_path ? ownerOfTracePath(r.trace_path) : null),
+      home_path: this.#homePath(r.place),
+      place: r.place ?? null, place_app: r.place_app ?? null, place_dir: r.place_dir ?? null,
+      // The surface speaking on the claim: the wire's live word wins; then the latest trace
+      // link's transcript, mapped by its owning store; then the app it resides in (durable).
+      surface: heard?.via ?? (r.trace_path ? ownerOfTracePath(r.trace_path) : null)
+        ?? (residence !== null && !residence.isFolder ? residence.ref : null),
     };
     return { ...base, session: ref, resume: this.resumeFor(base, ref) };
   }
@@ -133,8 +162,8 @@ export class NotchFrame {
    * CONTINUE into the work in a terminal (a session needs one; a judgment does not), at the parent
    * for a group (the reclaim bundle carries the verdict — re-judging a judged assertion is
    * the one act that can never help). The act's WORD is the kinds table's; the act's KIND is
-   * decided here, from the environment. Home is the ONE resolver's answer; a homeless
-   * judgment runs from the operator's home.
+   * decided here, from the environment. Home is the ONE resolver's answer; a judgment of work
+   * residing in an app runs from the operator's home.
    */
   glassBreach(b, sess = {}) {
     // A judgment in flight offers NO act (ruling 2026-09-04): the glass never offers an act it
@@ -149,12 +178,22 @@ export class NotchFrame {
       // dispatches it through the one dispatcher (src/verify-dispatch.mjs) — detached, so it
       // still outlives everything; the judgment's own claim then wakes the frame. The command
       // rides for the clipboard: the terminal form of the same act, for a person who wants it.
-      return { ...b, act: { kind: 'dispatch', task_id: target, command: `"${this.oatheBin}" verify --detach ${shellQuote(target)}`, cwd: home ?? this.operatorHome, word } };
+      // The glass relays `act` and `harness` up the pipe and decides nothing (ruling 2026-09-05).
+      const dispatch = (extra) => ({ ...b, act: { kind: 'dispatch', task_id: target, cwd: home ?? this.operatorHome, ...extra } });
+      // A stall whose cause is an OUT-OF-DATE engine the adapter can update: retry cannot help,
+      // so the one act is the update — the child claims update:<engine> and re-verifies.
+      if (b.kind === 'stalled' && b.cause === 'outdated' && updatable(b.engine)) {
+        return dispatch({ act: 'update', harness: b.engine, word: UPDATE_ACT, command: `"${this.oatheBin}" engine update ${b.engine} --then-verify` });
+      }
+      return dispatch({ act: 'verify', word, command: `"${this.oatheBin}" verify --detach ${shellQuote(target)}` });
     }
     // A resumption climbs the one ladder a moving row's continue climbs (#refFor + resumeFor):
-    // the living app that spoke the task, else the agent at its home, else the app, else the
-    // clipboard — an act either way, so no row dead-ends (ruling 2026-09-04).
-    const base = { task_id: b.task_id, home_path: home ?? 'homeless', surface: this.#heard.get(b.task_id)?.via ?? null };
+    // the living app that spoke the task, else the agent at the folder it resides in, else the
+    // app it resides in — else no act (ruling 2026-09-05: nothing known offers nothing).
+    const base = {
+      task_id: b.task_id, home_path: home ?? this.#homePath(b.place), place: b.place ?? null, place_app: b.place_app ?? null, place_dir: b.place_dir ?? null,
+      surface: this.#heard.get(b.task_id)?.via ?? null,
+    };
     return { ...b, act: this.resumeFor(base, this.#refFor(b.task_id, b.trace_session_id ?? null, sess)) };
   }
 
@@ -169,7 +208,7 @@ export class NotchFrame {
     const row = (r) => this.glassRow(r, sess);
     // The judge's own `verify:<task>` claim is never a row: one row per task (R-GROUP-ROWS),
     // and that task's row already says verifying while the judge holds it.
-    const work = (rows) => rows.filter((r) => !isVerificationTask(r.task_id));
+    const work = (rows) => rows.filter((r) => systemTaskOf(r.task_id) === null); // a system task (verify:, update:) is never a work row
     // An asserted claim is never invisible (ruling 2026-09-04): between done and verdict its
     // row says which judgment it awaits — the JUDGMENT table's word, the spinner on `busy`
     // (the key a breach already spins on), no act (nothing a person does moves a judgment;

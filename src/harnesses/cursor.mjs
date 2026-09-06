@@ -49,10 +49,15 @@ export class CursorHarness extends Harness {
     ownsExec: (exec) => exec.includes(`${path.sep}Cursor.app${path.sep}`)
       || CursorHarness.cliExecutables.includes(path.basename(exec)),
     name: () => 'cursor',
+    display: Object.freeze({ cursor: 'Cursor' }),
+    resumable: Object.freeze([]), // a folder's session — the folder is the place
   });
   // cursor/cli-installation.md:10 (pinned 2026-08-29).
   static attestation = Object.freeze({ cursor: 'hooks' });
-  static install = Object.freeze({ installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'] });
+  // Cursor's pinned MCP docs (cursor/mcp.md, cli-mcp.md) document no per-tool timeout, so
+  // there is nothing to write — a stated limitation, not a guess; a live probe is owed.
+  static mcpToolTimeout = null;
+  static install = Object.freeze({ installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'], update: null }); // no in-place updater documented
   // Headless: `agent -p --output-format json` → {type:"result", result} (cursor/cli-output-format.md);
   // CI auth CURSOR_API_KEY (cursor/cli-authentication.md:24-37, cli-github-actions.md:17). A fresh
   // project dir is untrusted — the CLI refuses to run there without --trust (observed live 2026-08-29).
@@ -60,6 +65,7 @@ export class CursorHarness extends Harness {
     auth: ['CURSOR_API_KEY'],
     command: (prompt, model = null) => ['agent', ['-p', prompt, '--trust', '--output-format', 'json', ...(model ? ['--model', model] : [])]],
     extract: (stdout) => CursorHarness.extractJsonResult(stdout),
+    diagnose: () => null, // unmeasured — stated
   });
   static traces = null; // Cursor keeps no session store we read; its hook payload carries transcript_path: null
   static docs = Object.freeze([
@@ -155,9 +161,12 @@ export class CursorHarness extends Harness {
     const hooksAbsentBefore = !fs.existsSync(this.hooksConfigPath);
     // Version ownership is decided ONCE (the file we created carries our version key) and then
     // carried forward — a re-run must upsert the SAME row identity, never mint a sibling.
-    const ownsVersion = hooksAbsentBefore
-      || (manifest.rows.find((r) => r.harness === this.name && r.file === this.hooksConfigPath
-        && r.kind === 'json-array')?.detail?.owns_version ?? false);
+    const priorRow = manifest.rows.find((r) => r.harness === this.name && r.file === this.hooksConfigPath && r.kind === 'json-array');
+    if (priorRow && typeof priorRow.detail?.owns_version !== 'boolean') {
+      throw new HarnessOnboardError('CURSOR_MANIFEST_ROW_MALFORMED',
+        `the recorded ${this.hooksConfigPath} row carries no owns_version — not a row this oathe writes; uninstall with the oathe that wrote it, then run oathe init`, { row: priorRow });
+    }
+    const ownsVersion = hooksAbsentBefore || (priorRow ? priorRow.detail.owns_version : false);
 
     manifest.backupOnce(this.mcpConfigPath);
     const mcpBefore = fs.existsSync(this.mcpConfigPath) ? fs.readFileSync(this.mcpConfigPath, 'utf8') : '';
@@ -213,7 +222,7 @@ export class CursorHarness extends Harness {
   }
 
   offboard({ manifest }) {
-    const rows = manifest.removeWhere((r) => r.harness === this.name);
+    const rows = this.takeWiringRows(manifest);
     const actions = [];
     for (const row of rows) {
       if (!fs.existsSync(row.file)) {

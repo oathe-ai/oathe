@@ -47,7 +47,7 @@ export function wireServe({ home, manifest, config, version, exec = defaultExec,
   // another owner's); a replaced agent under a different name is booted out and removed.
   for (const row of manifest.removeWhere((r) => r.harness === 'serve' && r.kind === 'launch-agent')) {
     if (row.file !== file) {
-      exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]); // result unread: a legacy label that is not loaded answers 'Could not find service' — nothing to do either way
+      exec.run('launchctl', ['bootout', `gui/${uid}/${path.basename(row.file, '.plist')}`]); // result unread: a replaced label that is not loaded answers 'Could not find service' — nothing to do either way
       if (fs.existsSync(row.file)) fs.rmSync(row.file);
     }
   }

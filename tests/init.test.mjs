@@ -12,6 +12,7 @@ import { Substrate, DDL_FILES } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
 import { launchAgentPath } from '../src/notch.mjs';
 import { InstallManifest } from '../src/manifest.mjs';
+import { Harness } from '../src/harnesses/harness.mjs';
 
 const SCRATCH_DB = `oathe_init_test_${process.pid}`;
 const paths = buildPaths({});
@@ -393,7 +394,7 @@ test('init writes the managed block into ~/.codex/AGENTS.md (global scope) — t
   const text = fs.readFileSync(file, 'utf8');
   assert.ok(text.startsWith('# my own codex rules\n'), 'the user\'s own content is untouched');
   assert.match(text, /## Oathe/);
-  assert.match(text, /homeless/);
+  assert.match(text, /lives in the app until a folder picks it up/);
   const manifest = JSON.parse(fs.readFileSync(path.join(env.OATHE_HOME, 'install-manifest.json'), 'utf8'));
   const row = manifest.rows.find((r) => r.file === file);
   assert.ok(row, 'manifest-recorded');
@@ -415,7 +416,7 @@ test('when ~/.codex/AGENTS.override.md exists the block lands THERE — Codex re
   assert.ok(!fs.existsSync(path.join(home, '.codex/AGENTS.md')), 'a dead fence in the shadowed file is not written');
 });
 
-test('UPGRADE PATH: a package root that MOVED (nvm node switch, npm link) re-registers both marketplaces instead of refusing', async () => {
+test('MOVED ROOT: a package root that MOVED (nvm node switch, npm link) re-registers both marketplaces instead of refusing — init converges the machine to this root', async () => {
   const { home, env, exec } = sandbox();
   const stale = '/old/global/node_modules/@oathe/oathe';
   fs.appendFileSync(path.join(home, '.codex/config.toml'), `[marketplaces.oathe]\nsource = "${stale}"\n`);
@@ -445,7 +446,7 @@ test('doctor reports the package version beside each harness\'s cached plugin ve
   assert.equal(report.version.plugin.codex, null, 'codex keeps no version-keyed cache we can read');
 });
 
-test('UPGRADE PATH, same version: a moved package root STILL re-registers the claude marketplace (and re-materializes from it)', async () => {
+test('MOVED ROOT, same version: a moved package root STILL re-registers the claude marketplace (and re-materializes from it)', async () => {
   const { home, env, exec } = sandbox();
   const stale = '/old/global/node_modules/@oathe/oathe';
   const version = JSON.parse(fs.readFileSync(path.join(paths.packageRoot, 'package.json'), 'utf8')).version;
@@ -572,7 +573,9 @@ test('DECLARATIVE end-to-end: wire all → uncheck cursor on the screen → its 
   assert.deepEqual(second.steps.find((s) => s.name === 'cursor').outcome, 'unwired');
   for (const f of cursorFiles) assert.ok(!fs.existsSync(f), `${f} removed by the unwire`);
   const manifest = JSON.parse(fs.readFileSync(path.join(env.OATHE_HOME, 'install-manifest.json'), 'utf8'));
-  assert.equal(manifest.rows.filter((r) => r.harness === 'cursor').length, 0, 'no cursor rows remain');
+  // Its WIRING rows are gone; a cli-address row (a measured fact about the machine, kept for an
+  // unwired harness too — the CLI is still there to verify with) is not a wire.
+  assert.equal(manifest.rows.filter((r) => r.harness === 'cursor' && r.kind !== 'cli-address').length, 0, 'no cursor rows remain');
   for (const [f, before] of othersBefore) assert.equal(fs.readFileSync(f, 'utf8'), before, `${f} untouched by the cursor unwire`);
   const t2 = tty();
   const stop2 = drive(t2, '\x1b[B\x1b[B \r'); // same keys: cursor now [ ], space re-checks it
@@ -635,4 +638,87 @@ test('init and uninstall merge what landed on disk while they ran — a hook tha
   const afterUninstall = InstallManifest.load({ manifestPath, backupsDir });
   assert.ok(afterUninstall.rows.some((r) => r.file === '/elsewhere2/CLAUDE.md'), "a fence row that landed mid-uninstall survived (the next uninstall's business, never a lost update)");
   assert.ok(!afterUninstall.rows.some((r) => r.harness === 'claude' || r.file === '/elsewhere/CLAUDE.md'), "uninstall's own removals held");
+});
+
+// ---------------------------------------------------------------- the engine is an address (2026-09-05)
+
+test('init records each found CLI\'s ADDRESS as one cli-address manifest row (no sha — oathe does not own the file); the doctor PROVES it runs under the LaunchAgent\'s PATH; a re-run keeps one row; uninstall prunes the row and leaves the file', async () => {
+  const { home, env, exec } = sandbox();
+  await runInit({ env, exec });
+  const manifest = InstallManifest.load(buildPaths(env));
+  const rows = manifest.rows.filter((r) => r.kind === 'cli-address');
+  assert.deepEqual(rows.filter((r) => r.harness !== 'cursor').map((r) => [r.harness, r.file, r.sha256, r.detail.bin]).sort(),
+    [['claude', path.join(home, 'bin', 'claude'), null, 'claude'], ['codex', path.join(home, 'bin', 'codex'), null, 'codex']],
+    'one row per found CLI, the sandbox\'s fakes by address');
+  // The sandbox PATH ends in the machine's own: a cursor row exists exactly when a real `agent` is on it — measured, never a guess.
+  assert.equal(rows.some((r) => r.harness === 'cursor'), Harness.resolveOnPath(env.PATH, 'agent') !== null || Harness.resolveOnPath(env.PATH, 'cursor-agent') !== null);
+  assert.ok(rows.every((r) => fs.existsSync(r.file)), 'every recorded address exists');
+  assert.equal(manifest.cliAddressFor('codex'), path.join(home, 'bin', 'codex'));
+  // The doctor's verdict is the supervisor's answer: <address> <versionArgs> under the agent PATH exits 0.
+  const healthy = await runDoctor({ env, exec });
+  assert.deepEqual(healthy.rows.filter((r) => r.kind === 'cli-address' && r.harness !== 'cursor').map((r) => r.status), ['ok', 'ok'], JSON.stringify(healthy.rows));
+  await runInit({ env, exec });
+  assert.equal(InstallManifest.load(buildPaths(env)).rows.filter((r) => r.kind === 'cli-address').length, rows.length, 'idempotent — one row each, re-measured');
+  // The address rots: the doctor says which way — gone, or present but not runnable from launchd's world.
+  fs.writeFileSync(path.join(home, 'bin', 'codex'), '#!/bin/sh\nexit 7\n');
+  const broken = await runDoctor({ env, exec });
+  assert.equal(broken.rows.find((r) => r.kind === 'cli-address' && r.harness === 'codex').status, 'unreachable');
+  fs.rmSync(path.join(home, 'bin', 'codex'));
+  const gone = await runDoctor({ env, exec });
+  assert.equal(gone.rows.find((r) => r.kind === 'cli-address' && r.harness === 'codex').status, 'file-missing');
+  await runUninstall({ env, exec });
+  assert.ok(fs.existsSync(path.join(home, 'bin', 'claude')), 'the CLI is the user\'s — uninstall never touches it');
+  assert.equal(InstallManifest.load(buildPaths(env)).rows.filter((r) => r.kind === 'cli-address').length, 0);
+});
+
+// ---------------------------------------------------------------- zero legacy: a manifest row is this tree's shape or a refusal (2026-09-05)
+
+test('the doctor REFUSES a manifest it cannot read — a row of an unknown kind, a cli-managed row without proofs, a fence row without its style — naming the fix; never an unknown-kind status line or a guessed default', async () => {
+  const { env, exec } = sandbox();
+  await runInit({ env, exec });
+  const paths = buildPaths(env);
+  const withRow = async (row, expectCode) => {
+    const m = InstallManifest.load(paths);
+    m.upsert({ blockVersion: '0.0.0', sha256: null, ...row });
+    m.save();
+    try {
+      await assert.rejects(runDoctor({ env, exec }), (e) => e.code === expectCode && /uninstall with the oathe that wrote it/.test(e.message), `${expectCode}`);
+    } finally {
+      const back = InstallManifest.load(paths);
+      back.removeWhere((r) => r.harness === row.harness && r.kind === row.kind && r.file === row.file);
+      back.save();
+    }
+  };
+  await withRow({ harness: 'claude', file: '/tmp/x', kind: 'json-thing', detail: {} }, 'OATHE_MANIFEST_KIND_UNKNOWN');
+  await withRow({ harness: 'codex', file: '/tmp/x.toml', kind: 'cli-managed', detail: { id: 'x', undo: [] } }, 'OATHE_MANIFEST_ROW_MALFORMED');
+  await withRow({ harness: 'global', file: '/tmp/AGENTS.md', kind: 'fence', detail: null }, 'OATHE_MANIFEST_ROW_MALFORMED');
+  // uninstall reads the fence style through the same function — the same refusal, whatever the file does.
+  const fence = path.join(env.HOME, 'AGENTS-broken.md');
+  fs.writeFileSync(fence, '# x\n');
+  const m = InstallManifest.load(paths);
+  m.upsert({ harness: 'global', file: fence, kind: 'fence', detail: {}, blockVersion: '0.0.0', sha256: null });
+  m.save();
+  await assert.rejects(runUninstall({ env, exec }), (e) => e.code === 'OATHE_MANIFEST_ROW_MALFORMED');
+});
+
+test('doctor names a DESKTOP rollout that ran outside the staging dirs the adapter knows — the day ChatGPT moves again, doctor says so (B1, 2026-09-06)', async () => {
+  const { home, env, exec } = sandbox();
+  await runInit({ env, exec });
+  const fixture = fs.readFileSync(path.join(paths.packageRoot, 'tests/fixtures/traces/codex/2026-09-01-plain-exec-command/home/.codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-00000000-0000-7000-8000-000000000001.jsonl'), 'utf8').split('\n');
+  const plant = (cwd, stamp) => {
+    const dir = path.join(home, '.codex/sessions/2026/09/06');
+    fs.mkdirSync(dir, { recursive: true });
+    const head = JSON.parse(fixture[0]);
+    head.payload = { ...head.payload, originator: 'codex_work_desktop', cwd };
+    const file = path.join(dir, `rollout-2026-09-06T00-0${stamp}-00-00000000-0000-7000-8000-00000000000${stamp}.jsonl`);
+    fs.writeFileSync(file, [JSON.stringify(head), ...fixture.slice(1)].join('\n'));
+    return file;
+  };
+  plant(path.join(home, 'Somewhere/new'), 1);
+  const moved = await runDoctor({ env, exec });
+  assert.equal(moved.traces.codex.status, 'DRIFT', JSON.stringify(moved.traces.codex));
+  assert.match(moved.traces.codex.detail, /desktop rollout .* ran from .*Somewhere\/new — not a staging dir this adapter knows/);
+  plant(path.join(home, 'Documents/Codex/2026-09-06/te'), 2); // newer: the known convention
+  const known = await runDoctor({ env, exec });
+  assert.doesNotMatch(String(known.traces.codex.detail ?? ''), /not a staging dir/, 'a rollout from a known staging dir raises no such line');
 });

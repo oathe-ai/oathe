@@ -60,7 +60,7 @@ export class SessionHost {
   async stop({ exitCode }) {
     this.#halt();
     await this.tickInFlight;
-    // Custody is the PRINCIPAL's, not the folder's (R-HOME-BOARD): a claim homed elsewhere is
+    // Custody is the PRINCIPAL's, not the folder's (R-PLACE, 2026-09-05): a claim residing elsewhere is
     // still this session's to speak for. Known over-breadth: two concurrent sessions of the
     // same principal both speak on each other's exits — an honest duplicate beats a lost note.
     const { rows } = await this.client.query(

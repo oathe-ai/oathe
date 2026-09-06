@@ -39,9 +39,9 @@ export function globalFenceBody() {
     '',
     wrap(`Every session on this machine has an Oathe board. ${SPEECH_ACT_RULE} Where a session opens `
       + 'on a project folder, that folder\'s board loads with it. A session with no project folder '
-      + '(ChatGPT desktop runs from a staging directory) sees the machine-wide board, and a task '
-      + 'claimed there is homeless until a real folder claims it — which adopts it onto that '
-      + 'folder\'s board. `continue <task>` picks work back up.'),
+      + '(ChatGPT desktop runs from a staging directory) sees the machine-wide board; work claimed '
+      + 'there lives in the app until a folder picks it up, and every place that picked it up keeps '
+      + 'seeing it. `continue <task>` picks work back up.'),
   ].join('\n');
 }
 

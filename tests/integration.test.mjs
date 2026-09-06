@@ -229,6 +229,9 @@ test('doctor is clean over the whole install, then uninstall byte-restores every
   // init CREATED ~/.cursor/mcp.json in this sandbox (absent before); once our entry is gone
   // nothing of substance remains, so uninstall removes the file itself — not a husk.
   assert.ok(!fs.existsSync(path.join(sb.home, '.cursor/mcp.json')), 'the file init created is gone with uninstall');
+  // The walks below speak from an INSTALLED machine: init records the fake CLIs' addresses, and a
+  // judgment never guesses one (zero legacy, 2026-09-05) — an uninstalled sandbox refuses by name.
+  await runInit({ env: sb.env, exec: sb.exec });
 });
 
 test('the real stdio server speaks as the session the hook registered LAST — a /clear needs no context rebuild', { skip: process.platform !== 'darwin' && 'the ancestry walk reads ps on darwin' }, async () => {

@@ -38,14 +38,24 @@ export class ClaudeHarness extends Harness {
   static surfaces = Object.freeze({
     ownsExec: (exec) => path.basename(exec) === 'claude',
     name: () => 'claude',
+    display: Object.freeze({ claude: 'Claude Code' }),
+    resumable: Object.freeze([]), // a folder's session — the folder is the place, never the terminal
   });
   static attestation = Object.freeze({ claude: 'hooks' });
-  static install = Object.freeze({ npm: '@anthropic-ai/claude-code', bin: 'claude', versionArgs: ['--version'] });
+  // The blocking exchange needs no budget written here: Claude Code's per-tool wall clock
+  // defaults to about 28 hours (claude-code/mcp.md, pinned) and a stdio call is only aborted
+  // after 30 idle minutes — the wait's progress ticks reset that clock. What Claude Code DOES
+  // do is move a call past two minutes to a background task and deliver the verdict as its
+  // notification; that is the client's behaviour, disclosed on oathe_done, not a knob here.
+  static mcpToolTimeout = null;
+  // `claude update` — Claude Code's own in-place updater (claude-code docs, pinned).
+  static install = Object.freeze({ npm: '@anthropic-ai/claude-code', bin: 'claude', versionArgs: ['--version'], update: (address) => [address, ['update']] });
   // Non-interactive auth: ANTHROPIC_API_KEY (claude-code/headless.md, pinned 2026-08-29).
   static headless = Object.freeze({
     auth: ['ANTHROPIC_API_KEY'],
     command: (prompt, model = null) => ['claude', ['-p', prompt, '--output-format', 'json', ...(model ? ['--model', model] : [])]],
     extract: (stdout) => ClaudeHarness.extractJsonResult(stdout),
+    diagnose: () => null, // its failure words are unmeasured — stated; an unrecognized death stays a plain stall
   });
   static traces = Object.freeze({
     store: ({ home } = {}) => new ClaudeTraceStore({ home, harness: this.harnessName }),
@@ -211,7 +221,7 @@ export class ClaudeHarness extends Harness {
       kind: 'cli-managed',
       detail: {
         id: 'plugin-install',
-        proof: 'oathe@oathe',
+        proofs: ['oathe@oathe'],
         undo: [['plugin', 'uninstall', 'oathe@oathe'], ['plugin', 'marketplace', 'remove', 'oathe']],
       },
       blockVersion: version,
@@ -253,7 +263,7 @@ export class ClaudeHarness extends Harness {
   }
 
   offboard({ manifest }) {
-    const rows = manifest.removeWhere((r) => r.harness === this.name);
+    const rows = this.takeWiringRows(manifest);
     const actions = [];
     for (const row of rows.filter((r) => r.kind === 'cli-managed')) {
       for (const undo of row.detail?.undo ?? []) {

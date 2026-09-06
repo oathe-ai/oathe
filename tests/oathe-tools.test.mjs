@@ -10,6 +10,7 @@ import { OatheConfig } from '../src/config.mjs';
 import { WorkspaceResolveError } from '../src/workspace-resolver.mjs';
 import { Substrate } from '../src/substrate.mjs';
 import { buildPaths } from '../src/paths.mjs';
+import { seedClaim } from './helpers.mjs';
 
 /** A config bound to a scratch HOME — tests never read the developer's real ~/.oathe. */
 function scratchConfig(extraEnv = {}) {
@@ -150,20 +151,13 @@ test('the lease duration flows from config — nothing hardcoded', async () => {
 test('a second claim on the same task is REFUSED by the substrate and surfaces typed', async () => {
   await assert.rejects(
     () => tools.oathe_claim({ task_id: 'task-x', objective: 'second claimant' }),
-    (e) => /second|active|exclusive|refus|already/i.test(String(e.message)));
+    (e) => e.code === 'OATHE_WORK_ALREADY_CLAIMED' && /^WORK_ALREADY_CLAIMED:/.test(String(e.message)),
+    'the substrate\'s own FC003 vocabulary, surfaced typed — a caller never sniffs words');
 });
 
 test('oathe_board renders only this workspace unless all is asked', async () => {
   const client = substrate;
-  await client.query(`
-    INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
-                           verify_by, claim_mode, created_at)
-    VALUES ('oathe', 'elsewhere', 'founder', 'other workspace task', 'minted_at_claim',
-            '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-  await client.query(
-    `SELECT cell.claim_work('oathe', 'elsewhere', gen_random_uuid(), NULL, NULL, 'founder', 'founder',
-            'exclusive', now() + interval '4 hours', 'workspace:ws-000000000000;contract:oathe/elsewhere@v1',
-            now(), gen_random_uuid())`);
+  await seedClaim({ substrate: client, taskId: 'elsewhere', workspace: 'ws-000000000000', objective: 'other workspace task' }); // picked up THERE
   const mine = await tools.oathe_board({});
   assert.ok(mine.board.some((r) => r.task_id === 'task-x'));
   assert.ok(!mine.board.some((r) => r.task_id === 'elsewhere'));
@@ -185,7 +179,7 @@ test('UX rule 19: attention is read per call, only where it is served — attent
   assert.ok(!('attention' in clean), 'nothing to fix on this board — no key, not an empty list');
   assert.deepEqual(clean.breaches, [], 'the pull is present and empty');
   assert.throws(() => createOatheTools({ client: spy, identity, workspace: 'ws-attn000000000' }),
-    (e) => e.code === 'OATHE_ATTENTION_NEEDS_CONFIG', 'a served surface without config is a typed refusal, never a per-call attention_error');
+    (e) => e.code === 'OATHE_TOOLS_NEED_CONFIG', 'tools without config are a typed refusal — no literal shadows a config default');
 });
 
 test('the board row carries last_word_at — the pager\'s own last-word definition, the claim counting as the first word', async () => {
@@ -224,7 +218,7 @@ test('the wire: every successful WRITE rides one pg_notify on oathe_wire — rea
   assert.equal(notifies[0].task_id, 'wire-task');
   assert.equal(notifies[0].via, 'chatgpt', 'the wire names the surface — the person stays the principal');
   assert.deepEqual(notifies[0].app, { bundle: '/Applications/ChatGPT.app', pid: 4242 },
-    'the act carries its living app — a homeless task still knows where it is spoken from');
+    'the act carries its living app — the glass can switch to it before the record is re-read');
   await wired.oathe_board({});
   assert.equal(notifies.length, 1, 'a read emits nothing — the feed must never echo itself');
   await wired.oathe_yield({ task_id: 'wire-task', note: 'wire fixture done' });
@@ -248,7 +242,7 @@ test('a SERVING tool surface without its speaker is a typed refusal — the prim
 test('THE GATE (ruling 2026-09-04): a claim needs a session behind it — refused, typed, with the fix, unless the surface is declared hookless; later acts on an admitted claim never refuse', async () => {
   const seam = { register: async () => ({}), activate: async () => ({}) };
   const identity = { orgId: 'oathe', principalId: 'founder', department: 'founder' };
-  const build = (speaker) => createOatheTools({ client: substrate, identity, workspace: WS, config: scratchConfig(), activation: seam, speaker });
+  const build = (speaker, extra = {}) => createOatheTools({ client: substrate, identity, workspace: WS, config: scratchConfig(), activation: seam, speaker, ...extra });
   // (b) a hook-capable surface with NO registered session: the SessionStart hook never ran
   const unregistered = build({ surface: 'claude', app: { bundle: '/Applications/iTerm.app', pid: 4242 }, session: null, walked: true, client: 'claude-code', pid: 4242, device: null });
   await assert.rejects(unregistered.oathe_claim({ task_id: 'gate-unregistered', objective: 'resumed before init' }),
@@ -268,16 +262,30 @@ test('THE GATE (ruling 2026-09-04): a claim needs a session behind it — refuse
   await assert.rejects(liar.oathe_claim({ task_id: 'gate-liar', objective: 'mislabeled' }),
     (e) => e.code === 'OATHE_SPEAKER_MISMATCH' && /codex/.test(e.message) && /claude/.test(e.message));
   // (c) a surface that runs no hooks by design: admitted, and it says how its evidence will be found
-  const desktop = build({ surface: 'chatgpt', app: { bundle: '/Applications/ChatGPT.app', pid: 4242 }, session: null, walked: true, client: 'codex', pid: 4242, device: 'dev-1' });
+  // …speaking from the app's staging dir, as the desktop does: no folder — the app is the place.
+  const desktop = build({ surface: 'chatgpt', app: { bundle: '/Applications/ChatGPT.app', pid: 4242 }, session: null, walked: true, client: 'codex', pid: 4242, device: 'dev-1' },
+    { workspace: 'ws-synthetic0000', synthetic: true });
   const admitted = await desktop.oathe_claim({ task_id: 'gate-desktop', objective: 'no hooks, by design' });
   assert.equal(admitted.claimed, true);
   assert.equal(admitted.trace_link?.linked, false);
   assert.match(admitted.trace_link?.why, /no hooks/, 'the reason is on the act');
   assert.match(admitted.trace_link?.why, /discover/, 'and so is how its evidence will be found');
   assert.deepEqual(admitted.spoken_from, { surface: 'chatgpt', app: '/Applications/ChatGPT.app', session: null, device: 'dev-1' }, 'the device rides every act');
+  // WHERE it was spoken is a durable fact of the act (ruling 2026-09-05): an app place, one
+  // observation per claim × place, carrying the app bundle and the device — never a word.
+  const placeRows = () => substrate.query(
+    "SELECT statement_type, evidence_refs FROM cell.agent_statement WHERE task_id = 'gate-desktop' AND subject_ref = 'place:app:chatgpt'");
+  assert.equal((await placeRows()).rows.length, 1, 'the claim recorded its place the moment it landed');
+  assert.equal((await placeRows()).rows[0].statement_type, 'observation', 'a place is a fact about the act, never the holder\'s word');
+  assert.deepEqual((await placeRows()).rows[0].evidence_refs, ['app:/Applications/ChatGPT.app', 'device:dev-1']);
+  assert.equal(admitted.place, 'app:chatgpt', 'the receipt names the place');
   // (f) the gate is claim-only: a later act from a speaker with no session is NOT refused on attribution
   const later = await desktop.oathe_statement({ task_id: 'gate-desktop', proposition: 'still working, still hookless' });
   assert.equal(later.recorded, true);
+  assert.equal((await placeRows()).rows.length, 1, 'idempotent per claim × place — a second act adds no row');
+  const row = (await desktop.oathe_board({ all: true })).board.find((r) => r.task_id === 'gate-desktop');
+  assert.deepEqual([row.place, row.place_app, row.place_device], ['app:chatgpt', '/Applications/ChatGPT.app', 'dev-1'], 'the board row carries the residence');
+  assert.equal(row.last_progress, 'still working, still hookless', 'the place row never reads as the last word');
   await desktop.oathe_yield({ task_id: 'gate-desktop', note: 'fixture done' });
   // (off darwin) a blind walk with a real pid: the client's label stands in — admitted with the disclosure, a stated D0 limitation
   const blind = build({ surface: 'claude', app: null, session: null, walked: false, client: 'claude-code', pid: 4242, device: null });
@@ -312,6 +320,12 @@ test('attribution rides the speech act — a claim leaves its trace-link stateme
     "SELECT evidence_refs FROM cell.agent_statement WHERE task_id = 'attr-task' AND subject_ref = 'trace:sess-attr-1'");
   assert.equal((await links()).rows.length, 1, 'the trace-link exists the moment the claim lands — no turn-end wait');
   assert.deepEqual((await links()).rows[0].evidence_refs, [transcript]);
+  // …and beside it the PLACE: a folder session's place is its workspace; the terminal it spoke
+  // from rides as the app, the device is omitted when this install minted none.
+  const places = await substrate.query(
+    `SELECT statement_type, evidence_refs FROM cell.agent_statement WHERE task_id = 'attr-task' AND subject_ref = 'place:workspace:${WS}'`);
+  assert.equal(places.rows.length, 1, 'a folder speaker records a workspace place');
+  assert.deepEqual([places.rows[0].statement_type, places.rows[0].evidence_refs], ['observation', ['app:/Applications/iTerm.app']]);
   // A transcript the harness named but never wrote (a resumed session before its first turn
   // end) is NOT linked as evidence — a ghost link would kill verification at the evidence
   // stage (TRACE_UNREADABLE, live 2026-09-01); the miss is disclosed on the act, and the
@@ -641,7 +655,7 @@ test('tools without an activation seam still work — the seam is wiring, not a 
   assert.ok(out.sections);
 });
 
-// ---------------------------------------------------------------- R-HOME-BOARD: home fixed at mint
+// ---------------------------------------------------------------- where work lives: every pickup is a place (ruling 2026-09-05)
 
 const WS2 = 'ws-fedcba654321';
 function toolsFor(workspace, extra = {}) {
@@ -653,106 +667,79 @@ function toolsFor(workspace, extra = {}) {
     ...extra,
   });
 }
+/** A SERVING surface speaking from `workspace` as `speaker` — the wrapper that records where an act was spoken. */
+const CHATGPT = { surface: 'chatgpt', app: { bundle: '/Applications/ChatGPT.app', pid: 4242 }, session: null, walked: true, client: 'codex', pid: 4242, device: 'dev-1' };
+const CLAUDE_IN_TERMINAL = { surface: 'claude', app: { bundle: '/Applications/iTerm.app', pid: 4243 }, session: { sessionId: 'sess-place', transcriptPath: null, harness: 'claude' }, walked: true, client: 'claude-code', pid: 4243, device: 'dev-1' };
+function spokenFrom(workspace, speaker, extra = {}) {
+  return toolsFor(workspace, { activation: { register: async () => ({}), activate: async () => ({}) }, speaker, ...extra });
+}
 async function contractRefOf(taskId) {
   const { rows } = await substrate.query(
     "SELECT contract_ref FROM cell.work_claim WHERE task_id = $1 ORDER BY claimed_at DESC LIMIT 1", [taskId]);
   return rows[0]?.contract_ref ?? null;
 }
-
-test('a later claim from another folder INHERITS the task\'s home — row and return agree', async () => {
-  const home = toolsFor(WS);
-  const elsewhere = toolsFor(WS2);
-  await home.oathe_claim({ task_id: 'homed-task', objective: 'minted in WS' });
-  await home.oathe_yield({ task_id: 'homed-task', note: 'handing off' });
-  const out = await elsewhere.oathe_claim({ task_id: 'homed-task' });
-  assert.equal(await contractRefOf('homed-task'), `workspace:${WS};contract:oathe/homed-task@v1`,
-    'the claim row carries the HOME workspace, not the claiming session\'s');
-  assert.equal(out.contract_ref, `workspace:${WS};contract:oathe/homed-task@v1`, 'the return tells the truth');
-  assert.equal(out.home, WS);
-  await elsewhere.oathe_yield({ task_id: 'homed-task', note: 'done with it' });
-});
-
-test('a task minted from a SYNTHETIC workspace is homeless: sentinel ref, home null', async () => {
-  const chatgpt = toolsFor('ws-synthetic0000', { synthetic: true });
-  const out = await chatgpt.oathe_claim({ task_id: 'chat-task', objective: 'minted in ChatGPT desktop' });
-  assert.equal(await contractRefOf('chat-task'), 'workspace:none;contract:oathe/chat-task@v1');
-  assert.equal(out.home, null);
-  assert.match(out.note, /homeless/i, 'the claim says so');
-  await chatgpt.oathe_yield({ task_id: 'chat-task', note: 'over to a real folder' });
-});
-
-test('adoption: the first REAL-folder claim of a homeless task sets its home; later claims inherit', async () => {
-  const adopter = toolsFor(WS);
-  const later = toolsFor(WS2);
-  const adopted = await adopter.oathe_claim({ task_id: 'chat-task' });
-  assert.equal(adopted.home, WS);
-  assert.match(adopted.note, /adopted/i);
-  assert.equal(await contractRefOf('chat-task'), `workspace:${WS};contract:oathe/chat-task@v1`);
-  await adopter.oathe_yield({ task_id: 'chat-task', note: 'adopted, now handing off' });
-  const inherited = await later.oathe_claim({ task_id: 'chat-task' });
-  assert.equal(inherited.home, WS, 'home stuck at the adopting folder');
-  await later.oathe_yield({ task_id: 'chat-task', note: 'back' });
-});
-
-test('a synthetic re-claim of a homeless task keeps it homeless — only real folders adopt', async () => {
-  const chatgpt = toolsFor('ws-synthetic0000', { synthetic: true });
-  await chatgpt.oathe_claim({ task_id: 'still-homeless', objective: 'minted in ChatGPT' });
-  await chatgpt.oathe_yield({ task_id: 'still-homeless', note: 'pause' });
-  const again = await chatgpt.oathe_claim({ task_id: 'still-homeless' });
-  assert.equal(again.home, null);
-  assert.equal(await contractRefOf('still-homeless'), 'workspace:none;contract:oathe/still-homeless@v1');
-  await chatgpt.oathe_yield({ task_id: 'still-homeless', note: 'pause' });
-});
-
-// ---------------------------------------------------------------- R-HOME-BOARD: the board's home lens
-
 async function boardTaskIds(t, opts = {}) {
   const { board } = await t.oathe_board(opts);
   return board.map((r) => r.task_id);
 }
+const rowOn = async (t, taskId, opts = {}) => (await t.oathe_board(opts)).board.find((r) => r.task_id === taskId) ?? null;
 
-test('STRICT LENS: a task homed in WS stays on WS\'s board even while claimed from WS2 — and never appears on WS2\'s', async () => {
-  const home = toolsFor(WS);
-  const elsewhere = toolsFor(WS2);
-  await home.oathe_claim({ task_id: 'lens-task', objective: 'homed in WS' });
-  await home.oathe_yield({ task_id: 'lens-task', note: 'handing to WS2' });
-  await elsewhere.oathe_claim({ task_id: 'lens-task' });
-  assert.ok((await boardTaskIds(home)).includes('lens-task'), 'the home board keeps it');
-  const { sections } = await home.oathe_board({});
-  assert.ok(sections.mine.some((r) => r.task_id === 'lens-task'), 'held by this principal — shown as mine on the HOME board');
-  assert.ok(!(await boardTaskIds(elsewhere)).includes('lens-task'), 'the claiming folder\'s board stays about ITS folder');
-  assert.ok((await boardTaskIds(elsewhere, { all: true })).includes('lens-task'), 'the full board still sees it');
-  await elsewhere.oathe_yield({ task_id: 'lens-task', note: 'lens test done' });
+test('every pickup is a place: claimed from WS, picked up from WS2 — the task is on BOTH boards and RESIDES where it was picked up last; the ledger records each claim\'s own folder, nothing inherits', async () => {
+  const here = spokenFrom(WS, CLAUDE_IN_TERMINAL);
+  const there = spokenFrom(WS2, CLAUDE_IN_TERMINAL);
+  await here.oathe_claim({ task_id: 'moved-task', objective: 'minted in WS' });
+  await here.oathe_yield({ task_id: 'moved-task', note: 'handing off' });
+  const picked = await there.oathe_claim({ task_id: 'moved-task' });
+  assert.equal(picked.place, `workspace:${WS2}`, 'the receipt names where it now resides');
+  assert.equal(await contractRefOf('moved-task'), `workspace:${WS2};contract:oathe/moved-task@v1`, 'the ledger records THIS claim\'s folder — no inheritance');
+  assert.ok((await boardTaskIds(here)).includes('moved-task'), 'the first place never loses sight of it (visibility is history)');
+  assert.ok((await boardTaskIds(there)).includes('moved-task'), 'the place that picked it up sees it');
+  assert.equal((await rowOn(here, 'moved-task')).place, `workspace:${WS2}`, 'both boards agree on the residence: the last pickup');
+  assert.deepEqual((await rowOn(here, 'moved-task')).places.sort(), [`workspace:${WS}`, `workspace:${WS2}`].sort(), 'the row carries every place that picked it up');
+  await there.oathe_yield({ task_id: 'moved-task', note: 'done with it' });
 });
 
-test('an unclaimed verify: task appears ONLY on its parent\'s home board (and on the full board)', async () => {
-  const home = toolsFor(WS);
-  await home.oathe_claim({ task_id: 'verified-here', objective: 'done in WS, judged from anywhere' });
-  await home.oathe_done({ task_id: 'verified-here', proposition: 'finished', evidence_ref: 'commit:v' });
-  assert.ok((await boardTaskIds(home)).includes('verify:verified-here'), 'the verification lives where the work lives');
-  assert.ok(!(await boardTaskIds(toolsFor(WS2))).includes('verify:verified-here'),
-    'not visible on every board just because it is unclaimed');
+test('a task minted from an APP resides in the app: place app:<surface>, the ledger\'s workspace slot stays the sentinel; a folder that picks it up moves the residence, the app still sees it; a later app pickup moves it back — no rank, the last pickup', async () => {
+  const chatgpt = spokenFrom('ws-synthetic0000', CHATGPT, { synthetic: true });
+  const minted = await chatgpt.oathe_claim({ task_id: 'chat-task', objective: 'minted in ChatGPT desktop' });
+  assert.equal(minted.place, 'app:chatgpt');
+  assert.equal(minted.home, null, 'no folder');
+  assert.equal(await contractRefOf('chat-task'), 'workspace:none;contract:oathe/chat-task@v1', 'the substrate\'s own field keeps its grammar');
+  assert.match(minted.note, /app:chatgpt|ChatGPT/i, 'the claim says where it lives');
+  await chatgpt.oathe_yield({ task_id: 'chat-task', note: 'over to a real folder' });
+  const folder = spokenFrom(WS, CLAUDE_IN_TERMINAL);
+  const picked = await folder.oathe_claim({ task_id: 'chat-task' });
+  assert.equal(picked.place, `workspace:${WS}`, 'a folder picked it up: it resides there now');
+  assert.equal(await contractRefOf('chat-task'), `workspace:${WS};contract:oathe/chat-task@v1`);
+  assert.ok((await boardTaskIds(folder)).includes('chat-task'));
+  assert.ok((await boardTaskIds(chatgpt)).includes('chat-task'), 'the app (a full-board surface) still sees it');
+  await folder.oathe_yield({ task_id: 'chat-task', note: 'back to the app' });
+  const again = await chatgpt.oathe_claim({ task_id: 'chat-task' });
+  assert.equal(again.place, 'app:chatgpt', 'picked up from the app again: it resides in the app again');
+  assert.ok((await boardTaskIds(folder)).includes('chat-task'), 'the folder that once held it keeps seeing it');
+  assert.equal((await rowOn(folder, 'chat-task')).place, 'app:chatgpt');
+  await chatgpt.oathe_yield({ task_id: 'chat-task', note: 'pause' });
+});
+
+test('an unclaimed verify: task appears on its PARENT\'s boards — the judgment lives where the work does', async () => {
+  const here = spokenFrom(WS, CLAUDE_IN_TERMINAL);
+  await here.oathe_claim({ task_id: 'verified-here', objective: 'done in WS, judged from anywhere' });
+  await here.oathe_done({ task_id: 'verified-here', proposition: 'finished', evidence_ref: 'commit:v' });
+  assert.ok((await boardTaskIds(here)).includes('verify:verified-here'));
+  assert.ok(!(await boardTaskIds(toolsFor(WS2))).includes('verify:verified-here'), 'not visible on a board that never picked up the work');
   assert.ok((await boardTaskIds(toolsFor(WS2), { all: true })).includes('verify:verified-here'));
 });
 
-test('a HOMELESS task appears on every folder board — visibility is the adoption path', async () => {
-  const chatgpt = toolsFor('ws-synthetic0000', { synthetic: true });
-  await chatgpt.oathe_claim({ task_id: 'adopt-me', objective: 'minted in ChatGPT, waiting for a home' });
-  await chatgpt.oathe_yield({ task_id: 'adopt-me', note: 'someone adopt me' });
-  assert.ok((await boardTaskIds(toolsFor(WS))).includes('adopt-me'));
-  assert.ok((await boardTaskIds(toolsFor(WS2))).includes('adopt-me'));
-  const row = (await toolsFor(WS).oathe_board({})).board.find((r) => r.task_id === 'adopt-me');
-  assert.equal(row.home, null, 'rows carry their home; homeless is null');
-});
-
-test('a claim-less non-verification task (enqueued/legacy) still appears everywhere — pinned deliberately', async () => {
+test('an UNCLAIMED task (an enqueued row no claim has picked up) appears on every folder board — open work anyone may pick up; its place is null, and that is the only placeless row there is', async () => {
   await substrate.query(`
     INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
                            verify_by, claim_mode, created_at)
-    VALUES ('oathe', 'enqueued-legacy', 'founder', 'never claimed by anyone', 'enqueued',
+    VALUES ('oathe', 'enqueued-open', 'founder', 'never claimed by anyone', 'enqueued',
             '{"plan_status":"unknown"}'::jsonb, now() + interval '1 day', 'exclusive', now())`);
-  assert.ok((await boardTaskIds(toolsFor(WS))).includes('enqueued-legacy'));
-  assert.ok((await boardTaskIds(toolsFor(WS2))).includes('enqueued-legacy'));
+  assert.ok((await boardTaskIds(toolsFor(WS))).includes('enqueued-open'));
+  assert.ok((await boardTaskIds(toolsFor(WS2))).includes('enqueued-open'));
+  const row = await rowOn(toolsFor(WS), 'enqueued-open');
+  assert.deepEqual([row.place, row.places], [null, []], 'rows carry their place; none is null');
 });
 
 // ---------------------------------------------------------------- R-BOARD-SCOPE: board scope per surface
@@ -809,4 +796,70 @@ test('attribution rides EACH act: after the /clear hook registers a new session 
     "SELECT s.subject_ref FROM cell.agent_statement s JOIN cell.work_claim c ON c.work_claim_id = s.work_claim_id WHERE c.task_id = 'act-task' AND s.subject_ref LIKE 'trace:%' ORDER BY s.asserted_at");
   assert.deepEqual(rows.map((r) => r.subject_ref), ['trace:sess-act-A', 'trace:sess-act-B'], 'both transcripts are linked to the one claim');
   await perAct.oathe_yield({ task_id: 'act-task', note: 'fixture done' });
+});
+
+test('the blocking done and verify hand the transport\'s progress emitter to the verifier seam — the wait can say it is still judging', async () => {
+  const seen = [];
+  const wired = createOatheTools({
+    client: substrate,
+    identity: { orgId: 'oathe', principalId: 'founder', department: 'founder' },
+    workspace: WS,
+    config: scratchConfig(),
+    activation: { register: async () => ({}), activate: async () => ({}) },
+    verifier: async ({ taskId, progress }) => { seen.push({ taskId, progress }); progress?.('tick'); return { verdict: 'accepted', reason: 'fine' }; },
+    speaker: { surface: 'claude', app: null, session: { sessionId: 'sess-prog', transcriptPath: null, harness: 'claude' } },
+  });
+  const ticks = [];
+  await wired.oathe_claim({ task_id: 'prog-task', objective: 'progress threads through' });
+  await wired.oathe_done({ task_id: 'prog-task', proposition: 'done', evidence_ref: 'x' }, { progress: (m) => ticks.push(m) });
+  assert.equal(seen.length, 1);
+  assert.equal(typeof seen[0].progress, 'function', 'the seam receives the emitter');
+  assert.deepEqual(ticks, ['tick']);
+  await wired.oathe_verify({ task_id: 'prog-task' }, { progress: (m) => ticks.push(`v:${m}`) });
+  assert.deepEqual(ticks, ['tick', 'v:tick'], 'verify threads it too — one rule, both verbs');
+  await wired.oathe_verify({ task_id: 'prog-task' });
+  assert.equal(seen.at(-1).progress, undefined, 'no emitter, none passed — the seam stays quiet');
+});
+
+test('there is no placeless claim (ruling 2026-09-05): a surface that names neither a folder nor an app is REFUSED before anything is written', async () => {
+  // Unwrapped tools on a synthetic workspace with no speaker: the one construction that used to
+  // mint "homeless" work. Now a typed refusal, and no task row lands.
+  const nowhere = toolsFor('ws-synthetic0000', { synthetic: true });
+  await assert.rejects(nowhere.oathe_claim({ task_id: 'nowhere-task', objective: 'from nowhere' }),
+    (e) => e.code === 'OATHE_PLACE_UNKNOWN' && /folder session or an app/.test(e.message));
+  assert.equal((await substrate.query("SELECT 1 FROM cell.task WHERE task_id = 'nowhere-task'")).rows.length, 0, 'refused before the mint');
+});
+
+test('done on a claim that carries no verifier binding refuses OATHE_VERIFIER_UNBOUND — every claim the tools make binds one at the pickup; a claim without it is not ours, and nothing falls back to config', async () => {
+  await seedClaim({ substrate, taskId: 'unbound-1', workspace: WS, objective: 'seeded without the binding' });
+  await assert.rejects(tools.oathe_done({ task_id: 'unbound-1', proposition: 'done', evidence_ref: 'x' }),
+    (e) => e.code === 'OATHE_VERIFIER_UNBOUND' && /oathe_claim/.test(e.message));
+});
+
+test('an app pickup records the PROJECT FOLDER as evidence beside the app and the device (dir:), a folder pickup records none — and the board row carries place_dir', async () => {
+  const chatgpt = spokenFrom('ws-synthetic0000', CHATGPT, { synthetic: true, dir: '/tmp/g-p-dir-1' });
+  const out = await chatgpt.oathe_claim({ task_id: 'dir-app', objective: 'claimed from a ChatGPT project' });
+  assert.equal(out.place, 'app:chatgpt');
+  const { rows } = await substrate.query("SELECT evidence_refs FROM cell.agent_statement WHERE task_id = 'dir-app' AND subject_ref = 'place:app:chatgpt'");
+  assert.deepEqual(rows[0].evidence_refs, ['app:/Applications/ChatGPT.app', 'device:dev-1', 'dir:/tmp/g-p-dir-1']);
+  const row = await rowOn(toolsFor(WS), 'dir-app', { all: true });
+  assert.deepEqual([row.place, row.place_app, row.place_dir], ['app:chatgpt', '/Applications/ChatGPT.app', '/tmp/g-p-dir-1'], 'the row says which project the work came from');
+  const folder = spokenFrom(WS, CLAUDE_IN_TERMINAL, { dir: '/srv/app' });
+  await folder.oathe_claim({ task_id: 'dir-folder', objective: 'claimed from a folder' });
+  const { rows: fr } = await substrate.query(`SELECT evidence_refs FROM cell.agent_statement WHERE task_id = 'dir-folder' AND subject_ref = 'place:workspace:${WS}'`);
+  assert.ok(!fr[0].evidence_refs.some((r) => r.startsWith('dir:')), 'a folder pickup\'s directory is the registry\'s fact, never evidence');
+  assert.equal((await rowOn(toolsFor(WS), 'dir-folder')).place_dir, null);
+});
+
+test('a SYSTEM task records no place of its own — a judgment lives where its work does (the anchor), so the verifier\'s tools need no place, no speaker, no gate: claiming verify:<task> from nowhere succeeds, writes no place statement, and the ledger slot reads none', async () => {
+  const nowhere = toolsFor(null); // the verifier's own tools: a workspace-less seat with no speaker
+  await tools.oathe_claim({ task_id: 'sys-parent', objective: 'the work a judgment lives with' });
+  const out = await nowhere.oathe_claim({ task_id: 'verify:sys-parent', objective: 'judge it' });
+  assert.match(out.note, /lives where its work does/, 'the receipt says so instead of inventing a place');
+  const { rows } = await substrate.query("SELECT count(*)::int AS n FROM cell.agent_statement WHERE task_id = 'verify:sys-parent' AND subject_ref LIKE 'place:%'");
+  assert.equal(rows[0].n, 0, 'no place statement on a system task');
+  assert.equal(await contractRefOf('verify:sys-parent'), 'workspace:none;contract:oathe/verify:sys-parent@v1', 'no folder id minted for a placeless seat');
+  await assert.rejects(nowhere.oathe_claim({ task_id: 'work-from-nowhere', objective: 'a work task needs a place' }), (e) => e.code === 'OATHE_PLACE_UNKNOWN', 'the gate still holds for WORK');
+  await nowhere.oathe_yield({ task_id: 'verify:sys-parent', note: 'fixture done' });
+  await tools.oathe_yield({ task_id: 'sys-parent', note: 'fixture done' });
 });

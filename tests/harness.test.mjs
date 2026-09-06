@@ -8,6 +8,13 @@ import { ClaudeHarness, CodexHarness, census } from '../src/harnesses/catalog.mj
 import { InstallManifest } from '../src/manifest.mjs';
 import { buildPaths } from '../src/paths.mjs';
 import { shimPath } from '../src/shim.mjs';
+import { OatheConfig } from '../src/config.mjs';
+
+/** A config bound to a scratch HOME — the codex adapter's timeout budget comes from it. */
+function scratchConfig(extraEnv = {}) {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-harness-cfg-')));
+  return new OatheConfig({ env: { HOME: home, OATHE_HOME: path.join(home, '.oathe'), ...extraEnv }, cwd: home });
+}
 
 const CLOCK = () => '2026-08-25T00:00:00.000Z';
 
@@ -193,6 +200,7 @@ test('ClaudeHarness.onboard MATERIALIZES the install via the claude CLI and veri
   const cliRow = manifest.rows.find((r) => r.harness === 'claude' && r.kind === 'cli-managed' && r.detail?.id === 'plugin-install');
   assert.ok(cliRow, 'the materialized install is manifest-recorded');
   assert.equal(cliRow.file, installedFile);
+  assert.deepEqual(cliRow.detail.proofs, ['oathe@oathe'], 'ONE proof shape across every cli-managed writer (proofs, plural) — the doctor reads no other');
   // The connection is an ADDRESS: the user-scope entry points at the shim — the one path a
   // GUI-launched session can still resolve (connection-lane plan, 2026-09-04).
   assert.ok(flat.some((c) => c === `claude mcp add -s user oathe -- ${shimPath(home)} mcp`), flat.join('|'));
@@ -267,7 +275,7 @@ test('CodexHarness.onboard runs the sanctioned CLIs, verifies config.toml, and r
       return { status: 0, stdout: '', stderr: '' };
     },
   };
-  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec });
+  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec, config: scratchConfig({ OATHE_MCP_TOOL_TIMEOUT_SEC: '900' }) });
   h.onboard({ manifest, version: '0.1.0' });
 
   const flat = exec.calls.map((c) => c.join(' '));
@@ -276,16 +284,38 @@ test('CodexHarness.onboard runs the sanctioned CLIs, verifies config.toml, and r
   // config.toml has no interpolation (codex/config-reference.md, pinned) — the literal shim
   // path is written; the ChatGPT desktop app reads this same config (codex/mcp.md).
   assert.ok(flat.some((c) => c === `codex mcp add oathe -- ${shimPath(home)} mcp`), flat.join('|'));
+  // The blocking exchange declared to the transport (ruling 2026-09-05): `codex mcp add` has no
+  // timeout flag and a re-add DROPS a hand-written key (probed live, codex-cli 0.150.0), so the
+  // adapter stamps the client's per-tool timeout INTO the stanza after every add, from config.
+  const written = fs.readFileSync(configPath, 'utf8');
+  assert.match(written, new RegExp(`\\[mcp_servers\\.oathe\\]\\ncommand = "${shimPath(home).replaceAll('/', '\\/')}"\\ntool_timeout_sec = 900\\n`),
+    'the timeout line sits inside the oathe stanza, after the command the CLI wrote');
+  assert.equal((written.match(/tool_timeout_sec = /g) ?? []).length, 1);
 
   const rows = manifest.rows.filter((r) => r.harness === 'codex');
   assert.equal(rows.length, 3);
   assert.ok(rows.every((r) => r.kind === 'cli-managed'));
   // Review F3 (2026-09-04): a stanza-presence proof read the live bare-address stomp as ok.
-  // The proof is the COMMAND LINE — doctor sees a drifted address as drift.
+  // The proofs are the COMMAND LINE and the timeout line — doctor sees a drifted address, or a
+  // stanza the CLI rewrote without the timeout, as drift.
   const mcpRow = rows.find((r) => r.detail?.id === 'mcp-server');
-  assert.equal(mcpRow.detail.proof, `command = "${shimPath(home)}"`,
-    'the recorded proof pins the address, not just the stanza');
+  assert.deepEqual(mcpRow.detail.proofs, [`command = "${shimPath(home)}"`, 'tool_timeout_sec = 900'],
+    'the recorded proofs pin the address and the budget, not just the stanza');
   assert.ok(manifest.backups.find((b) => b.file === configPath), 'config.toml backed up before the CLIs touch it');
+  // Re-onboard (init is the restart): the CLI's re-add stomps the stanza, the stamp returns, once.
+  const h2 = new CodexHarness({ home, envPath: '/nonexistent', paths, exec, config: scratchConfig({ OATHE_MCP_TOOL_TIMEOUT_SEC: '600' }) });
+  h2.onboard({ manifest, version: '0.1.0' });
+  const again = fs.readFileSync(configPath, 'utf8');
+  assert.equal((again.match(/tool_timeout_sec = /g) ?? []).length, 1, 'one line, converged');
+  assert.match(again, /tool_timeout_sec = 600\n/, 'the current config wins');
+  assert.ok(h2.describe().some((line) => /tool_timeout_sec = 600/.test(line)), 'describe() says what selecting the row writes — the budget included (UX rule 2)');
+});
+
+test('CodexHarness.onboard REFUSES without the config the budget comes from — never a hardcoded second', () => {
+  const { home, manifest } = scratchHome();
+  fs.mkdirSync(path.join(home, '.codex'));
+  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec: fakeExec() });
+  assert.throws(() => h.onboard({ manifest, version: '0.1.0' }), (e) => e.code === 'CODEX_CONFIG_REQUIRED');
 });
 
 test('CodexHarness.onboard fails loudly when verification cannot find the stanza the CLI claimed to write', () => {
@@ -293,8 +323,8 @@ test('CodexHarness.onboard fails loudly when verification cannot find the stanza
   fs.mkdirSync(path.join(home, '.codex'));
   fs.writeFileSync(path.join(home, '.codex/config.toml'), '# untouched\n');
   const exec = fakeExec(); // succeeds but writes nothing
-  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec });
-  assert.throws(() => h.onboard({ manifest, version: '0.1.0' }), /verif/i);
+  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec, config: scratchConfig() });
+  assert.throws(() => h.onboard({ manifest, version: '0.1.0', config: scratchConfig() }), /verif/i);
 });
 
 test('CodexHarness.offboard runs the inverse CLIs and drops its rows', () => {
@@ -311,7 +341,7 @@ test('CodexHarness.offboard runs the inverse CLIs and drops its rows', () => {
       return { status: 0, stdout: '', stderr: '' };
     },
   };
-  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec });
+  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec, config: scratchConfig() });
   h.onboard({ manifest, version: '0.1.0' });
   exec.calls.length = 0;
   h.offboard({ manifest });
@@ -334,7 +364,7 @@ test('CodexHarness.offboard clears the hooks.state entries codex keyed by our pl
       return { status: 0, stdout: '', stderr: '' };
     },
   };
-  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec });
+  const h = new CodexHarness({ home, envPath: '/nonexistent', paths, exec, config: scratchConfig() });
   h.onboard({ manifest, version: '0.1.0' });
   // Codex writes its own hook-trust bookkeeping keyed by our plugin id once the hooks run
   // (shape recorded from a real ~/.codex/config.toml, 2026-08-29). The undo CLIs never touch
@@ -367,4 +397,17 @@ test('CodexHarness.offboard clears the hooks.state entries codex keyed by our pl
   assert.ok(after.includes('# the user\'s own comment'));
   assert.ok(after.includes('model = "gpt-5"'));
   assert.ok(after.includes('[projects."/Users/someone/work"]'));
+});
+
+// ---------------------------------------------------------------- the CLI's ADDRESS (engines are addresses, 2026-09-05)
+
+test('detect() measures WHERE the CLI is — presence.cliPath is the resolved address on the harness\'s PATH, null when absent — the boolean is its face', () => {
+  const { home } = scratchHome();
+  fs.mkdirSync(path.join(home, '.codex'));
+  const bin = fakeBinDir('codex');
+  const found = new CodexHarness({ home, envPath: bin, paths }).detect();
+  assert.equal(found.presence.cli, true);
+  assert.equal(found.presence.cliPath, path.join(bin, 'codex'), 'the address, not a guess about PATH');
+  const absent = new CodexHarness({ home, envPath: '/nonexistent', paths }).detect();
+  assert.deepEqual([absent.presence.cli, absent.presence.cliPath], [false, null]);
 });
