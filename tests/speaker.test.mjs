@@ -144,3 +144,42 @@ test("the session is a per-act fact: a /clear registers a new id under the same 
   assert.equal(speaker.surface, 'claude');
   assert.equal(psRuns, 1, 'the ancestry walk is a fact of the process — never re-walked per act');
 });
+
+test('pid null walks NOTHING (ruling 2026-09-04): a daemon client that sent no hello resolves all-null and unwalked — the daemon never resolves from its own pid', () => {
+  let psRuns = 0;
+  const speaker = resolveSpeaker({
+    pid: null, sessionsPath: scratch(), platform: 'darwin', clientName: 'codex',
+    exec: { run: () => { psRuns += 1; return { status: 0, stdout: '', stderr: '' }; } },
+  });
+  assert.equal(speaker.walked, false, 'no pid → no walk — the fact is on the speaker');
+  assert.equal(speaker.session, null);
+  assert.equal(speaker.app, null);
+  assert.equal(speaker.surface, 'codex', 'only the client\'s word remains — the gate treats an unwalked speaker as unknown');
+  assert.equal(speaker.client, 'codex', 'the client\'s label rides the speaker so the gate can check it against the walk');
+  assert.equal(psRuns, 0);
+});
+
+test('a walked speaker says so; a blind walk (ps failed) says walked:false with the client\'s word standing in', () => {
+  const walked = resolveSpeaker({
+    pid: 300, sessionsPath: scratch(), platform: 'darwin', clientName: 'claude-code',
+    exec: psTable(['  300  200 /usr/local/bin/node', '  200  100 /usr/local/bin/claude', '  100    1 /sbin/launchd']),
+  });
+  assert.equal(walked.walked, true);
+  assert.equal(walked.surface, 'claude');
+  const blind = resolveSpeaker({ pid: 300, sessionsPath: scratch(), platform: 'darwin', clientName: 'claude-code', exec: { run: () => ({ status: 1, stdout: '', stderr: 'no ps' }) } });
+  assert.equal(blind.walked, false);
+  assert.equal(blind.surface, 'claude', 'the label stands in (a stated D0 limitation off darwin)');
+});
+
+test('the DEVICE rides the speaker (ruling 2026-09-04): the id ~/.oathe/device.json carries, null when absent, a typed refusal when malformed', () => {
+  const dir = path.dirname(scratch());
+  const devicePath = path.join(dir, 'device.json');
+  const none = resolveSpeaker({ pid: null, sessionsPath: path.join(dir, 'sessions.json'), devicePath });
+  assert.equal(none.device, null, 'no file, no device — never invented');
+  fs.writeFileSync(devicePath, JSON.stringify({ format: 1, device_id: '0f0f0f0f-1111-4222-8333-444444444444', minted_at: 't' }));
+  const some = resolveSpeaker({ pid: null, sessionsPath: path.join(dir, 'sessions.json'), devicePath });
+  assert.equal(some.device, '0f0f0f0f-1111-4222-8333-444444444444');
+  fs.writeFileSync(devicePath, '{"format":1}');
+  const bad = resolveSpeaker({ pid: null, sessionsPath: path.join(dir, 'sessions.json'), devicePath });
+  assert.throws(() => bad.device, (e) => e.code === 'OATHE_DEVICE_MALFORMED', 'a broken invariant is never smoothed over');
+});

@@ -29,7 +29,8 @@ struct Breach: Decodable {
     let home: String? // where it lives, as the package labels it
     let detail: String
     let at: String? // the breach's own clock (UTC) — the glass renders an age from it
-    let act: Resume? // the package-owned act: verify for overdue/stalled, the resumption else
+    let busy: Bool? // a judgment in flight: the word is `verifying`, the act is absent — the glass adds the spinner
+    let act: Resume? // the package-owned act: verify for overdue/stalled, the resumption else; nil while busy
 }
 
 struct SessionRef: Decodable {
@@ -40,15 +41,20 @@ struct SessionRef: Decodable {
 
 /// The package-owned resumption: the glass EXECUTES, it never decides.
 struct Resume: Decodable {
-    let kind: String // activate | spawn-terminal | open-app | copy-only
+    let kind: String // activate | spawn-terminal | open-app | dispatch — a row with nothing to resume into carries no Resume at all
     let word: String // the act's word on the button (continue ↗ / verify ↗ / retry ↗) — Node's
     let app_pid: Int32?
     let bundle: String?
     let command: String?
     let cwd: String?
     let terminal_bundle: String?
+    let task_id: String? // dispatch: the task the feed judges — spoken UP the pipe, no terminal
+    let act: String? // dispatch: the act word the package chose (verify | update) — the glass relays it, never decides it
+    let harness: String? // dispatch/update: the engine the act names
+    let paste: String? // open-app: the line to put on the clipboard (the app cannot be opened to a thread)
+    let flash: String? // open-app: the sentence the expanded row shows — Node's words
 
-    private enum CodingKeys: String, CodingKey { case kind, word, app_pid, bundle, command, cwd, terminal_bundle }
+    private enum CodingKeys: String, CodingKey { case kind, word, app_pid, bundle, command, cwd, terminal_bundle, task_id, act, harness, paste, flash }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -59,6 +65,11 @@ struct Resume: Decodable {
         command = try c.decodeIfPresent(String.self, forKey: .command)
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         terminal_bundle = try c.decodeIfPresent(String.self, forKey: .terminal_bundle)
+        task_id = try c.decodeIfPresent(String.self, forKey: .task_id)
+        act = try c.decodeIfPresent(String.self, forKey: .act)
+        harness = try c.decodeIfPresent(String.self, forKey: .harness)
+        paste = try c.decodeIfPresent(String.self, forKey: .paste)
+        flash = try c.decodeIfPresent(String.self, forKey: .flash)
     }
 }
 
@@ -74,6 +85,8 @@ struct MotionRow: Decodable {
     let surface: String? // which glass is speaking on the claim — the person stays the holder
     let session: SessionRef? // the living process behind the claim, when the registry knows one
     let resume: Resume?
+    let judgment: String? // a judged row (frame.judged): the judgment it awaits — Node's word, never composed here
+    let busy: Bool? // a judge holds it right now — the glass adds the spinner, exactly as on a breach
 }
 
 /// The ephemeral notice riding the frame that caused it — the wire vocabulary (noticeFor,
@@ -94,12 +107,13 @@ struct Welcome: Decodable {
 /// sheet's rows carry the words — no push line rides the frame.
 struct Frame: Decodable {
     let breaches: [Breach]
-    let more: Int?
+    let more: Int // the count beyond the rows — every frame carries it
     let motion: [MotionRow]
+    let judged: [MotionRow] // asserted claims awaiting their verdict — every frame carries it (the feed and this app ship together)
     let idle: [MotionRow]
     let sections: Sections
     let notice: Notice?
-    let welcome: Welcome? // optional — an old feed's frames stay decodable
+    let welcome: Welcome? // present only on the one frame that carries the one-time welcome (bin/oathe.mjs serveFrame)
     let default_agent: String? // the machine's chosen agent — the glass reads no config
 }
 
@@ -108,6 +122,9 @@ protocol FeedClient: AnyObject {
     var onFailure: ((String) -> Void)? { get set }
     func start()
     func stop()
+    /// One act line UP the pipe (ndjson, the mirror of a frame) — the feed decides and
+    /// answers with the next frame; the glass composes no sentence and spawns no process.
+    func send(_ line: String)
 }
 
 final class OatheFeed: FeedClient {
@@ -134,6 +151,14 @@ final class OatheFeed: FeedClient {
         stdinPipe?.fileHandleForWriting.closeFile() // the feed's documented exit
         child?.terminate()
         child = nil
+    }
+
+    func send(_ line: String) {
+        guard let pipe = stdinPipe, let data = (line + "\n").data(using: .utf8) else {
+            onFailure?("Oathe notch: no live feed to act through — retrying the feed")
+            return
+        }
+        pipe.fileHandleForWriting.write(data)
     }
 
     /// The agent's own PATH first — init stamps the oathe bin dir into the LaunchAgent, so

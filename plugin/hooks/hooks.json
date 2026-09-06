@@ -1,5 +1,5 @@
 {
-  "description": "Oathe session lifecycle: the board at SessionStart, lease heartbeat at Stop, frame note before compaction. Same three events exist verbatim in Claude Code and Codex. Commands go through the oathe bin on PATH \u2014 the plugin is cached by copy in Claude Code and Codex, so the tree carries no paths.",
+  "description": "Oathe session lifecycle: the board at SessionStart, lease heartbeat at Stop, frame note before compaction. Same three events exist verbatim in Claude Code and Codex. Commands go through the shim `oathe init` materializes at $HOME/.oathe/bin/oathe — the plugin is cached by copy, so the tree carries no machine paths, and shell-form commands expand $HOME where a GUI session's bare PATH would find no bin at all.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "oathe hook render-board",
+            "command": "\"$HOME/.oathe/bin/oathe\" hook render-board",
             "timeout": 8
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "oathe hook heartbeat",
+            "command": "\"$HOME/.oathe/bin/oathe\" hook heartbeat",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "oathe hook frame-note",
+            "command": "\"$HOME/.oathe/bin/oathe\" hook frame-note",
             "timeout": 5
           }
         ]

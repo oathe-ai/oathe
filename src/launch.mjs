@@ -6,11 +6,9 @@
 // here — the runtime's cage lives outside oathe-runtime's exports map (pre-extraction) and is
 // resolved by PATH from paths.cagePath inside OatheRuntimeProvider itself.
 
-import fs from 'node:fs';
-import path from 'node:path';
 
 import { buildContext } from './context.mjs';
-import { byName } from './harnesses/catalog.mjs';
+import { Harness, byName } from './harnesses/catalog.mjs';
 import { SessionHost } from './session-host.mjs';
 import { launchSessionEnv } from './launch-env.mjs';
 
@@ -32,7 +30,7 @@ export async function preflight({ env = process.env, cwd = process.cwd(), exec, 
   const ctx = buildContext({ env, exec });
   const { manifest, version, substrate, paths, config } = ctx;
   await substrate.close(); // preflight itself never talks to the database
-  if (!manifest.rows.some((r) => r.harness === harness)) {
+  if (manifest.wiringRowsFor(harness).length === 0) { // an address row alone wires nothing
     throw new LaunchError('OATHE_NOT_INSTALLED',
       `the ${harness} install is missing (no ${harness} rows in the install manifest) — `
       + 'run `oathe init` with that harness present first');
@@ -62,12 +60,12 @@ function declarable(env) {
  * reads process.env.PATH, which is not the environment the user asked us to launch from).
  */
 function resolveOnPath(envPath, name) {
-  for (const dir of String(envPath ?? '').split(':').filter(Boolean)) {
-    const candidate = path.join(dir, name);
-    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; } catch { /* keep looking */ }
+  const found = Harness.resolveOnPath(envPath, name); // the ONE resolver (src/harnesses/harness.mjs)
+  if (found === null) {
+    throw new LaunchError('OATHE_HARNESS_NOT_FOUND',
+      `no executable '${name}' on PATH — is the harness installed?`, { name });
   }
-  throw new LaunchError('OATHE_HARNESS_NOT_FOUND',
-    `no executable '${name}' on PATH — is the harness installed?`, { name });
+  return found;
 }
 
 /** The hermetic whitelist: terminal plumbing + oathe wiring, nothing else. */

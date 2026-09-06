@@ -39,6 +39,11 @@ export async function readHookInput() {
   return input;
 }
 
+/** The one sentence a session-less hook speaks — on stderr for the person, in the session
+ *  context for the model (ruling 2026-09-04: fail loud so the model does the right thing). */
+export const UNATTRIBUTED_SESSION = 'this session cannot be attributed (the harness sent no session_id: no '
+  + 'registration, no trace link) — its claims will be refused; run `oathe init` and start a new session';
+
 export async function buildHookContext(input, env = process.env) {
   const paths = buildPaths(env);
   const dialect = dialectFor(input) ?? cwdDialect;
@@ -62,6 +67,10 @@ export async function buildHookContext(input, env = process.env) {
       harness: ownerOfTracePath(normalized.transcriptPath ?? ''),
     }
     : null;
+  // Session-lessness is reported, never swallowed (fail-soft still reports visibly): a
+  // desktop payload with no session_id left claims traceless and verification judging an
+  // empty record — silently, until 2026-09-04. One line, both lifecycle hooks ride it.
+  if (!session) process.stderr.write(`oathe hook: payload carries no session_id — ${UNATTRIBUTED_SESSION}\n`);
   return {
     session,
     substrate: new Substrate({ database: config.get('db'), paths, env, config }),

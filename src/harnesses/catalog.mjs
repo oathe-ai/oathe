@@ -82,7 +82,49 @@ export function capabilityTable() {
     synthetic: C.isSyntheticWorkspaceDir !== Harness.isSyntheticWorkspaceDir,
     install: C.install !== null,
     docs: C.docs.length > 0,
+    attestation: C.attestation,
+    mcpToolTimeout: C.mcpToolTimeout !== null,
   }]));
+}
+
+/**
+ * Attestation by SURFACE name (the speaker's `surface`, as the adapters name it): which
+ * adapter owns the surface and whether its sessions register through hooks. `null` for a
+ * surface nobody owns — the claim gate refuses those.
+ * @returns {{harness: string, attestation: 'hooks'|'hookless'}|null}
+ */
+export function attestationFor(surface) {
+  if (!surface) return null;
+  for (const C of HARNESS_CLASSES) {
+    const declared = C.attestation?.[surface];
+    if (declared) return { harness: C.harnessName, attestation: declared };
+  }
+  return null;
+}
+
+/**
+ * Where work lives (ruling 2026-09-05), asked by SURFACE name: the word a place wears on every
+ * surface (`surfaces.display`), and whether the app recorded on an act is a place the glass can
+ * resume INTO by opening it (`surfaces.resumable` — the desktop app IS where the work lives; a
+ * terminal is not). Adapter facts; no literal outside src/harnesses/.
+ */
+export function displayFor(surface) {
+  if (!surface) return null;
+  for (const C of HARNESS_CLASSES) {
+    const word = C.surfaces?.display?.[surface];
+    if (word) return word;
+  }
+  return null;
+}
+
+export function appResumable(surface) {
+  if (!surface) return false;
+  return HARNESS_CLASSES.some((C) => C.surfaces?.resumable?.includes(surface) ?? false);
+}
+
+/** Can the glass update this harness's CLI in place? The adapter declares `install.update` (ruling 2026-09-05). */
+export function updatable(name) {
+  return typeof HARNESS_CLASSES.find((C) => C.harnessName === name)?.install?.update === 'function';
 }
 
 /** [name, envVar] pairs for every adapter that documents a project-dir env var. */
@@ -173,13 +215,13 @@ export function transcriptFor({ sessionId, reportedPath, home } = {}) {
 }
 
 /** Instantiate every adapter whose wiring exists — the init/uninstall roster. */
-export function buildWireable({ home, envPath, paths, exec }) {
-  return HARNESS_CLASSES.filter((C) => C.wiring !== null).map((C) => new C({ home, envPath, paths, exec }));
+export function buildWireable({ home, envPath, paths, exec, config = null }) {
+  return HARNESS_CLASSES.filter((C) => C.wiring !== null).map((C) => new C({ home, envPath, paths, exec, config }));
 }
 
 /** Instantiate every adapter — detection sweeps (the picker census) see them all. */
-export function buildAll({ home, envPath, paths, exec }) {
-  return HARNESS_CLASSES.map((C) => new C({ home, envPath, paths, exec }));
+export function buildAll({ home, envPath, paths, exec, config = null }) {
+  return HARNESS_CLASSES.map((C) => new C({ home, envPath, paths, exec, config }));
 }
 
 /** The detect-only surfaces as the picker prints them: detected + the manual steps. */

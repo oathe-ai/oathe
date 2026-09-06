@@ -216,3 +216,21 @@ test('the notch restart budget is config: how long init waits for launchd to tak
   assert.equal(new OatheConfig({ env, cwd }).get('notchRestartPollMs'), 100);
   assert.equal(new OatheConfig({ env: { ...env, OATHE_NOTCH_RESTART_SECONDS: '3' }, cwd }).get('notchRestartSeconds'), 3);
 });
+
+// The blocking exchange, declared to the transport (ruling 2026-09-05): the per-tool timeout an
+// MCP client must grant a `done`/`verify` that waits for its verdict (measured verify runs on
+// this substrate: p50 80s, p90 177s, max 315s — codex's 60s default sat below the median), and
+// how often the server says "still judging" while it waits.
+test('mcpToolTimeoutSec is a positive-int key with a 900s default — the blocking done\'s budget on every transport', () => {
+  const { env, cwd } = scratch();
+  assert.equal(new OatheConfig({ env, cwd }).get('mcpToolTimeoutSec'), 900);
+  assert.equal(new OatheConfig({ env: { ...env, OATHE_MCP_TOOL_TIMEOUT_SEC: '1200' }, cwd }).get('mcpToolTimeoutSec'), 1200);
+  assert.throws(() => new OatheConfig({ env: { ...env, OATHE_MCP_TOOL_TIMEOUT_SEC: '0' }, cwd }),
+    (e) => e.code === 'OATHE_CONFIG_VALUE_INVALID');
+});
+
+test('mcpProgressIntervalSec is a positive-int key with a 15s default — how often a waiting done says it is still judging', () => {
+  const { env, cwd } = scratch();
+  assert.equal(new OatheConfig({ env, cwd }).get('mcpProgressIntervalSec'), 15);
+  assert.equal(new OatheConfig({ env: { ...env, OATHE_MCP_PROGRESS_INTERVAL_SEC: '5' }, cwd }).get('mcpProgressIntervalSec'), 5);
+});

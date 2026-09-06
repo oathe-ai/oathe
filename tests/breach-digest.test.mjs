@@ -8,13 +8,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  BreachDigest, DigestError, KINDS, BUCKET_WORDS, DIGEST_ROW_CAP, DETAIL_CLIP, clipDetail, pullPointer,
+  BreachDigest, DigestError, KINDS, IN_FLIGHT, OPEN_APP_FLASH, BUCKET_WORDS, DIGEST_ROW_CAP, DETAIL_CLIP, clipDetail, pullPointer,
 } from '../src/breach-digest.mjs';
 import { BREACH_KINDS, breachOrder } from '../src/pager.mjs';
 
 const at = (h) => `2026-09-01T${String(h).padStart(2, '0')}:00Z`;
+// A row's `places` are every folder that ever picked the task up (the digest scopes on them);
+// `home_ref` is the residence's folder, `home` the label a person reads.
 const row = (kind, task_id, extra = {}) => ({
-  kind, task_id, objective: `objective of ${task_id}`, home: '/x', home_ref: 'ws-a', detail: `detail of ${task_id}`, at: at(1), ...extra,
+  kind, task_id, objective: `objective of ${task_id}`, home: '/x', home_ref: 'ws-a', detail: `detail of ${task_id}`, at: at(1),
+  places: [`workspace:${extra.home_ref ?? 'ws-a'}`], ...extra,
 });
 const digest = (breaches) => new BreachDigest({ breaches });
 
@@ -30,6 +33,32 @@ test('KINDS names every pager kind, in the pager\'s order, each with its word, i
   assert.deepEqual(KINDS.overdue, { word: 'never verified', bucket: 'verify', act: 'verify ↗' });
   assert.deepEqual(KINDS.quiet, { word: 'quiet', bucket: 'quiet', act: 'continue ↗' });
   assert.deepEqual(BUCKET_WORDS, { fix: 'to fix', verify: 'to verify', quiet: 'gone quiet' });
+});
+
+test('a busy breach wears the in-flight word the pager stamped: verifying — it keeps its row and leaves the push count and every count', () => {
+  const busyRow = { busy: true, busy_word: IN_FLIGHT.verify.word, busy_detail: IN_FLIGHT.verify.detail };
+  const d = digest([row('stalled', 's1', { ...busyRow, detail: 'engine claude failed before a verdict: usage limit' }), row('reopened', 'r1', { busy: false })]);
+  assert.throws(() => digest([row('stalled', 'unworded', { busy: true })]), (e) => e.code === 'OATHE_DIGEST_BUSY_UNWORDED', 'a busy row without the pager\'s words is refused, never defaulted');
+  const busy = d.rows.find((r) => r.task_id === 's1');
+  assert.equal(busy.kind, 'stalled', 'busy is a state on the breach, never a fifth kind');
+  assert.equal(busy.kind_word, IN_FLIGHT.verify.word, 'the person word is "verifying" — from the one table');
+  assert.equal(busy.detail, IN_FLIGHT.verify.detail, 'the previous failure is GONE from the row — the ruling');
+  assert.equal(busy.busy, true, 'the flag rides to the frame');
+  assert.equal(d.push, '1 to fix', 'an in-flight judgment is not a breach to act on — it is not counted');
+  assert.equal(d.counts.stalled, 0);
+  assert.equal(d.rows.length, 2, 'but it is still a row — a person sees it verifying');
+  assert.equal(IN_FLIGHT.verify.word, 'verifying');
+});
+
+test('a busy CHILD reads verifying in its parent\'s line; a busy parent leads its group with the busy word', () => {
+  const d = digest([
+    row('stalled', 'c0', { parent: 'P', parent_objective: 'fan out', busy: true, busy_word: IN_FLIGHT.verify.word, busy_detail: IN_FLIGHT.verify.detail }),
+    row('stalled', 'c1', { parent: 'P', parent_objective: 'fan out', busy: false }),
+  ]);
+  const group = d.rows[0];
+  assert.match(group.detail, /c0 · verifying/, 'the child line carries the busy word');
+  assert.match(group.detail, /c1 · verify failed/, 'its idle sibling keeps the kind word');
+  assert.equal(d.push, '1 to fix', 'only the idle sibling counts');
 });
 
 test('a kind the pager never emits is a typed refusal — a digest cannot word what it does not know', () => {
@@ -120,17 +149,19 @@ test('the row cap: rows are the first DIGEST_ROW_CAP groups, more is the rest �
   assert.equal(digest([]).more, 0);
 });
 
-test('scoped(homeRef) is a new digest over this board\'s facts only — push, counts, rows, more all recomputed; scoped(null) is the whole machine', () => {
+test('scoped(workspace) is a new digest over this board\'s facts only — a breach belongs to EVERY folder that ever picked its task up (ruling 2026-09-05), never only its residence; scoped(null) is the whole machine', () => {
   const d = digest([
     row('reopened', 'a1', { home_ref: 'ws-a' }), row('reopened', 'b1', { home_ref: 'ws-b' }), row('quiet', 'a2', { home_ref: 'ws-a' }),
     row('reopened', 'c1', { home_ref: 'ws-a', parent: 'P', parent_objective: 'p' }),
+    row('reopened', 'moved', { home_ref: 'ws-b', places: ['workspace:ws-a', 'workspace:ws-b'] }), // picked up in ws-a, resides in ws-b
   ]);
   const a = d.scoped('ws-a');
-  assert.deepEqual(a.groups.map((g) => g.task_id), ['a1', 'P', 'a2']);
-  assert.equal(a.push, '2 to fix · 1 gone quiet');
-  assert.equal(a.total, 3);
+  assert.deepEqual(a.groups.map((g) => g.task_id).sort(), ['P', 'a1', 'a2', 'moved'], 'the moved task is still ws-a\'s to see (order is breachOrder\'s, pinned elsewhere)');
+  assert.equal(a.push, '3 to fix · 1 gone quiet');
+  assert.equal(a.total, 4);
+  assert.deepEqual(d.scoped('ws-b').groups.map((g) => g.task_id), ['b1', 'moved']);
   assert.equal(d.scoped(null), d, 'the whole machine is the digest itself');
-  assert.equal(d.total, 4, 'the original is untouched');
+  assert.equal(d.total, 5, 'the original is untouched');
 });
 
 test('filter(fn) keeps the groups a surface wants — the attention channel takes the fix bucket only', () => {
@@ -162,4 +193,21 @@ test('pullPointer words the +N more line per channel — one site, three channel
   assert.equal(pullPointer('context', 0), null);
   assert.throws(() => pullPointer('glass', 1), (e) => e instanceof DigestError && e.code === 'OATHE_DIGEST_CHANNEL_UNKNOWN',
     'the glass gets a number, never a sentence — an unknown channel is a refusal, not a guess');
+});
+
+test('IN_FLIGHT is the one table of in-flight words: a busy breach wears the word and detail the pager stamped on it (verifying, or updating <Name>) — BUSY is gone', async () => {
+  const mod = await import('../src/breach-digest.mjs');
+  assert.equal(mod.BUSY, undefined, 'one table, not a single-state constant beside it');
+  const d = digest([
+    row('stalled', 'u1', { busy: true, busy_word: mod.IN_FLIGHT.update.word('Codex'), busy_detail: mod.IN_FLIGHT.update.detail('Codex') }),
+    row('overdue', 'v1', { busy: true, busy_word: mod.IN_FLIGHT.verify.word, busy_detail: mod.IN_FLIGHT.verify.detail }),
+  ]);
+  const by = Object.fromEntries(d.rows.map((r) => [r.task_id, r]));
+  assert.deepEqual([by.u1.kind_word, by.u1.detail], ['updating Codex', mod.IN_FLIGHT.update.detail('Codex')]);
+  assert.deepEqual([by.v1.kind_word, by.v1.detail], ['verifying', mod.IN_FLIGHT.verify.detail]);
+  assert.equal(d.push, null, 'in-flight rows are not counted — nothing to act on');
+});
+
+test('OPEN_APP_FLASH is the one sentence an open-app act shows — the app\'s word from its adapter, never composed on the glass', () => {
+  assert.equal(OPEN_APP_FLASH('ChatGPT'), 'command copied — paste in ChatGPT to continue');
 });

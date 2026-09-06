@@ -79,7 +79,7 @@ each harness's cached plugin version.
   `codex plugin add`, `codex mcp add`), verified after each call, undone by the inverse CLIs.
 - Project `CLAUDE.md`/`AGENTS.md` (pinned when a session first opens on the folder) — one tiny managed section
   inside `<!-- >>> oathe … >>> -->` fences; content outside the fence is never touched.
-- `~/.oathe/` — install manifest, pre-edit backups, artifact store.
+- `~/.oathe/` — install manifest, pre-edit backups, artifact store, the device identity (`device.json`, 0600).
 - `~/Library/LaunchAgents/ai.oathe.notch.*.plist` + `~/.oathe/notch/` (macOS) — the notch
   app, materialized under a version+content key and kept alive by launchd; booted out and
   removed by `oathe uninstall`.

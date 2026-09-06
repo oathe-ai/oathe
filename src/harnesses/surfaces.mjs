@@ -39,7 +39,7 @@ export class CoworkSurface extends Harness {
   detect() {
     const appSupport = path.join(this.home, 'Library/Application Support/Claude');
     const app = this.platform === 'darwin' && (fs.existsSync('/Applications/Claude.app') || fs.existsSync(appSupport));
-    const presence = { app, cli: false, configHome: app ? appSupport : null };
+    const presence = { app, cli: false, cliPath: null, configHome: app ? appSupport : null };
     return { name: this.name, presence, installed: this.constructor.installedFrom(presence) };
   }
 }
@@ -65,7 +65,7 @@ export class ChatGptWebSurface extends Harness {
   }
 
   detect() {
-    const presence = { app: null, cli: false, configHome: null };
+    const presence = { app: null, cli: false, cliPath: null, configHome: null };
     return { name: this.name, presence, installed: false };
   }
 }

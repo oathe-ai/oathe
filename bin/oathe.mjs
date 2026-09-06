@@ -5,10 +5,9 @@
 
 import { parseArgs } from 'node:util';
 
-import { isTraceSubjectSql } from '../src/statements.mjs';
 import { byName, launchable, verifierCapable } from '../src/harnesses/catalog.mjs';
 
-const VERBS = ['init', ...launchable(), 'claim', 'ls', 'note', 'amend', 'done', 'verify', 'trace', 'notch', 'yield', 'config', 'doctor', 'uninstall', 'status', 'version', 'update', 'hook', 'mcp'];
+const VERBS = ['init', ...launchable(), 'claim', 'ls', 'note', 'amend', 'done', 'verify', 'engine', 'trace', 'notch', 'yield', 'config', 'doctor', 'uninstall', 'status', 'version', 'update', 'hook', 'mcp', 'serve'];
 
 const USAGE = `usage: oathe <verb> [args]
 
@@ -21,6 +20,7 @@ ${launchable().map((name) => `  ${name.padEnd(6)} [--hermetic] [args…]  ${byNa
   amend <task> "<objective>" "<why>"  change what done means, on the record (active claim only)
   done <task-id> <what> [ref]  assert completion (a completion statement + the substrate's terminal)
   verify [task] [--all] [--engine ${verifierCapable().join('|')}]  run the verification lane (non-author seat settles)
+  engine update <harness> [--then-verify [task]]  update an engine's CLI in place, as the claim update:<harness> (what the glass's update ↗ runs); --then-verify re-judges what its old version failed
   trace <task-id> [--out dir]  export the claim's linked session traces as ATIF trajectories
   notch [--welcome]            the whole machine's board + breach digest, pure JSON (only shows); --welcome replays the one-time welcome on the glass
   yield <task-id> <note>       yield: the task goes back on the board, unowned
@@ -30,16 +30,36 @@ ${launchable().map((name) => `  ${name.padEnd(6)} [--hermetic] [args…]  ${byNa
   update [--yes] [--harness a,b]  the upgrade as one verb: npm i -g @oathe/oathe@latest through this node's npm, then init through the new bin
   config <key> [value] [--global]  read or write a config key (workspace scope by default)
   uninstall [--purge-db]       remove exactly what init recorded (the database stays put)
-  hook <name> · mcp            internal: the plugin's hook/server entry points (bin-addressed)
+  hook <name> · mcp · serve    internal: the hook/server entry points and the device daemon (shim-addressed)
 `;
 
 function summary(verb, status) {
   process.stdout.write(`oathe: ${verb} ${status}\n`);
 }
 
+/**
+ * The one line a speech act prints when it RESUMED rejected work first (ruling 2026-09-04:
+ * the verdict hands the work back; the act is the principal speaking) — the reclaim is on
+ * the record, so is the verdict it answers. Empty when the act spoke against a held claim.
+ */
+function reclaimLine(out) {
+  if (!out.reclaimed) return '';
+  const why = out.rejection?.reason ? ` — ${out.rejection.reason}` : '';
+  return `reclaimed: ${out.task_id} (lease ${out.lease})${why}\n`;
+}
+
+/** A verb's own typed refusal — the OATHE_* vocabulary, never a bare Error a reader sniffs words from. */
+function refusal(code, message) {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
+
 function fail(verb, e) {
   process.stderr.write(`${e?.code ? `[${e.code}] ` : ''}${e?.message || e}\n`);
-  const status = /refus|REFUSED|already|second|active claim/i.test(String(e?.message)) ? 'refused' : 'error';
+  // A typed code is a refusal by definition (the OATHE_* vocabulary, docs/PRODUCT.md §16);
+  // anything else is an error. No message sniffing — every refusal carries its code.
+  const status = /^OATHE_/.test(String(e?.code ?? '')) ? 'refused' : 'error';
   process.stderr.write(`oathe: ${verb} ${status}\n`);
   process.exit(1);
 }
@@ -60,17 +80,29 @@ function parseFlags(verb, spec) {
   }
 }
 
+/**
+ * The ONE description of where this process stands: `{ref, dir, synthetic}` from the resolver —
+ * a ChatGPT staging dir is synthetic and mints no folder id (the verifier's seat, ruling 2026-09-05).
+ */
+async function workspaceHere(env = process.env) {
+  const [{ WorkspaceResolver }, { homeOf }] = await Promise.all([import('../src/workspace-resolver.mjs'), import('../src/paths.mjs')]);
+  return WorkspaceResolver.describe({ dir: process.cwd(), home: homeOf(env) });
+}
+
+/** The workspace ref a seat claims under: a folder's ref, or null (the ledger's `none`) for a synthetic dir. */
+const seatWorkspace = (place) => (place.synthetic ? null : place.ref);
+
 async function toolsForCwd(env = process.env) {
-  const [{ buildContext }, { createOatheTools }, { WorkspaceResolver }, { WorkspaceRegistry }, { ActivationSeam }, { homeOf }, { resolveSpeaker }, { verifierSeam }] = await Promise.all([
-    import('../src/context.mjs'), import('../src/mcp/oathe-tools.mjs'), import('../src/workspace-resolver.mjs'),
-    import('../src/registry.mjs'), import('../src/activation.mjs'), import('../src/paths.mjs'),
+  const [{ buildContext }, { createOatheTools }, { WorkspaceRegistry }, { ActivationSeam }, { resolveSpeaker }, { verifierSeam }] = await Promise.all([
+    import('../src/context.mjs'), import('../src/mcp/oathe-tools.mjs'),
+    import('../src/registry.mjs'), import('../src/activation.mjs'),
     import('../src/speaker.mjs'), import('../src/verify-dispatch.mjs'),
   ]);
   const ctx = buildContext({ env });
-  // The terminal IS the workspace: its facts (ref, synthetic) come from the one describer, and
+  // The terminal IS the workspace: its facts (ref, synthetic, dir) come from the one describer, and
   // every verb registers it centrally through the one seam — claim activates (fences included).
   const cwd = process.cwd();
-  const place = WorkspaceResolver.describe({ dir: cwd, home: homeOf(env) });
+  const place = await workspaceHere(env);
   return {
     ctx,
     tools: createOatheTools({
@@ -79,15 +111,17 @@ async function toolsForCwd(env = process.env) {
       config: ctx.config,
       workspace: place.ref,
       synthetic: place.synthetic,
+      dir: place.dir,
       // A CLI verb run from inside a harness session's shell speaks FOR that session — the
       // ancestry reaches the registered harness pid; a bare terminal resolves to nulls.
-      speaker: resolveSpeaker({ sessionsPath: ctx.paths.sessionsPath }),
+      speaker: resolveSpeaker({ sessionsPath: ctx.paths.sessionsPath, devicePath: ctx.paths.devicePath }),
       // ONE verifier seam, every surface: done's auto-dispatch works from the CLI too.
       verifier: verifierSeam({
         orgId: ctx.identity.orgId,
         query: (sql, params) => ctx.substrate.query(sql, params),
         paths: ctx.paths,
         cwd,
+        progressIntervalMs: ctx.config.get('mcpProgressIntervalSec') * 1000,
       }),
       activation: new ActivationSeam({
         cwd,
@@ -128,13 +162,21 @@ const handlers = {
     process.stdout.write(`  substrate: db up, ddl ${s.ddl_applied}/${s.ddl_expected} applied `
       + `(source: ${s.ddl_source}), yield cause ${s.yield_cause_registered ? 'registered' : 'MISSING'}\n`);
     process.stdout.write(`  principal: ${result.principal.principal_id} (${result.principal.role})\n`);
-    // The notch is a surface the person looks at: its state is said from launchd, and a dead
-    // one is attention, never folded into ok.
+    process.stdout.write(`  device: ${result.device.device_id} (${result.device.minted ? 'minted' : 'kept'})\n`);
+    // The notch is a surface the person looks at, and the daemon is what every session
+    // forwards to: each state is said from launchd, and a dead one is attention, never
+    // folded into ok.
     const glass = result.actions.find((a) => a.harness === 'notch' && /^notch-(running|not-running)$/.test(a.action));
     if (glass) {
       process.stdout.write(glass.action === 'notch-running'
         ? `  notch: running (pid ${glass.pid})\n`
         : `  notch: NOT RUNNING — launchd: ${glass.detail} (${glass.label}); run \`oathe init\` again, or \`oathe doctor\`\n`);
+    }
+    const dmn = result.actions.find((a) => a.harness === 'serve' && /^serve-(running|not-running)$/.test(a.action));
+    if (dmn) {
+      process.stdout.write(dmn.action === 'serve-running'
+        ? `  daemon: running (pid ${dmn.pid})\n`
+        : `  daemon: NOT RUNNING — launchd: ${dmn.detail} (${dmn.label}); run \`oathe init\` again, or \`oathe doctor\`\n`);
     }
     // The surface note lives here, once: the screen showed only the row.
     for (const surface of result.surfaces.filter((x) => x.detected)) {
@@ -166,6 +208,26 @@ const handlers = {
     await main();
   },
 
+  // The device daemon (connection-lane phase 2): launchd runs this through the shim; every
+  // `oathe mcp` forwards to it when it answers. Long-running like mcp — no trailer on the
+  // happy path; a refusal (a daemon already serving) throws typed and trails as error.
+  async serve() {
+    const [{ OatheDaemon }, { serveSocketPath }, { OatheConfig }, { buildPaths }] = await Promise.all([
+      import('../src/mcp/daemon.mjs'), import('../src/serve.mjs'), import('../src/config.mjs'), import('../src/paths.mjs'),
+    ]);
+    const config = OatheConfig.global({});
+    const daemon = new OatheDaemon({
+      env: process.env,
+      socketPath: serveSocketPath(buildPaths(process.env), config),
+    });
+    await daemon.start();
+    // launchd ends the daemon with SIGTERM on bootout — close the connections and the
+    // socket cleanly; forwarders' pipes end with us and their sessions respawn.
+    for (const signal of ['SIGTERM', 'SIGINT']) {
+      process.on(signal, () => { daemon.close().finally(() => process.exit(0)); });
+    }
+  },
+
   async claim(argv) {
     const [taskId, objective] = argv;
     if (!taskId) throw new Error('usage: oathe claim <task-id> [objective]');
@@ -173,7 +235,10 @@ const handlers = {
     try {
       const out = await tools.oathe_claim({ task_id: taskId, objective });
       process.stdout.write(`claimed: ${out.task_id} (lease ${out.lease}) — ${out.note}${out.lineage ? ` — spawned under ${out.lineage.parent}` : ''}\n`);
-      summary('claim', 'ok');
+      // An admitted session-less claim (a surface with no hooks) says so, and the run is attention.
+      const unattributed = out.spoken_from?.session === null && out.trace_link?.why;
+      if (unattributed) process.stdout.write(`unattributed: ${out.trace_link.why}\n`);
+      summary('claim', unattributed ? 'attention' : 'ok');
     } finally {
       await ctx.substrate.close();
     }
@@ -189,8 +254,11 @@ const handlers = {
       process.stdout.write(`board${workspace ? ` (${workspace})` : ' (all workspaces)'}:\n`);
       const listed = [...sections.mine, ...sections.open, ...sections.asserted, ...sections.held];
       if (listed.length === 0) process.stdout.write('  (none — a clean slate)\n');
+      const { JUDGMENT } = await import('../src/breach-digest.mjs');
       for (const r of listed) {
-        const holder = r.state === 'active' ? `${r.principal_id}, lease until ${r.lease_until}` : (r.state ?? 'open');
+        // An asserted row says which judgment it awaits (UX rule 22) — the one table's word.
+        const holder = r.state === 'active' ? `${r.principal_id}, lease until ${r.lease_until}`
+          : r.judgment ? JUDGMENT[r.judgment].word : (r.state ?? 'open');
         process.stdout.write(`  [${(r.state ?? 'open').padEnd(8)}] ${r.task_id} — ${r.objective} (${holder})\n`);
       }
       // UX rule 18: the terminal is the uncapped pull — every breached promise on the machine,
@@ -220,7 +288,7 @@ const handlers = {
     const { ctx, tools } = await toolsForCwd();
     try {
       const out = await tools.oathe_amend({ task_id: taskId, objective, why });
-      process.stdout.write(`amended to v${out.version} — ${out.note}\n`);
+      process.stdout.write(`${reclaimLine(out)}amended to v${out.version} — ${out.note}\n`);
       summary('amend', 'ok');
     } finally {
       await ctx.substrate.close();
@@ -233,7 +301,7 @@ const handlers = {
     const { ctx, tools } = await toolsForCwd();
     try {
       const out = await tools.oathe_statement({ task_id: taskId, proposition, evidence_ref: evidenceRef });
-      process.stdout.write(`statement recorded (${out.note})\n`);
+      process.stdout.write(`${reclaimLine(out)}statement recorded (${out.note})\n`);
       summary('note', 'ok');
     } finally {
       await ctx.substrate.close();
@@ -245,12 +313,16 @@ const handlers = {
     if (!taskId || !proposition) throw new Error('usage: oathe done <task-id> <what-was-done> [evidence-ref]');
     const { ctx, tools } = await toolsForCwd();
     try {
-      const out = await tools.oathe_done({ task_id: taskId, proposition, evidence_ref: evidenceRef });
+      // The wait says it is still judging — the same ticks an MCP client hears, on stderr here.
+      const out = await tools.oathe_done({ task_id: taskId, proposition, evidence_ref: evidenceRef },
+        { progress: (message) => process.stderr.write(`${message}\n`) });
       process.stdout.write(`done: ${out.task_id} — ${out.note}\n`);
       // The blocked verdict, for the human (ruling 2026-08-31: locally, done owes its answer).
       const v = out.verification;
       if (v?.verdict) {
         process.stdout.write(`verdict: ${v.verdict} — ${v.reason}\n`);
+        // A rejection handed the work back in this exchange (ruling 2026-09-04).
+        process.stdout.write(reclaimLine(out));
         if (v.your_options) process.stdout.write(`next: ${v.your_options}\n`);
       } else if (v?.failed) {
         process.stdout.write(`verification failed: ${v.reason}\n`);
@@ -267,21 +339,26 @@ const handlers = {
       options: { all: { type: 'boolean', default: false }, engine: { type: 'string' }, detach: { type: 'boolean', default: false } },
       allowPositionals: true,
     });
-    const [{ buildContext }, { Verifier }, { workspaceRef }] = await Promise.all([
-      import('../src/context.mjs'), import('../src/verifier.mjs'), import('../src/workspace.mjs'),
+    const [{ buildContext }, { Verifier }] = await Promise.all([
+      import('../src/context.mjs'), import('../src/verifier.mjs'),
     ]);
     const ctx = buildContext({});
     // --detach: the judgment survives its terminal — one dispatcher, same as MCP and the
     // glass; closing the window can never orphan a verify claim again.
     if (values.detach === true) {
       if (!positionals[0]) throw new Error('usage: oathe verify --detach <task-id>');
-      const { dispatchVerification } = await import('../src/verify-dispatch.mjs');
+      const [{ dispatchVerification }, { emit }] = await Promise.all([
+        import('../src/verify-dispatch.mjs'), import('../src/wire.mjs'),
+      ]);
       try {
         const out = await dispatchVerification({
           taskId: positionals[0], engine: values.engine ?? null, orgId: ctx.identity.orgId,
           query: (sql, params) => ctx.substrate.query(sql, params),
           paths: ctx.paths, cwd: process.cwd(), env: process.env,
         });
+        // The glass hears the dispatch (a silent nudge — the judgment's own claim turns the
+        // row verifying); a retry launched from a terminal never leaves the glass stale.
+        await emit(ctx.substrate, { kind: 'verify_dispatched', task_id: positionals[0] });
         process.stdout.write(`dispatched — the verdict lands on the glass. Log: ${out.log}\n`);
         summary('verify', 'ok');
       } finally {
@@ -291,7 +368,7 @@ const handlers = {
     }
     const verifier = new Verifier({
       substrate: ctx.substrate, paths: ctx.paths, config: ctx.config,
-      workspace: workspaceRef(process.cwd()),
+      workspace: seatWorkspace(await workspaceHere()),
       operatorPrincipal: ctx.identity.principalId,
     });
     try {
@@ -311,14 +388,46 @@ const handlers = {
     }
   },
 
+  async engine(argv) {
+    const [sub, harness, ...rest] = argv;
+    const usage = 'usage: oathe engine update <harness> [--then-verify [task-id]]';
+    if (sub !== 'update' || !harness) throw new Error(usage);
+    const { values, positionals } = parseFlags('engine', {
+      args: rest, options: { 'then-verify': { type: 'boolean', default: false } }, allowPositionals: true,
+    });
+    const [{ buildContext }, { EngineUpdate }] = await Promise.all([
+      import('../src/context.mjs'), import('../src/engine-update.mjs'),
+    ]);
+    const ctx = buildContext({});
+    const update = new EngineUpdate({
+      substrate: ctx.substrate, paths: ctx.paths, config: ctx.config, manifest: ctx.manifest,
+      workspace: seatWorkspace(await workspaceHere()), operatorPrincipal: ctx.identity.principalId,
+      onStart: ({ address, before, command, log }) => process.stdout.write(`updating ${harness} at ${address} (${before}) via ${command} — log: ${log}\n`),
+    });
+    try {
+      const out = await update.run({ harness, thenVerify: values['then-verify'] === true, task: positionals[0] ?? null });
+      process.stdout.write(`updated ${harness}: ${out.before} → ${out.after} (${out.update_task} settled)\n`);
+      let attention = false;
+      for (const r of out.reverified) {
+        const mark = r.error ? `✗ not judged — ${r.error}` : r.verdict === 'accepted' ? '✓ settled' : '✗ rejected — task reopened';
+        process.stdout.write(`${r.task_id}: ${mark}\n`);
+        if (r.error || r.verdict !== 'accepted') attention = true;
+      }
+      summary('engine', attention ? 'attention' : 'ok');
+    } finally {
+      await update.close();
+      await ctx.substrate.close();
+    }
+  },
+
   async trace(argv) {
     const { values, positionals } = parseFlags('trace', {
       args: argv, options: { out: { type: 'string' }, pure: { type: 'boolean', default: false } }, allowPositionals: true,
     });
     const [taskId] = positionals;
     if (!taskId) throw new Error('usage: oathe trace <task-id> [--out <dir>] [--pure]');
-    const [{ buildContext }, { workspaceRef }, { projectAnnotated }, { projectorFor }, fs, path] = await Promise.all([
-      import('../src/context.mjs'), import('../src/workspace.mjs'), import('../src/oathe-annotator.mjs'),
+    const [{ buildContext }, { projectAnnotated }, { projectorFor }, fs, path] = await Promise.all([
+      import('../src/context.mjs'), import('../src/oathe-annotator.mjs'),
       import('../src/harnesses/catalog.mjs'), import('node:fs'), import('node:path'),
     ]);
     const ctx = buildContext({});
@@ -327,18 +436,21 @@ const handlers = {
         `SELECT work_claim_id, contract_ref FROM cell.work_claim
           WHERE org_id = $1 AND task_id = $2 ORDER BY claimed_at DESC LIMIT 1`,
         [ctx.identity.orgId, taskId]);
-      if (claims.length === 0) throw new Error(`no claim on '${taskId}' — nothing to trace`);
+      if (claims.length === 0) throw refusal('OATHE_NOTHING_TO_TRACE', `no claim on '${taskId}' — nothing to trace`);
       const claim = claims[0];
-      const { rows: traceRows } = await ctx.substrate.query(
-        `SELECT evidence_refs FROM cell.agent_statement
-          WHERE org_id = $1 AND work_claim_id = $2 AND ${isTraceSubjectSql('subject_ref')}`,
-        [ctx.identity.orgId, claim.work_claim_id]);
       const { rows: verdicts } = await ctx.substrate.query(
         `SELECT result, verifier_principal, verification_id FROM cell.verification
           WHERE org_id = $1 AND task_id = $2 ORDER BY recorded_at DESC LIMIT 1`,
         [ctx.identity.orgId, taskId]);
-      const files = traceRows.flatMap((r) => r.evidence_refs);
-      if (files.length === 0) throw new Error(`'${taskId}' has no linked traces — nothing to export`);
+      // The export reads the same evidence the verifier judges: recorded links ∪ fingerprint
+      // discovery (src/evidence-discovery.mjs) — a traceless surface's work still exports.
+      const { EvidenceDiscovery } = await import('../src/evidence-discovery.mjs');
+      const { traces: gathered, unreadable } = await new EvidenceDiscovery({ client: ctx.substrate, orgId: ctx.identity.orgId })
+        .read({ taskId });
+      // stdout is the JSON; what the scan could not read is said on stderr, never swallowed.
+      for (const u of unreadable) process.stderr.write(`trace: unreadable store file skipped: ${u.path} (${u.code})\n`);
+      const files = gathered.map((t) => t.path);
+      if (files.length === 0) throw refusal('OATHE_EVIDENCE_EMPTY', `no evidence for '${taskId}' — no linked traces and no discovery hits`);
       const trajectories = [];
       // The export is the annotated read with the OBLIGATION stamped on the root — what this
       // trajectory is evidence for, in the annotator's own slot. --pure exports the
@@ -353,7 +465,7 @@ const handlers = {
               task_id: taskId,
               work_claim_id: claim.work_claim_id,
               contract_ref: claim.contract_ref,
-              workspace: workspaceRef(process.cwd()),
+              workspace: seatWorkspace(await workspaceHere()),
               ...(verdicts[0] ? { verdict: verdicts[0] } : {}),
             },
           }));
@@ -503,7 +615,52 @@ const handlers = {
     });
     beat = setInterval(guarded('heartbeat frame', async () => write(await serveFrame())), ctx.config.get('notchHeartbeatSeconds') * 1000);
     write(await serveFrame());
-    process.stdin.resume();
+    // The glass speaks acts UP the same pipe — one ndjson line, the mirror of a frame
+    // (ruling 2026-09-04: a judgment needs no terminal). `{act:'verify', task_id, cwd}` runs
+    // the ONE dispatcher the CLI and MCP run; `{act:'update', task_id, harness, cwd}` (ruling
+    // 2026-09-05) runs the engine update the same detached way. The child's own claim then
+    // wakes the frame (verify_started / the update:<harness> hold). A refusal other than
+    // "already in flight" rides the next frame as an amber notice — the glass never learns of a
+    // failure by silence. The feed holds no memory of either: the frame is the only truth.
+    const { dispatchVerification, dispatchEngineUpdate } = await import('../src/verify-dispatch.mjs');
+    const common = (req) => ({
+      orgId: ctx.identity.orgId, query: (sql, params) => ctx.substrate.query(sql, params),
+      paths: ctx.paths, cwd: typeof req.cwd === 'string' ? req.cwd : homeOf(), env: process.env,
+    });
+    const dispatchers = {
+      verify: (req) => dispatchVerification({ taskId: req.task_id, ...common(req) }),
+      update: (req) => (typeof req.harness === 'string' ? dispatchEngineUpdate({ harness: req.harness, ...common(req) }) : null),
+    };
+    const act = guarded('act', async (req) => {
+      const dispatch = typeof req?.task_id === 'string' ? dispatchers[req.act] : null;
+      const pending = dispatch ? dispatch(req) : null;
+      if (pending === null) {
+        process.stderr.write(`oathe notch: unknown act ${JSON.stringify(req).slice(0, 120)} — ignored\n`);
+        return;
+      }
+      try {
+        await pending;
+      } catch (e) {
+        if (e?.code === 'OATHE_VERIFY_IN_FLIGHT' || e?.code === 'OATHE_UPDATE_IN_FLIGHT') return; // the row already says so
+        const f = await serveFrame();
+        f.notice = { text: `✗ ${req.act} '${req.task_id}' not dispatched — [${e?.code ?? 'error'}] ${String(e?.message ?? e).slice(0, 160)}`, tone: 'amber' };
+        write(f);
+      }
+    });
+    let inbound = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => {
+      inbound += chunk;
+      let nl;
+      while ((nl = inbound.indexOf('\n')) >= 0) {
+        const line = inbound.slice(0, nl).trim();
+        inbound = inbound.slice(nl + 1);
+        if (line === '') continue;
+        let req = null;
+        try { req = JSON.parse(line); } catch { process.stderr.write(`oathe notch: act line is not JSON — ignored\n`); continue; }
+        act(req);
+      }
+    });
     process.stdin.on('end', shutdown);
     process.stdin.on('close', shutdown);
     process.on('SIGTERM', shutdown);
@@ -517,7 +674,7 @@ const handlers = {
     const { ctx, tools } = await toolsForCwd();
     try {
       const out = await tools.oathe_yield({ task_id: taskId, note });
-      process.stdout.write(`yielded: ${out.task_id} — ${out.note}\n`);
+      process.stdout.write(`${reclaimLine(out)}yielded: ${out.task_id} — ${out.note}\n`);
       summary('yield', 'ok');
     } finally {
       await ctx.substrate.close();
@@ -561,7 +718,7 @@ const handlers = {
       e.code = 'OATHE_UPDATE_INIT_FAILED';
       throw e;
     }
-    summary('update', out.notch && out.notch.pid === null ? 'attention' : 'ok');
+    summary('update', (out.notch && out.notch.pid === null) || (out.daemon && out.daemon.pid === null) ? 'attention' : 'ok');
   },
 
   async doctor(argv) {
@@ -610,15 +767,22 @@ const handlers = {
       process.stdout.write(`traces: ${harness.padEnd(8)} ${trace.status}`
         + `${trace.status === 'DRIFT' ? ` — ${trace.detail} (${trace.newest})` : ''}\n`);
     }
+    // The daemon's answer is a health fact wherever serve is WIRED: launchd holding the
+    // agent while nothing answers the socket means every session forwards into nothing.
+    process.stdout.write(result.daemon.answering
+      ? `daemon: answering (${result.daemon.server.name} ${result.daemon.server.version}) @ ${result.daemon.socket}\n`
+      : `daemon: NOT ANSWERING @ ${result.daemon.socket ?? '(unresolved socket)'}\n`);
     for (const row of result.rows) {
       process.stdout.write(`  ${row.status.padEnd(12)} ${row.harness.padEnd(8)} ${row.kind.padEnd(12)} ${row.file}\n`);
     }
+    const serveWired = result.rows.some((r) => r.harness === 'serve' && r.kind === 'launch-agent');
     const healthy = s.reachable && s.database_exists && s.ddl_applied === s.ddl_expected
       && s.ddl_source !== 'ABSENT'
       && result.plugin.resolves && result.runtime.provider !== null
       && result.runtime.probe?.ok !== false
       && result.rows.every((r) => r.status === 'ok')
-      && Object.values(result.traces).every((t) => t.status !== 'DRIFT');
+      && Object.values(result.traces).every((t) => t.status !== 'DRIFT')
+      && (!serveWired || result.daemon.answering);
     summary('doctor', healthy ? 'ok' : 'attention');
     if (!healthy) process.exit(1);
   },

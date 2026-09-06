@@ -10,7 +10,7 @@ import path from 'node:path';
 import { atomicWriteJson, withFileLock } from './fslock.mjs';
 import { workspaceIdentity, workspaceRef, workspaceRoot } from './workspace.mjs';
 
-const REGISTRY_FORMAT = 1;
+export const REGISTRY_FORMAT = 1;
 
 export class RegistryError extends Error {
   constructor(code, message, details = {}) {
@@ -31,12 +31,20 @@ export class WorkspaceRegistry {
   /** @returns {{format: number, saved_at?: string, workspaces: object}} */
   load() {
     if (!fs.existsSync(this.registryPath)) return { format: REGISTRY_FORMAT, workspaces: {} };
+    let doc;
     try {
-      return JSON.parse(fs.readFileSync(this.registryPath, 'utf8'));
+      doc = JSON.parse(fs.readFileSync(this.registryPath, 'utf8'));
     } catch (e) {
       throw new RegistryError('OATHE_REGISTRY_MALFORMED',
         `${this.registryPath} is not valid JSON: ${e.message}`, { file: this.registryPath });
     }
+    // The format is the gate (zero legacy, 2026-09-05): another oathe's file is refused by name.
+    if (doc?.format !== REGISTRY_FORMAT || typeof doc.workspaces !== 'object' || doc.workspaces === null) {
+      throw new RegistryError('OATHE_REGISTRY_FORMAT',
+        `${this.registryPath} is format ${JSON.stringify(doc?.format)}; this oathe reads format ${REGISTRY_FORMAT} — move it aside and run oathe init (folders re-register on use)`,
+        { file: this.registryPath, found: doc?.format, expected: REGISTRY_FORMAT });
+    }
+    return doc;
   }
 
   /**

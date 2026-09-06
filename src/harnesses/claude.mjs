@@ -18,6 +18,7 @@ const claudeToolUses = (entries) => entries
   .flatMap((r) => r.message.content.filter((p) => p.type === 'tool_use'));
 import { JsonEntries } from '../blocks.mjs';
 import { sha256Hex } from '../manifest.mjs';
+import { shimPath } from '../shim.mjs';
 
 export class ClaudeHarness extends Harness {
   static harnessName = 'claude';
@@ -37,13 +38,24 @@ export class ClaudeHarness extends Harness {
   static surfaces = Object.freeze({
     ownsExec: (exec) => path.basename(exec) === 'claude',
     name: () => 'claude',
+    display: Object.freeze({ claude: 'Claude Code' }),
+    resumable: Object.freeze([]), // a folder's session — the folder is the place, never the terminal
   });
-  static install = Object.freeze({ npm: '@anthropic-ai/claude-code', bin: 'claude', versionArgs: ['--version'] });
+  static attestation = Object.freeze({ claude: 'hooks' });
+  // The blocking exchange needs no budget written here: Claude Code's per-tool wall clock
+  // defaults to about 28 hours (claude-code/mcp.md, pinned) and a stdio call is only aborted
+  // after 30 idle minutes — the wait's progress ticks reset that clock. What Claude Code DOES
+  // do is move a call past two minutes to a background task and deliver the verdict as its
+  // notification; that is the client's behaviour, disclosed on oathe_done, not a knob here.
+  static mcpToolTimeout = null;
+  // `claude update` — Claude Code's own in-place updater (claude-code docs, pinned).
+  static install = Object.freeze({ npm: '@anthropic-ai/claude-code', bin: 'claude', versionArgs: ['--version'], update: (address) => [address, ['update']] });
   // Non-interactive auth: ANTHROPIC_API_KEY (claude-code/headless.md, pinned 2026-08-29).
   static headless = Object.freeze({
     auth: ['ANTHROPIC_API_KEY'],
     command: (prompt, model = null) => ['claude', ['-p', prompt, '--output-format', 'json', ...(model ? ['--model', model] : [])]],
     extract: (stdout) => ClaudeHarness.extractJsonResult(stdout),
+    diagnose: () => null, // its failure words are unmeasured — stated; an unrecognized death stays a plain stall
   });
   static traces = Object.freeze({
     store: ({ home } = {}) => new ClaudeTraceStore({ home, harness: this.harnessName }),
@@ -106,6 +118,11 @@ export class ClaudeHarness extends Harness {
     ];
   }
 
+  /** Where the CLI's user scope lives — sign-in state, per-project state, and user MCP entries. */
+  get userConfigPath() {
+    return path.join(this.home, '.claude.json');
+  }
+
   get registryDir() {
     return path.join(this.configHome, 'plugins');
   }
@@ -140,11 +157,17 @@ export class ClaudeHarness extends Harness {
     return result;
   }
 
+  /** The user-scope MCP entry as the CLI's file records it, or null. */
+  #mcpEntry() {
+    return this.#readRegistry(this.userConfigPath)?.mcpServers?.oathe ?? null;
+  }
+
   /** What init writes — from the owned entries and the registry the CLI materializes into. */
   describe() {
     return [
       `${this.settingsPath}: owns ${this.#ownedEntries().map((e) => e.path.join('.')).join(' and ')}`,
-      `\`claude plugin install oathe@oathe\` — the Oathe plugin (board at session start, auto-save hooks, the oathe_* MCP tools), recorded in ${this.installedFile}`,
+      `\`claude plugin install oathe@oathe\` — the Oathe plugin (board at session start, auto-save hooks), recorded in ${this.installedFile}`,
+      `${this.userConfigPath}: mcpServers.oathe → ${shimPath(this.home)} mcp (user scope, via \`claude mcp add\` — the oathe_* tools in every session, GUI-launched included)`,
     ];
   }
 
@@ -198,20 +221,49 @@ export class ClaudeHarness extends Harness {
       kind: 'cli-managed',
       detail: {
         id: 'plugin-install',
-        proof: 'oathe@oathe',
+        proofs: ['oathe@oathe'],
         undo: [['plugin', 'uninstall', 'oathe@oathe'], ['plugin', 'marketplace', 'remove', 'oathe']],
       },
       blockVersion: version,
       sha256: sha256Hex('oathe@oathe'),
     });
+
+    // THE CONNECTION IS AN ADDRESS, not plugin cargo (connection-lane plan, 2026-09-04): the
+    // plugin is cached by copy and can never carry a machine path, so its bare `oathe` server
+    // died on every GUI PATH. The user-scope entry the CLI writes into ~/.claude.json points
+    // at the shim; a stale entry (bare, or an older address) is removed and re-added.
+    const shim = shimPath(this.home);
+    const entry = this.#mcpEntry();
+    const mcpCurrent = entry !== null && entry.command === shim
+      && JSON.stringify(entry.args ?? []) === JSON.stringify(['mcp']);
+    if (!mcpCurrent) {
+      manifest.backupOnce(this.userConfigPath);
+      if (entry !== null) this.#cli(['mcp', 'remove', 'oathe', '-s', 'user']);
+      this.#cli(['mcp', 'add', '-s', 'user', 'oathe', '--', shim, 'mcp']);
+      if (this.#mcpEntry()?.command !== shim) {
+        throw new HarnessOnboardError('CLAUDE_VERIFICATION_FAILED',
+          'verification failed: `claude mcp add` reported success but '
+          + `${this.userConfigPath} does not carry the shim-addressed oathe entry — refusing `
+          + 'to record an install that cannot be proven');
+      }
+    }
+    manifest.upsert({
+      harness: this.name,
+      file: this.userConfigPath,
+      kind: 'cli-managed',
+      detail: { id: 'mcp-server', command: shim, undo: [['mcp', 'remove', 'oathe', '-s', 'user']] },
+      blockVersion: version,
+      sha256: sha256Hex(shim),
+    });
     return [
       { action: 'settings-owned-paths', file: this.settingsPath, changed },
       { action: materialized ? 'plugin-installed' : 'plugin-already-current', file: this.installedFile },
+      { action: mcpCurrent ? 'mcp-already-current' : 'mcp-user-entry', file: this.userConfigPath },
     ];
   }
 
   offboard({ manifest }) {
-    const rows = manifest.removeWhere((r) => r.harness === this.name);
+    const rows = this.takeWiringRows(manifest);
     const actions = [];
     for (const row of rows.filter((r) => r.kind === 'cli-managed')) {
       for (const undo of row.detail?.undo ?? []) {

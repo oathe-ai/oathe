@@ -13,12 +13,13 @@
 import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
 
-import { standardPlan, verificationTaskId, verificationObjective, isVerificationTask } from '../plans.mjs';
-import { verifierCapable } from '../harnesses/catalog.mjs';
-import { ContractRef, HomeBoard } from '../home.mjs';
+import { standardPlan, verificationTaskId, verificationObjective, systemTaskOf, VERIFICATION_PREFIX } from '../plans.mjs';
+import { verifierCapable, attestationFor, harnessForClient } from '../harnesses/catalog.mjs';
+import { ContractRef, HomeBoard, Pickup, Place, PlaceEvidence } from '../home.mjs';
 import {
-  amendSubjectRef, isTraceSubjectSql, latestVerdictSql, latestProgressSql, latestTracePathSql, linkTrace,
-  spawnParentSql, spawnParentFor, linkSpawn,
+  amendSubjectRef, attributionWhy, holdSql, isTraceSubjectSql, latestVerdictSql, latestProgressSql, latestTracePathSql, linkPlace,
+  linkTrace, rejectedIntervalSql,
+  spawnParentSql, spawnParentFor, linkSpawn, taskTraceLinksSql,
 } from '../statements.mjs';
 import { Pager } from '../pager.mjs';
 import { KINDS, clipDetail, pullPointer } from '../breach-digest.mjs';
@@ -174,11 +175,14 @@ export function makeToolDefs() {
  *   activation — the central-registry seam (src/activation.mjs ActivationSeam): every
  *     successful call registers the workspace; oathe_claim activates through the ONE writer.
  *   oathe_claim (write intent) activates it, and the claim result discloses what happened.
- *   synthetic — the session sits on a synthetic workspace (R-BOARD-SCOPE): its mints are
- *   HOMELESS and its claims never adopt (R-HOME-BOARD).
+ *   synthetic — the session sits on a synthetic workspace (R-BOARD-SCOPE): it serves the full
+ *   board, and its claims are picked up by the app the speaker was measured under (R-PLACE).
  */
 export function createOatheTools({
   client, identity, workspace, executionActor, successor, config, verifier, activation, synthetic = false,
+  // The directory this surface speaks from (the resolver's `dir`): an app pickup records it as
+  // evidence — the ChatGPT project folder its files live in (ruling 2026-09-05).
+  dir = null,
   // The SPEAKER primitive (founder ruling 2026-08-30): who is speaking — {surface, app,
   // session} resolved from the writer's own ancestry (src/speaker.mjs). REQUIRED wherever
   // it is consumed: a serving surface (one with the activation seam, whose writes ride the
@@ -190,59 +194,202 @@ export function createOatheTools({
   attention = true,
 }) {
   const { orgId, principalId, department } = identity;
-  const homeBoard = new HomeBoard({ client, orgId });
+  // WHERE this surface picks work up (ruling 2026-09-05): a folder session's workspace, else
+  // the app the speaker was measured under (the ChatGPT desktop — no folder, the app IS the
+  // place); a surface with neither records no place. One answer for the ledger's workspace
+  // slot, the claim's receipt, and the place statement every act writes.
+  // The PICKUP (src/home.mjs): where this surface picks work up and what it knows — one value,
+  // computed once. A work task's claim requires a place (refused before anything is written);
+  // a SYSTEM task (a judgment, an update) needs none and records none — it lives where its work does.
+  const pickup = Pickup.of({ workspace, synthetic, dir, speaker });
+  const placeFor = (taskId) => (systemTaskOf(taskId) !== null ? null : pickup.require(taskId));
+  /** A pickup records its place on the interval it began — the claim and the re-seat, nowhere else. */
+  async function recordPlace(taskId, workClaimId) {
+    const place = placeFor(taskId);
+    if (place !== null) await linkPlace({ client, identity, taskId, place, evidence: pickup.evidence, workClaimId });
+    return place;
+  }
   // The breaches are the pager's conditions read per call — stateless: a line repeats while
   // its condition holds and vanishes when it clears — under the ONE digest (src/breach-
   // digest.mjs): scoped to this board (a synthetic surface sees the machine), grouped,
   // ordered, budgeted. Attention words the fix bucket for the model's response channel —
   // rejected and verify-failed work, the one thing a session can act on now — so a background
   // rejection reaches it at its next act; the SessionStart hook covers new sessions.
-  if (attention && !config) {
-    throw new OatheToolError('OATHE_ATTENTION_NEEDS_CONFIG',
-      'attention reads the pager, whose thresholds come from config — pass config, or attention:false for a read-only composition');
+  // Every tunable comes from config (src/config.mjs is the ONE place a default is named) —
+  // the tools never shadow one with a literal.
+  if (!config) {
+    throw new OatheToolError('OATHE_TOOLS_NEED_CONFIG',
+      'the tools read every tunable (lease, verify_by, the verifier principal, the pager thresholds) from config — pass an OatheConfig');
   }
   const pager = attention ? new Pager({ client, identity, config }) : null;
   const breachesFor = async (machine) => (await pager.digest()).scoped(machine ? null : workspace);
   const attentionLines = async () => {
-    const fix = (await breachesFor(synthetic)).filter((row) => KINDS[row.kind].bucket === 'fix');
+    // A judgment in flight is not a breach to act on — a model acting on it would only be
+    // refused (OATHE_VERIFY_IN_FLIGHT); attention leaves it to the glass, where it reads verifying.
+    const fix = (await breachesFor(synthetic)).filter((row) => KINDS[row.kind].bucket === 'fix' && !row.busy);
     const lines = fix.rows.map((row) => (row.group
       ? `spawned under '${row.task_id}': ${row.kind_word} — the children and their verdicts are in `
         + 'oathe_board.breaches; reclaim each (oathe_claim <child>), retry a failed verify with /oathe:verify <child>'
       : `${row.kind_word}: '${row.task_id}' — ${clipDetail(row.detail)}`
-        + (row.kind === 'reopened' ? ' — reclaim it (oathe_claim) for the bundle' : '')));
+        + (row.kind === 'reopened' ? ' — your next act on it resumes it with the bundle (or oathe_claim)' : '')));
     const more = pullPointer('attention', fix.more);
     return more ? [...lines, more] : lines;
   };
-  const leaseHours = config?.get('leaseHours') ?? 4;
-  const verifyByHours = config?.get('verifyByHours') ?? 24;
+  const leaseHours = config.get('leaseHours');
+  const verifyByHours = config.get('verifyByHours');
   const actor = executionActor
     ?? (process.env.OATHE_EXECUTION_ATTEMPT_ID
       ? `attempt:${process.env.OATHE_EXECUTION_ATTEMPT_ID}`
       : 'oathe-operator');
 
-  async function activeClaim(taskId) {
+  /**
+   * The verifier engine, named on the record at claim (founder direction 2026-08-25): the
+   * statement is the RECORD of what was assigned; at verify, current config wins over it
+   * (ruling 2026-09-04, verifier.mjs) so a judgment never wedges on an engine the operator
+   * has since replaced. No fallback literal: config names the verifier or the claim refuses.
+   */
+  async function bindVerifier(taskId, workClaimId) {
+    const verifier = config.get('verifier');
+    await client.query(
+      `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+              execution_actor, claim_principal, statement_type, subject_ref, proposition,
+              evidence_refs, epistemic_status, asserted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'observation', $7, $8, $9::jsonb, 'observed', now())`,
+      [crypto.randomUUID(), orgId, taskId, workClaimId, actor, principalId,
+        `verifier:${verifier}`,
+        `verification of this claim is assigned to the ${verifier} engine (bound at claim time)`,
+        JSON.stringify([`config:verifier=${verifier}`])]);
+    return verifier;
+  }
+
+  /**
+   * The task's LAST ENDED interval while nobody holds it — 016's own choice of "the interval
+   * being resumed" — with whether THAT interval was judged rejected (rejectedIntervalSql:
+   * the verification row's statement link, never a clock). Null while a live owner holds
+   * the task, or nothing ever ended.
+   */
+  async function lastEndedInterval(taskId) {
+    const { rows } = await client.query(
+      `SELECT w.work_claim_id, w.principal_id, t.origin, ${rejectedIntervalSql({ claim: 'w' })} AS rejected
+         FROM cell.work_claim w JOIN cell.task t USING (org_id, task_id)
+        WHERE w.org_id = $1 AND w.task_id = $2 AND w.ownership_ended_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM cell.work_claim a
+                           WHERE a.org_id = w.org_id AND a.task_id = w.task_id AND a.state = 'active')
+        ORDER BY w.ownership_ended_at DESC, w.claimed_at DESC, w.work_claim_id LIMIT 1`,
+      [orgId, taskId]);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * The recovery bundle a reclaim of rejected work carries: what was missed and where the
+   * work stood when verification began. Null unless the task's LATEST verdict is a
+   * rejection — an acceptance is never "what was missed" (the `accepted: …` reason, 2026-09-04).
+   */
+  async function rejectionBundle(taskId) {
+    const { rows: verdictRows } = await client.query(
+      `SELECT v.verdict FROM cell.task t
+         LEFT JOIN LATERAL (${latestVerdictSql({ task: 't' })}) v ON true
+        WHERE t.org_id = $1 AND t.task_id = $2`, [orgId, taskId]);
+    const verdict = verdictRows[0]?.verdict ?? null;
+    if (verdict === null || !verdict.startsWith('rejected')) return null; // the verdict contract's own word (verifier.mjs VERDICTS)
+    const { rows: vtask } = await client.query(
+      `SELECT created_at FROM cell.task WHERE org_id = $1 AND task_id = '${VERIFICATION_PREFIX}' || $2`, [orgId, taskId]);
+    // The holder's own words: progress and completions — never an observation (the verifier
+    // binding, the place, a spawn) and never a trace link.
+    const { rows: priorWords } = await client.query(
+      `SELECT proposition FROM cell.agent_statement s
+        WHERE s.org_id = $1 AND s.task_id = $2 AND s.statement_type IN ('progress', 'completion')
+          AND NOT ${isTraceSubjectSql('s.subject_ref')}
+        ORDER BY s.asserted_at DESC LIMIT 3`, [orgId, taskId]);
+    // The task's trace links — the same read the verifier judges from (taskTraceLinksSql),
+    // shaped here to a couple of pointers.
+    const { rows: traceRows } = await client.query(taskTraceLinksSql(), [orgId, taskId]);
+    return {
+      reason: verdict,
+      verification_started_at: vtask[0]?.created_at ?? null,
+      last_statements: priorWords.map((r) => r.proposition),
+      trace_refs: [...new Set(traceRows.flatMap((r) => (Array.isArray(r.evidence_refs) ? r.evidence_refs : [])))].slice(0, 2),
+      your_options: REJECTION_FORK,
+    };
+  }
+
+  /**
+   * R8's second half as ONE act: seat the prior interval's principal through the evaluator
+   * lane's verb (016 — a transcription: nothing here chooses who; the lease is the task's
+   * own verify_by, never the config hours), bind the verifier on the record, and read the
+   * seated row back. Only the prior holder may be seated (ruling 2026-09-04): reopened work
+   * returns to its last holder; anyone else is told no, and who — never a seat under
+   * another's name.
+   */
+  async function reseat(taskId, prior) {
+    if (prior.principal_id !== principalId) {
+      throw new OatheToolError('OATHE_RECLAIM_FOREIGN',
+        `'${taskId}' is reopened work that returns to its last holder, ${prior.principal_id} (R8) — `
+        + 'it is not yours to resume; take it by delegation or ask them to yield it',
+        { task_id: taskId, owner: prior.principal_id });
+    }
+    const workClaimId = crypto.randomUUID();
+    const { rows: reclaimed } = await client.query(
+      'SELECT cell.reclaim_reopened_task($1, $2, $3, now(), $4) AS seated',
+      [orgId, taskId, workClaimId, crypto.randomUUID()]);
+    if (reclaimed[0].seated !== true) {
+      throw new OatheToolError('OATHE_RECLAIM_REFUSED',
+        `'${taskId}' is reopened but could not be resumed (a live owner already holds it)`, { task_id: taskId });
+    }
+    // The reclaim verb TRANSCRIBES the prior interval's ref and stamps the task's verify_by
+    // as the lease — report the row, not our guess.
+    const { rows: seated } = await client.query(
+      `SELECT contract_ref, to_char(ownership_valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI"Z"') AS lease_until
+         FROM cell.work_claim WHERE work_claim_id = $1`, [workClaimId]);
+    const verifier = await bindVerifier(taskId, workClaimId);
+    await recordPlace(taskId, workClaimId); // a re-seat is a pickup: it says where the work lives now
+    return {
+      work_claim_id: workClaimId, contract_ref: seated[0].contract_ref, lease: `until ${seated[0].lease_until}`,
+      verifier, rejection: await rejectionBundle(taskId),
+    };
+  }
+
+  /**
+   * The prior holder's act on rejected work RESUMES it (ruling 2026-09-04: the verdict hands
+   * the work back; the act is the principal speaking). Null while a live owner holds the
+   * task, or when its last ended interval is not the rejected one — a yield is a deliberate
+   * stop, and nothing but an explicit claim follows it.
+   */
+  async function resumeIfRejected(taskId) {
+    const prior = await lastEndedInterval(taskId);
+    if (!prior?.rejected || prior.origin !== 'reopened') return null;
+    return reseat(taskId, prior);
+  }
+
+  /** The claim an act speaks against: the live one, else the one a rejection handed back. */
+  async function hold(taskId) {
     const { rows } = await client.query(
       `SELECT work_claim_id FROM cell.work_claim
         WHERE org_id = $1 AND task_id = $2 AND state = 'active' LIMIT 1`,
       [orgId, taskId]);
-    if (rows.length === 0) {
-      throw new OatheToolError('OATHE_NO_ACTIVE_CLAIM',
-        `no active claim on '${taskId}' — nothing to speak against`, { task_id: taskId });
-    }
-    return rows[0].work_claim_id;
+    if (rows.length > 0) return { workClaimId: rows[0].work_claim_id, seat: null };
+    const seat = await resumeIfRejected(taskId);
+    if (seat) return { workClaimId: seat.work_claim_id, seat };
+    throw new OatheToolError('OATHE_NO_ACTIVE_CLAIM',
+      `no active claim on '${taskId}' — nothing to speak against`, { task_id: taskId });
   }
+
+  /** What a response says when the act reclaimed first: the reclaim is on the record, and so is the verdict it answers. */
+  const seatFields = (seat) => (seat ? { reclaimed: true, lease: seat.lease, rejection: seat.rejection } : {});
 
   let toolMap = {
     async oathe_claim({ task_id, objective }) {
       const { rows: existing } = await client.query(
         'SELECT origin FROM cell.task WHERE org_id = $1 AND task_id = $2', [orgId, task_id]);
-      // R-HOME-BOARD: an existing task keeps the home its ledger already decided; a homeless
-      // task is ADOPTED by the first real folder that claims it; a synthetic surface neither
-      // stamps nor adopts — its mints and re-claims stay homeless.
-      const priorHome = existing.length > 0 ? await homeBoard.of(task_id) : null;
-      const home = priorHome ?? (synthetic ? null : workspace);
-      const adopted = existing.length > 0 && priorHome === null && home !== null;
-      let contractRef = String(new ContractRef({ workspace: home, orgId, taskId: task_id }));
+      // The ledger's own field records THIS claim's folder (or `none` for an app pickup) — the
+      // place statement recorded at the pickup is the read, and the last pickup is where the
+      // work resides (ruling 2026-09-05: no inheritance, no adoption, no rank). A surface that
+      // names no place is refused here, before anything is written.
+      const place = placeFor(task_id);
+      // The ledger slot: a folder pickup's ref; `none` for an app pickup; a system task carries the
+      // seat's own workspace (null from a synthetic dir — never a minted id).
+      const slot = place === null ? workspace : (place.isFolder ? place.ref : null);
+      let contractRef = String(new ContractRef({ workspace: slot, orgId, taskId: task_id }));
       let rejection = null; // the recovery bundle, set on a reclaim of rejected work
       if (existing.length === 0) {
         if (!objective) {
@@ -258,74 +405,43 @@ export function createOatheTools({
            ON CONFLICT DO NOTHING`,
           [orgId, task_id, department, objective, verifyByHours]);
       }
-      const workClaimId = crypto.randomUUID();
+      let workClaimId = crypto.randomUUID();
+      let lease = `${leaseHours} hours`;
+      let verifier;
       if (existing[0]?.origin === 'reopened') {
         // R8's second half: reopened work is RESUMED, not re-claimed — the evaluator lane's
-        // verb seats the prior interval's principal (the one who answers for this work next).
-        const { rows: reclaimed } = await client.query(
-          'SELECT cell.reclaim_reopened_task($1, $2, $3, now(), $4) AS seated',
-          [orgId, task_id, workClaimId, crypto.randomUUID()]);
-        if (reclaimed[0].seated !== true) {
+        // verb seats the prior interval's principal (the one who answers for this work next),
+        // and only that principal may ask for it.
+        const prior = await lastEndedInterval(task_id);
+        if (prior === null) {
           throw new OatheToolError('OATHE_RECLAIM_REFUSED',
             `'${task_id}' is reopened but could not be resumed (a live owner already holds it)`,
             { task_id });
         }
-        // The reclaim verb TRANSCRIBES the prior interval's ref (016) — report that, not ours.
-        const { rows: seated } = await client.query(
-          'SELECT contract_ref FROM cell.work_claim WHERE work_claim_id = $1', [workClaimId]);
-        contractRef = seated[0].contract_ref;
-        // The recovery bundle: what was missed and where the work stood when verification began.
-        const { rows: verdictRows } = await client.query(
-          `SELECT v.verdict, v.verdict_at FROM cell.task t
-             LEFT JOIN LATERAL (${latestVerdictSql({ task: 't' })}) v ON true
-            WHERE t.org_id = $1 AND t.task_id = $2`, [orgId, task_id]);
-        const { rows: vtask } = await client.query(
-          "SELECT created_at FROM cell.task WHERE org_id = $1 AND task_id = 'verify:' || $2", [orgId, task_id]);
-        const { rows: priorWords } = await client.query(
-          `SELECT proposition FROM cell.agent_statement s
-            WHERE s.org_id = $1 AND s.task_id = $2 AND NOT ${isTraceSubjectSql('s.subject_ref')}
-            ORDER BY s.asserted_at DESC LIMIT 3`, [orgId, task_id]);
-        const { rows: traceRows } = await client.query(
-          `SELECT DISTINCT evidence_refs FROM cell.agent_statement s
-            WHERE s.org_id = $1 AND s.task_id = $2 AND ${isTraceSubjectSql('s.subject_ref')}
-            ORDER BY evidence_refs LIMIT 2`, [orgId, task_id]);
-        rejection = {
-          reason: verdictRows[0]?.verdict ?? null,
-          verification_started_at: vtask[0]?.created_at ?? null,
-          last_statements: priorWords.map((r) => r.proposition),
-          trace_refs: traceRows.flatMap((r) => (Array.isArray(r.evidence_refs) ? r.evidence_refs : [])),
-          your_options: REJECTION_FORK,
-        };
+        const seat = await reseat(task_id, prior);
+        ({ work_claim_id: workClaimId, contract_ref: contractRef, lease, verifier, rejection } = seat);
       } else {
-        await client.query(
-          `SELECT cell.claim_work($1, $2, $3, NULL, NULL, $4, $5, 'exclusive',
-                  now() + make_interval(hours => $6), $7, now(), $8)`,
-          [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
+        try {
+          await client.query(
+            `SELECT cell.claim_work($1, $2, $3, NULL, NULL, $4, $5, 'exclusive',
+                    now() + make_interval(hours => $6), $7, now(), $8)`,
+            [orgId, task_id, workClaimId, principalId, department, leaseHours, contractRef, crypto.randomUUID()]);
+        } catch (e) {
+          // The substrate's own typed vocabulary (FC003 WORK_ALREADY_CLAIMED, 002_claim.sql) —
+          // surfaced as a typed refusal, never a raw pg error a caller sniffs words from.
+          if (/^WORK_ALREADY_CLAIMED:/.test(String(e?.message ?? ''))) {
+            throw new OatheToolError('OATHE_WORK_ALREADY_CLAIMED', String(e.message), { task_id });
+          }
+          throw e;
+        }
+        verifier = await bindVerifier(task_id, workClaimId);
+        await recordPlace(task_id, workClaimId);
       }
-      // Verifier assignment happens AT CLAIM (founder direction 2026-08-25): the engine that
-      // will judge this work is named before the work starts, from config, on the record.
-      // No fallback literal: config names the verifier or the claim refuses — never a judge
-      // nobody chose.
-      const verifier = config.get('verifier');
-      await client.query(
-        `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
-                execution_actor, claim_principal, statement_type, subject_ref, proposition,
-                evidence_refs, epistemic_status, asserted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'observation', $7, $8, $9::jsonb, 'observed', now())`,
-        [crypto.randomUUID(), orgId, task_id, workClaimId, actor, principalId,
-          `verifier:${verifier}`,
-          `verification of this claim is assigned to the ${verifier} engine (bound at claim time)`,
-          JSON.stringify([`config:verifier=${verifier}`])]);
       const effective = ContractRef.parse(contractRef);
+      const where = place === null ? 'a judgment lives where its work does' : `it lives at ${place}`;
       const note = existing.length === 0
-        ? (effective.isHomeless
-          ? "task minted HOMELESS from a synthetic workspace — the first real folder to claim it adopts it; plan_status is honestly 'unknown'"
-          : "task minted at claim — plan_status is honestly 'unknown'; a real cell pages you at verify_by")
-        : adopted
-          ? `existing homeless task claimed and ADOPTED onto this folder's board (${effective.workspace})`
-          : effective.isHomeless
-            ? 'existing homeless task claimed — still homeless (a synthetic surface never adopts)'
-            : 'existing task claimed';
+        ? `task minted at claim — ${where}; plan_status is honestly 'unknown'; a real cell pages you at verify_by`
+        : `existing task picked up — ${where}`;
       return {
         claimed: true,
         task_id,
@@ -333,7 +449,8 @@ export function createOatheTools({
         work_claim_id: workClaimId,
         contract_ref: contractRef,
         home: effective.workspace,
-        lease: `${leaseHours} hours`,
+        place: place === null ? null : String(place),
+        lease,
         verifier,
         note,
       };
@@ -343,24 +460,26 @@ export function createOatheTools({
       // R-BOARD-SCOPE: scope is a per-surface fact. A synthetic workspace has no folder to
       // lens through, so it serves the full board whatever the caller asked.
       const full = all || synthetic;
-      // R-HOME-BOARD: a task's board is its HOME (the home rule, src/home.mjs, projected into
-      // SQL once). The scoped board = tasks homed here + homeless tasks (unclaimed or minted
-      // from a synthetic surface — visible everywhere so a real folder can adopt them).
-      const filter = full ? '' : 'AND (latest.home = $2 OR latest.home IS NULL)';
-      const params = full ? [orgId] : [orgId, workspace];
+      // Where work lives (ruling 2026-09-05, src/home.mjs): a folder's board = every task some
+      // claim picked up HERE (any interval — visibility is history) + every UNCLAIMED task (no
+      // claim yet: open work anyone may pick up, visible everywhere). Each row carries its
+      // RESIDENCE (the last pickup) and every place.
+      const filter = full ? '' : 'AND ($2 = ANY(latest.places) OR cardinality(latest.places) = 0)';
+      const params = full ? [orgId] : [orgId, String(Place.workspace(workspace))];
       // ONE row per task: the latest claim in view wins (a task reclaimed after a yield is one
       // task, not a history lesson — statements carry the history).
-      const { rows } = await client.query(
-        `SELECT task_id, objective, origin, state, principal_id, contract_ref, home, settled_at,
+      const { rows: raw } = await client.query(
+        `SELECT task_id, objective, origin, state, principal_id, contract_ref, place, place_evidence, places, settled_at,
                 lease_until, last_progress, last_progress_at, last_word_at, trace_path, trace_session_id, rejected_after,
-                parent, parent_objective FROM (
+                verifying, parent, parent_objective FROM (
            SELECT DISTINCT ON (t.task_id)
                   t.task_id, t.objective, t.created_at, t.origin, w.state, w.principal_id, w.contract_ref,
                   sp.parent_task_id AS parent, sp.parent_objective,
-                  EXISTS (SELECT 1 FROM cell.verification v
-                           WHERE v.org_id = t.org_id AND v.task_id = t.task_id
-                             AND v.result = 'rejected' AND v.recorded_at > w.claimed_at) AS rejected_after,
-                  ${HomeBoard.homeSql('t')} AS home,
+                  -- THIS interval judged rejected (Leg A: the statement link, never a clock),
+                  -- and whether a judge holds it right now (UX rule 22: one spelling with the pager).
+                  ${rejectedIntervalSql({ claim: 'w' })} AS rejected_after,
+                  (j.claimed_at IS NOT NULL) AS verifying,
+                  res.place, res.place_evidence, ${HomeBoard.placesSql('t')} AS places,
                   w.settled_at,
                   to_char(w.ownership_valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI\"Z\"') AS lease_until,
                   p.proposition AS last_progress,
@@ -372,13 +491,17 @@ export function createOatheTools({
              LEFT JOIN LATERAL (${latestProgressSql({ task: 't', claim: 'w' })}) p ON true
              LEFT JOIN LATERAL (${latestTracePathSql({ task: 't' })}) tr ON true
              LEFT JOIN LATERAL (${spawnParentSql({ task: 't' })}) sp ON true
+             LEFT JOIN LATERAL (${holdSql({ kind: 'verify', orgId: 't.org_id', subject: 't.task_id', asOf: 'now()' })}) j ON true
+             LEFT JOIN LATERAL (${HomeBoard.residenceSql('t')}) res ON true
             WHERE t.org_id = $1
             ORDER BY t.task_id, w.claimed_at DESC NULLS LAST
          ) latest WHERE true ${filter} ORDER BY created_at DESC`,
         params);
+      // The residence's evidence back to facts: the app it was spoken from, the device.
+      const rows = raw.map(({ place_evidence, ...row }) => ({ ...row, ...PlaceEvidence.parse(place_evidence).row() }));
       // Lineage (UX rule 21): a child never surfaces top-level while its parent is in view —
       // it is counted on the parent's row. A child whose parent is off the board (settled,
-      // or homed elsewhere) stands on its own.
+      // or residing elsewhere) stands on its own.
       const inView = new Set(rows.filter((r) => !r.settled_at).map((r) => r.task_id));
       const childrenOf = new Map();
       for (const row of rows) {
@@ -403,7 +526,7 @@ export function createOatheTools({
     },
 
     async oathe_statement({ task_id, proposition, evidence_ref }) {
-      const workClaimId = await activeClaim(task_id);
+      const { workClaimId, seat } = await hold(task_id);
       const statementId = crypto.randomUUID();
       await client.query(
         `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
@@ -412,8 +535,12 @@ export function createOatheTools({
          VALUES ($1, $2, $3, $4, $5, $6, 'progress', $7, $8, $9::jsonb, 'observed', now())`,
         [statementId, orgId, task_id, workClaimId, actor, principalId,
           `task:${task_id}`, proposition, JSON.stringify([evidence_ref ?? 'note:session'])]);
+      // task_id + work_claim_id ride the response on purpose: the harness serializes tool
+      // results into its transcript, so every statement self-fingerprints the claim it
+      // speaks to — a session picked up mid-claim is still discoverable by its UUID.
       return {
-        recorded: true, statement_id: statementId,
+        recorded: true, statement_id: statementId, task_id, work_claim_id: workClaimId,
+        ...seatFields(seat),
         note: 'a statement, not truth — nothing settled',
       };
     },
@@ -427,12 +554,14 @@ export function createOatheTools({
           `yield refused — '${task_id}' cannot go back on the board without its cause: pass note `
           + '(why you are stopping, for whoever picks it up)', { task_id });
       }
-      const workClaimId = await activeClaim(task_id);
+      // Dropping rejected work is a speech act too: the reclaim lands, then the yield — both on record.
+      const { workClaimId, seat } = await hold(task_id);
       await client.query(
         'SELECT cell.oathe_yield_operator($1::uuid, $2, now(), $3::uuid)',
         [workClaimId, note, crypto.randomUUID()]);
       return {
         yielded: true, task_id, work_claim_id: workClaimId,
+        ...seatFields(seat),
         note: 'the obligation is back on the board, unowned',
       };
     },
@@ -448,9 +577,9 @@ export function createOatheTools({
       if (!why || !String(why).trim()) {
         throw new OatheToolError('OATHE_AMEND_WHY_REQUIRED', 'an amendment records WHY the definition moved', { task_id });
       }
-      if (isVerificationTask(task_id)) {
+      if (systemTaskOf(task_id) !== null) {
         throw new OatheToolError('OATHE_AMEND_VERIFY_TASK',
-          `'${task_id}' is a verification task — its objective is generated (src/plans.mjs), never amended`, { task_id });
+          `'${task_id}' is a system task (${systemTaskOf(task_id).kind}) — its objective is generated (src/plans.mjs), never amended`, { task_id });
       }
       const { rows: authority } = await client.query(
         'SELECT seats FROM cell.acceptance_authority WHERE org_id = $1', [orgId]);
@@ -462,10 +591,13 @@ export function createOatheTools({
         throw new OatheToolError('OATHE_AMEND_UNAUTHORIZED',
           `'${principalId}' is not in the seats roster [${authority[0].seats.join(', ')}] — an amendment is signed by the acceptance seat`, { task_id });
       }
-      if (principalId === (config?.get('verifierPrincipal') ?? 'oathe-verifier')) {
+      if (principalId === config.get('verifierPrincipal')) {
         throw new OatheToolError('OATHE_AMEND_UNAUTHORIZED',
           `'${principalId}' is the verifier — the judge must not move the bar it judges`, { task_id });
       }
+      // The fork's descope arm: rejected work is RESUMED first (the act), then amended while
+      // ACTIVE — R-AMEND holds, and both acts are on the record in that order.
+      const seat = await resumeIfRejected(task_id);
       return inTransaction(client, async (tx) => {
         const { rows: locked } = await tx.query(
           `SELECT work_claim_id FROM cell.work_claim
@@ -495,6 +627,8 @@ export function createOatheTools({
         return {
           amended: true,
           task_id,
+          work_claim_id: locked[0].work_claim_id,
+          ...seatFields(seat),
           version,
           note: `the definition of done moved to v${version}; the original definition stays on record in the amendment trail — verification judges the version in force at assertion and SEES the trail`,
         };
@@ -505,7 +639,7 @@ export function createOatheTools({
       // ONE transaction, claim row locked FIRST (the same discipline as oathe_amend): the
       // amend-vs-done race is decided by the lock, "the version in force at assertion" is
       // exact, and a completion statement never lands without its terminal.
-      const workClaimId = await activeClaim(task_id);
+      const { workClaimId, seat } = await hold(task_id);
       const statementId = crypto.randomUUID();
       await inTransaction(client, async (tx) => {
         const { rows: lockRows } = await tx.query(
@@ -547,14 +681,19 @@ export function createOatheTools({
       //    carrying the engine assigned at claim time. A verification task does not mint a
       //    verifier for ITSELF — that regress ends at the deterministic bar.
       let verificationTask = null;
-      if (!isVerificationTask(task_id)) {
+      if (systemTaskOf(task_id) === null) { // a system task (a judgment, an update) settles at the deterministic bar — it mints no judge of its own
         const { rows: engineRows } = await client.query(
           `SELECT subject_ref FROM cell.agent_statement
             WHERE org_id = $1 AND work_claim_id = $2 AND subject_ref LIKE 'verifier:%'
             ORDER BY asserted_at DESC LIMIT 1`,
           [orgId, workClaimId]);
-        const engine = engineRows[0]?.subject_ref.slice('verifier:'.length)
-          ?? config.get('verifier');
+        // Every claim binds its verifier at the pickup (bindVerifier, on claim and reseat) — a
+        // claim without the binding is not one the tools made; refuse, never fall back.
+        if (engineRows.length === 0) {
+          throw new OatheToolError('OATHE_VERIFIER_UNBOUND',
+            `'${task_id}' carries no verifier binding on its claim — not a claim this oathe made; claim it again through oathe_claim`, { task_id, work_claim_id: workClaimId });
+        }
+        const engine = engineRows[0].subject_ref.slice('verifier:'.length);
         verificationTask = verificationTaskId(task_id);
         await client.query(
           `INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan,
@@ -568,23 +707,26 @@ export function createOatheTools({
 
       return {
         done: true, task_id, work_claim_id: workClaimId, statement_id: statementId,
+        ...seatFields(seat),
         verification_task: verificationTask,
         note: verificationTask
           ? `completion ASSERTED, not settled. Verification task '${verificationTask}' is on the `
             + 'board. A DIFFERENT principal must verify (FC010 — you cannot verify your own work, '
-            + 'including via your own sub-agents): run `oathe verify` from any terminal, or leave '
+            + 'including via your own sub-agents). Locally this call WAITS for the verdict and returns it '
+            + '(progress ticks ride the call; Claude Code moves a call past two minutes to a background task '
+            + 'and delivers the verdict as its notification). Otherwise run `oathe verify` from any terminal, or leave '
             + 'it for another session to claim.'
           : 'completion ASSERTED, not settled — the deterministic acceptance bar settles verification tasks',
       };
     },
 
-    async oathe_verify({ task_id, engine }) {
+    async oathe_verify({ task_id, engine }, { progress } = {}) {
       if (!verifier) {
         throw new OatheToolError('OATHE_VERIFY_UNAVAILABLE',
           'the verification lane is not wired into this server — run `oathe verify` from a '
           + 'terminal instead; verification cannot pretend', { task_id });
       }
-      return verifier({ taskId: task_id, engine });
+      return verifier({ taskId: task_id, engine, ...(progress && { progress }) });
     },
 
     async oathe_pickup({ task_id }) {
@@ -593,34 +735,41 @@ export function createOatheTools({
           WHERE org_id = $1 AND task_id = $2 ORDER BY claimed_at DESC LIMIT 1`,
         [orgId, task_id]);
       const latest = rows[0];
-      if (!latest || latest.state !== 'active') {
-        // The refusal coaches the recovery a session actually needs mid-conversation.
+      // Rejected work is resumed by the pickup itself (the act); anything else not active is
+      // a refusal that coaches the recovery a session actually needs mid-conversation.
+      const seat = latest && latest.state !== 'active' ? await resumeIfRejected(task_id) : null;
+      if (!seat && (!latest || latest.state !== 'active')) {
         const hint = latest
           ? `the latest claim on '${task_id}' is ${latest.state} — claim it again (oathe_claim), `
             + 'then oathe_pickup follows the task\'s history'
           : `no claim exists on '${task_id}' — nothing to pick up`;
         throw new OatheToolError('OATHE_NO_ACTIVE_CLAIM', hint, { task_id, state: latest?.state ?? null });
       }
+      const workClaimId = seat?.work_claim_id ?? latest.work_claim_id;
       if (!successor) {
+        // The reclaim STANDS whatever the seam lacks: its seat rides the refusal's details.
         throw new OatheToolError('OATHE_PICKUP_UNAVAILABLE',
           'pickup is not wired into this tools server — the successor sequence is unavailable in '
-          + 'this session (a preview limitation of sessions without the runtime seam). Claim the '
-          + 'task instead (oathe_claim): a reclaim of rejected work returns the recovery bundle — '
-          + 'the rejection reason, the prior interval\'s statements, and its trace refs — and the '
+          + 'this session (a preview limitation of sessions without the runtime seam). '
+          + (seat
+            ? 'The rejected work is reclaimed and held; the recovery bundle — the rejection reason, '
+              + 'the prior interval\'s statements, and its trace refs — rides this refusal\'s details, and the '
+            : 'Claim the task instead (oathe_claim): a reclaim of rejected work returns the recovery bundle — '
+              + 'the rejection reason, the prior interval\'s statements, and its trace refs — and the ')
           + 'board (oathe_board) carries the objective and progress; pickup cannot pretend',
-          { task_id });
+          { task_id, work_claim_id: workClaimId, ...seatFields(seat) });
       }
-      const frame = await successor({ task_id, work_claim_id: latest.work_claim_id });
+      const frame = await successor({ task_id, work_claim_id: workClaimId });
       // R-QUIET: the restored-state banner rides the pickup — the one moment it is news.
-      return { ...frame, receipt: restoredReceipt(task_id) };
+      return { ...frame, ...seatFields(seat), receipt: restoredReceipt(task_id) };
     },
   };
 
   // Attention rides EVERY response, activation or not: the act succeeded — a failing
   // attention read is reported beside it (attention_error), never converted into a tool error.
   if (pager) {
-    toolMap = Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args) => {
-      const out = await fn(args);
+    toolMap = Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args, ctx = {}) => {
+      const out = await fn(args, ctx);
       try {
         const lines = await attentionLines();
         if (lines.length > 0) out.attention = lines;
@@ -643,18 +792,70 @@ export function createOatheTools({
   // Every successful WRITE carries its speaker: the durable trace-link lands WITH the act
   // (linkTrace — a failure throws typed; retries are idempotent), the wire nudges the glass,
   // and the result discloses who spoke. Reads stamp and emit nothing.
-  return Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args) => {
+  /**
+   * THE GATE (founder ruling 2026-09-04): a claim needs a session behind it. Refused, typed,
+   * with the fix the model can act on — never disclosed and deferred to a stall at done. The
+   * one exception is a surface that runs no hooks by design (the adapter declares it, the
+   * measured process names it): admitted, and the act says how its evidence will be found.
+   * Claim-only: an admitted claim's later acts link when they can and never refuse here.
+   */
+  const gate = () => {
+    if (speaker.session) return null;
+    if (speaker.pid === null) {
+      throw new OatheToolError('OATHE_SPEAKER_UNKNOWN',
+        'a claim is a session\'s speech act, and nothing here could be measured (the connection named '
+        + 'no process to walk) — speak it from a harness session through the oathe MCP tools (`oathe_claim`)');
+    }
+    const label = harnessForClient(speaker.client ?? null);
+    if (speaker.walked === false) {
+      // A platform with no process walk (off darwin): the client's label stands in — a stated
+      // D0 limitation, disclosed on the act — or nothing at all, refused.
+      if (label) return attributionWhy({ surface: speaker.surface, walked: false });
+      throw new OatheToolError('OATHE_SPEAKER_UNKNOWN',
+        'a claim is a session\'s speech act — the process ancestry could not be walked and the client '
+        + 'named no harness; speak it from a harness session through the oathe MCP tools (`oathe_claim`)');
+    }
+    const owner = attestationFor(speaker.surface);
+    if (!owner) {
+      throw new OatheToolError('OATHE_SPEAKER_UNKNOWN',
+        'a claim is a session\'s speech act — speak it from a harness session through the oathe MCP tools '
+        + '(`oathe_claim`), not from a bare shell');
+    }
+    if (label && label !== owner.harness) {
+      throw new OatheToolError('OATHE_SPEAKER_MISMATCH',
+        `the client calls itself ${speaker.client} (${label}) but the process belongs to ${speaker.surface} `
+        + `(${owner.harness}) — refusing to attribute the claim`, { client: speaker.client, surface: speaker.surface });
+    }
+    if (owner.attestation === 'hooks') {
+      throw new OatheToolError('OATHE_SESSION_UNREGISTERED',
+        `this ${speaker.surface} session is not registered — its SessionStart hook did not run (a session `
+        + 'resumed before `oathe init`, or the plugin hooks are not wired). Run `oathe init` and start a new '
+        + 'session, then claim again', { surface: speaker.surface });
+    }
+    return attributionWhy({ surface: speaker.surface, walked: true }); // hookless by design: admitted, disclosed
+  };
+  // `ctx` is the transport's per-call context: `progress(message)` when the client asked for
+  // progress on this request (connection.mjs) — the blocking done and verify hand it to the seam.
+  return Object.fromEntries(Object.entries(toolMap).map(([name, fn]) => [name, async (args, ctx = {}) => {
+    const admittedWhy = name === 'oathe_claim' ? gate() : null;
     // Lineage is decided BEFORE a claim lands (a refused parent leaves nothing behind) and
     // recorded right after it, on the parent's claim — the `spawn:<child>` observation.
     const spawn = name === 'oathe_claim'
       ? await spawnParentFor({ client, identity, session: speaker.session, taskId: args.task_id, parent: args.parent })
       : null;
-    const out = await fn(args);
+    const out = await fn(args, ctx);
     if (WIRE_KINDS[name]) {
-      if (speaker.session && args?.task_id && LINKABLE.has(name)) {
-        const link = await linkTrace({ client, identity, taskId: args.task_id, session: speaker.session });
-        if (link.why) out.trace_link = link; // a link that waits is disclosed, never assumed
-      }
+      // Attribution rides the act (SPEAKER primitive): the session's transcript as evidence — a
+      // link that waits, or one that cannot exist on an admitted session-less surface, is
+      // disclosed, never assumed, never silent. (The PLACE is the pickup's fact, recorded by
+      // the claim and the re-seat themselves — ruling 2026-09-05.)
+      const attribute = async () => {
+        const link = speaker.session
+          ? await linkTrace({ client, identity, taskId: args.task_id, session: speaker.session })
+          : { linked: false, why: admittedWhy ?? attributionWhy({ surface: speaker.surface, walked: speaker.walked !== false }) };
+        if (link.why) out.trace_link = link;
+      };
+      if (args?.task_id && LINKABLE.has(name)) await attribute();
       if (name === 'oathe_claim') {
         if (spawn) {
           await linkSpawn({
@@ -671,7 +872,7 @@ export function createOatheTools({
       // whatever happens — a seam failure is disclosed, and the pager pages the miss.
       if (name === 'oathe_done' && verifier) {
         try {
-          const outcome = await verifier({ taskId: args.task_id });
+          const outcome = await verifier({ taskId: args.task_id, ...(ctx.progress && { progress: ctx.progress }) });
           out.verification = outcome?.verdict === 'rejected'
             ? { ...outcome, your_options: REJECTION_FORK }
             : outcome;
@@ -679,10 +880,26 @@ export function createOatheTools({
           out.verification = { failed: true, reason: `${e?.code ? `[${e.code}] ` : ''}${String(e?.message ?? e).slice(0, 200)}` };
         }
       }
+      // The verdict's own answer (founder ruling 2026-09-04): a rejection returned in THIS
+      // exchange hands the work back to its asserter before the next token — the principal
+      // spoke (the done), the substrate answered, and the re-seat completes that act (R-PAGER:
+      // nothing moves until a principal has spoken; here one just did). The fact is read off
+      // the substrate, never off the seam's word. A verify by anyone else reseats nobody — the
+      // breach shows for the owner, whose next act resumes it.
+      const verdict = name === 'oathe_done' ? out.verification?.verdict : name === 'oathe_verify' ? out.verdict : null;
+      if (verdict === 'rejected') {
+        const prior = await lastEndedInterval(args.task_id);
+        if (prior?.rejected && prior.origin === 'reopened' && prior.principal_id === principalId) {
+          const seat = await reseat(args.task_id, prior);
+          Object.assign(out, seatFields(seat), { judged_claim_id: prior.work_claim_id, work_claim_id: seat.work_claim_id });
+          if (LINKABLE.has(name)) await attribute(); // the NEW seat carries the session's link in the same act
+        }
+      }
       out.spoken_from = {
         surface: speaker.surface,
         app: speaker.app?.bundle ?? null,
         session: speaker.session?.sessionId ?? null,
+        device: speaker.device ?? null, // the trust unit outside this machine (ruling 2026-09-04)
       };
       await emit(client, { kind: WIRE_KINDS[name], task_id: args?.task_id, via: speaker.surface, app: speaker.app });
     }
@@ -694,17 +911,21 @@ export function createOatheTools({
 
 /**
  * The board's ONE classification of an unsettled row: [bucket, row]. The discriminator is a
- * REJECTION AFTER the latest claim: with one, the task is back on the board (R8); without
- * one, origin='reopened' is stale history and the truth is asserted-awaiting-verification (a
- * no-verdict engine failure must not read as reopened — live, 2026-08-30).
+ * REJECTION OVER the latest claim (rejectedIntervalSql — this interval's own verdict): with
+ * one, the task is back on the board (R8); without one, origin='reopened' is stale history
+ * and the truth is asserted-awaiting-verification (a no-verdict engine failure must not read
+ * as reopened — live, 2026-08-30). An asserted row names the judgment it awaits: `verifying`
+ * while a judge holds it, `awaiting` until one does — the keys of JUDGMENT (breach-digest),
+ * whose words every surface renders (UX rule 22).
  */
 function classify(row, principalId) {
   if (row.state === 'active') return [row.principal_id === principalId ? 'mine' : 'held', row];
-  if (row.state === 'completion_asserted' && !row.rejected_after) return ['asserted', row];
+  if (row.state === 'completion_asserted' && !row.rejected_after) return ['asserted', judged(row)];
   if (row.origin === 'reopened') return ['open', { ...row, state: 'reopened' }]; // R8: back on the board
-  if (row.state === 'completion_asserted') return ['asserted', row];
+  if (row.state === 'completion_asserted') return ['asserted', judged(row)];
   return ['open', row];
 }
+const judged = (row) => ({ ...row, judgment: row.verifying ? 'verifying' : 'awaiting' });
 
 /** A spawned child's one word on its parent's row, in the order the line speaks them. */
 const CHILD_WORDS = ['active', 'asserted', 'reopened', 'open', 'settled'];
@@ -749,14 +970,14 @@ const okText = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }
 const errText = (obj) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }], isError: true });
 
 /** One tools/call: a throwing tool becomes a TYPED tool error — never a bland success. */
-export async function handleToolCall(params, tools) {
+export async function handleToolCall(params, tools, ctx = {}) {
   const name = params?.name;
   const fn = tools[name];
   if (typeof fn !== 'function') {
     return errText({ status: 'ERROR', error_type: 'unknown_tool', reason: `no such oathe tool '${name}'` });
   }
   try {
-    return okText(await fn(params?.arguments || {}));
+    return okText(await fn(params?.arguments || {}, ctx));
   } catch (e) {
     return errText({
       status: 'ERROR',
@@ -777,15 +998,15 @@ export async function handleToolCall(params, tools) {
  */
 export function lazyTools(loader, { names = makeToolDefs().map((t) => t.name) } = {}) {
   // No memo here: deduplication (and invalidation) is the LOADER's job — one cache, one owner.
-  return Object.fromEntries(names.map((name) => [name, async (args) => {
+  return Object.fromEntries(names.map((name) => [name, async (args, ctx = {}) => {
     const context = await loader();
-    return context.tools[name](args);
+    return context.tools[name](args, ctx);
   }]));
 }
 
 /** The pure JSON-RPC dispatcher — a response object, or null for a notification. `version`
  *  is the package version the server names at initialize (the connection reads it once). */
-export async function dispatch(msg, { tools, version }) {
+export async function dispatch(msg, { tools, version, progress = null }) {
   const { id, method, params } = msg || {};
   const isNotification = id === undefined || id === null;
   if (method === 'notifications/initialized' || method === 'initialized') return null;
@@ -800,7 +1021,7 @@ export async function dispatch(msg, { tools, version }) {
       case 'tools/list':
         return { tools: makeToolDefs() };
       case 'tools/call':
-        return handleToolCall(params, tools);
+        return handleToolCall(params, tools, progress ? { progress } : {});
       case 'ping':
         return {};
       default:
@@ -815,14 +1036,40 @@ export async function dispatch(msg, { tools, version }) {
 }
 
 /**
- * Start the server over stdio. The transport, server-initiated requests (roots/list), and the
- * LAZY per-connection tool context live in McpConnection (./connection.mjs) — nothing beyond
- * the transport is built at startup, so a poisoned environment surfaces per call, typed,
- * never as a startup crash.
+ * Start the server over stdio — as a FORWARDER when the device daemon answers on its socket
+ * (connection-lane phase 2: one substrate owner per device; this process stays the harness's
+ * per-session child, whose pid the daemon measures the speaker from), standalone otherwise.
+ * The mode is a MEASURED fact — one connect attempt inside a config budget, never config,
+ * never a hang. Startup stays crash-proof: a broken config or socket surface falls back to
+ * the standalone server (reported on stderr), and nothing beyond the transport is built
+ * before the first tools/call.
  */
 export async function main(env = process.env) {
+  if (await forwardIfServed(env)) return;
   const { McpConnection } = await import('./connection.mjs');
   new McpConnection({ env }).start();
+}
+
+async function forwardIfServed(env) {
+  try {
+    const [{ connectDaemon, McpForwarder }, { serveSocketPath }, { OatheConfig }, { buildPaths }] = await Promise.all([
+      import('./forwarder.mjs'), import('../serve.mjs'), import('../config.mjs'), import('../paths.mjs'),
+    ]);
+    const config = OatheConfig.global({ env });
+    const socket = await connectDaemon({
+      socketPath: serveSocketPath(buildPaths(env), config),
+      timeoutMs: config.get('serveConnectMs'),
+    });
+    if (!socket) return false;
+    new McpForwarder({
+      socket, input: process.stdin, output: process.stdout,
+      env, cwd: process.cwd(), pid: process.pid,
+    }).start();
+    return true;
+  } catch (e) {
+    process.stderr.write(`oathe mcp: forwarding unavailable (${String(e?.message || e).slice(0, 160)}) — serving standalone\n`);
+    return false;
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

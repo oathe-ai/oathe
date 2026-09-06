@@ -80,6 +80,24 @@ const KEYS = Object.freeze({
   // every re-wired notch unloaded because the one attempt's refusal went unread).
   notchRestartSeconds: { default: 10, env: 'OATHE_NOTCH_RESTART_SECONDS', check: positiveInt },
   notchRestartPollMs: { default: 100, env: 'OATHE_NOTCH_RESTART_POLL_MS', check: positiveInt },
+  // The serve daemon (connection-lane phase 2): the unix socket the device's one oathe
+  // presence answers on — null derives <oathe home>/serve.sock (src/serve.mjs); a path
+  // overrides it. The connect budget is the forwarder's ONE attempt before it falls back to
+  // the standalone stdio server (a measured fact, never a hang); the restart budget is the
+  // same launchd lesson the notch keys carry.
+  serveSocket: { default: null, env: 'OATHE_SERVE_SOCKET', check: nullOrString },
+  serveConnectMs: { default: 250, env: 'OATHE_SERVE_CONNECT_MS', check: positiveInt },
+  serveRestartSeconds: { default: 10, env: 'OATHE_SERVE_RESTART_SECONDS', check: positiveInt },
+  serveRestartPollMs: { default: 100, env: 'OATHE_SERVE_RESTART_POLL_MS', check: positiveInt },
+  // The blocking exchange, declared to the transport (ruling 2026-09-05): `done`/`verify` wait
+  // for the verdict where the work is, so every MCP client that caps a tool call must be told
+  // the budget — each adapter writes it where its client reads it (mcpToolTimeout touchpoint).
+  // 900s: ~3× the longest verify measured on the founder's substrate (p50 80s, p90 177s, max
+  // 315s over 40 runs; codex's 60s default sat below the median), finite so a wedged engine
+  // surfaces as a client timeout, never an hour-long spinner. While it waits the server says
+  // "still judging" this often — a standard MCP progress notification on the call's token.
+  mcpToolTimeoutSec: { default: 900, env: 'OATHE_MCP_TOOL_TIMEOUT_SEC', check: positiveInt },
+  mcpProgressIntervalSec: { default: 15, env: 'OATHE_MCP_PROGRESS_INTERVAL_SEC', check: positiveInt },
 });
 
 function nonEmptyString(v) {

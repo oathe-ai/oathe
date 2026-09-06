@@ -18,6 +18,7 @@ import { Harness, HarnessOnboardError } from './harness.mjs';
 import { workspaceRootsDialect } from './dialects.mjs';
 import { JsonArrayEntries, JsonEntries } from '../blocks.mjs';
 import { sha256Hex } from '../manifest.mjs';
+import { shimPath } from '../shim.mjs';
 
 const HOOK_EVENTS = Object.freeze([
   { event: 'sessionStart', script: 'render-board' },
@@ -48,9 +49,15 @@ export class CursorHarness extends Harness {
     ownsExec: (exec) => exec.includes(`${path.sep}Cursor.app${path.sep}`)
       || CursorHarness.cliExecutables.includes(path.basename(exec)),
     name: () => 'cursor',
+    display: Object.freeze({ cursor: 'Cursor' }),
+    resumable: Object.freeze([]), // a folder's session — the folder is the place
   });
   // cursor/cli-installation.md:10 (pinned 2026-08-29).
-  static install = Object.freeze({ installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'] });
+  static attestation = Object.freeze({ cursor: 'hooks' });
+  // Cursor's pinned MCP docs (cursor/mcp.md, cli-mcp.md) document no per-tool timeout, so
+  // there is nothing to write — a stated limitation, not a guess; a live probe is owed.
+  static mcpToolTimeout = null;
+  static install = Object.freeze({ installer: 'curl https://cursor.com/install -fsS | bash', bin: 'agent', versionArgs: ['--version'], update: null }); // no in-place updater documented
   // Headless: `agent -p --output-format json` → {type:"result", result} (cursor/cli-output-format.md);
   // CI auth CURSOR_API_KEY (cursor/cli-authentication.md:24-37, cli-github-actions.md:17). A fresh
   // project dir is untrusted — the CLI refuses to run there without --trust (observed live 2026-08-29).
@@ -58,6 +65,7 @@ export class CursorHarness extends Harness {
     auth: ['CURSOR_API_KEY'],
     command: (prompt, model = null) => ['agent', ['-p', prompt, '--trust', '--output-format', 'json', ...(model ? ['--model', model] : [])]],
     extract: (stdout) => CursorHarness.extractJsonResult(stdout),
+    diagnose: () => null, // unmeasured — stated
   });
   static traces = null; // Cursor keeps no session store we read; its hook payload carries transcript_path: null
   static docs = Object.freeze([
@@ -90,21 +98,17 @@ export class CursorHarness extends Harness {
   }
 
   /**
-   * The absolute oathe address: the bin resolved on PATH, else <node> <packageRoot>/bin/oathe.mjs
-   * (npm shims ride `#!/usr/bin/env node`, and a GUI-launched Cursor may not carry node's dir
-   * on PATH — the fallback names the runtime explicitly).
+   * The absolute oathe address for every cursor-owned entry.
    * @returns {{command: string, args: string[], hookPrefix: string}}
    */
   #oatheAddress() {
-    for (const dir of this.envPath.split(':').filter(Boolean)) {
-      const candidate = path.join(dir, 'oathe');
-      try {
-        fs.accessSync(candidate, fs.constants.X_OK);
-        return { command: candidate, args: [], hookPrefix: candidate };
-      } catch { /* keep looking */ }
-    }
-    const binPath = path.join(this.paths.packageRoot, 'bin/oathe.mjs');
-    return { command: process.execPath, args: [binPath], hookPrefix: `${process.execPath} ${binPath}` };
+    // The ONE durable address (connection-lane plan, 2026-09-04): the shim init materializes
+    // under the oathe home. The old PATH scan answered differently per environment — the
+    // exact class that stranded GUI sessions — and a raw node path was stranded by the next
+    // nvm switch. Deterministic from home alone; init writes the shim before any adapter.
+    // The hook prefix is QUOTED (review F7): a HOME with a space must not break one dialect.
+    const shim = shimPath(this.home);
+    return { command: shim, args: [], hookPrefix: `"${shim}"` };
   }
 
   #hookEntries(hookPrefix) {
@@ -113,7 +117,10 @@ export class CursorHarness extends Harness {
       return {
         path: ['hooks', event],
         element: { command },
-        owns: (el) => el?.command === command,
+        // Ownership is the SCHEMA, not this vintage's exact address (review F2): any entry
+        // driving `… hook <script>` is ours — an old-address entry converges instead of
+        // pairing up with the new one and running every hook twice through a dead path.
+        owns: (el) => typeof el?.command === 'string' && el.command.endsWith(` hook ${script}`),
         match: command,
       };
     });
@@ -154,9 +161,12 @@ export class CursorHarness extends Harness {
     const hooksAbsentBefore = !fs.existsSync(this.hooksConfigPath);
     // Version ownership is decided ONCE (the file we created carries our version key) and then
     // carried forward — a re-run must upsert the SAME row identity, never mint a sibling.
-    const ownsVersion = hooksAbsentBefore
-      || (manifest.rows.find((r) => r.harness === this.name && r.file === this.hooksConfigPath
-        && r.kind === 'json-array')?.detail?.owns_version ?? false);
+    const priorRow = manifest.rows.find((r) => r.harness === this.name && r.file === this.hooksConfigPath && r.kind === 'json-array');
+    if (priorRow && typeof priorRow.detail?.owns_version !== 'boolean') {
+      throw new HarnessOnboardError('CURSOR_MANIFEST_ROW_MALFORMED',
+        `the recorded ${this.hooksConfigPath} row carries no owns_version — not a row this oathe writes; uninstall with the oathe that wrote it, then run oathe init`, { row: priorRow });
+    }
+    const ownsVersion = hooksAbsentBefore || (priorRow ? priorRow.detail.owns_version : false);
 
     manifest.backupOnce(this.mcpConfigPath);
     const mcpBefore = fs.existsSync(this.mcpConfigPath) ? fs.readFileSync(this.mcpConfigPath, 'utf8') : '';
@@ -190,6 +200,9 @@ export class CursorHarness extends Harness {
       verify: (doc) => hookEntries.every((e) => (doc?.hooks?.[e.path[1]] ?? []).some((el) => el?.command === e.match)),
       refuseDetail: 'the three owned oathe hook entries',
     });
+    // ONE row per file (review F1-class): the detail carries the vintage's match strings, so
+    // an address change would otherwise mint a second row beside the stale one.
+    manifest.removeWhere((r) => r.harness === this.name && r.file === this.hooksConfigPath && r.kind === 'json-array');
     manifest.upsert({
       harness: this.name,
       file: this.hooksConfigPath,
@@ -209,7 +222,7 @@ export class CursorHarness extends Harness {
   }
 
   offboard({ manifest }) {
-    const rows = manifest.removeWhere((r) => r.harness === this.name);
+    const rows = this.takeWiringRows(manifest);
     const actions = [];
     for (const row of rows) {
       if (!fs.existsSync(row.file)) {

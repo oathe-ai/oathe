@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 
 import { buildContext } from './context.mjs';
-import { FencedBlock, FENCE_STYLES, sweepCreatedResidue } from './blocks.mjs';
+import { FencedBlock, sweepCreatedResidue } from './blocks.mjs';
+import { fenceStyleOf } from './doctor.mjs';
 
 /** @returns {Promise<{actions: object[], database_dropped: boolean}>} */
 export async function runUninstall({ env = process.env, exec, purgeDb = false } = {}) {
@@ -14,16 +15,20 @@ export async function runUninstall({ env = process.env, exec, purgeDb = false } 
   try {
     const actions = [];
     for (const harness of harnesses) {
-      if (!manifest.rows.some((r) => r.harness === harness.name)) continue;
+      if (manifest.wiringRowsFor(harness.name).length === 0) continue;
       for (const action of harness.offboard({ manifest })) {
         actions.push({ harness: harness.name, ...action });
       }
+    }
+    // The CLI addresses init measured: rows only — the files are the harnesses', never ours.
+    for (const row of manifest.removeWhere((r) => r.kind === 'cli-address')) {
+      actions.push({ harness: row.harness, action: 'cli-address-forgotten', file: row.file });
     }
     // Every fence: the folder ones (CLAUDE.md/AGENTS.md written by activation) and the global
     // one in an adapter's instructions file (written by init) — one row shape, one removal.
     for (const row of manifest.removeWhere((r) => r.kind === 'fence')) {
       if (!fs.existsSync(row.file)) continue;
-      const block = new FencedBlock({ style: FENCE_STYLES[row.detail?.style ?? 'hash'] });
+      const block = new FencedBlock({ style: fenceStyleOf(row) });
       const { content, changed } = block.remove(fs.readFileSync(row.file, 'utf8'));
       if (!changed) continue;
       const createdByUs = manifest.backups.find((b) => b.file === row.file)?.absent_before === true;
@@ -38,6 +43,18 @@ export async function runUninstall({ env = process.env, exec, purgeDb = false } 
     // The notch LaunchAgent: booted out and removed exactly as recorded (src/notch.mjs).
     const { unwireNotch } = await import('./notch.mjs');
     actions.push(...unwireNotch({ manifest, ...(exec ? { exec } : {}) }));
+    // The serve daemon goes the same way — its bootout ends the process, and every
+    // forwarder's pipe ends with it.
+    const { unwireServe } = await import('./serve.mjs');
+    actions.push(...unwireServe({ manifest, ...(exec ? { exec } : {}) }));
+    // Live MCP servers would keep answering from a tree whose wiring is now gone — sweep them
+    // ("just get rid of it for them", founder 2026-09-04), then remove the durable address
+    // last: the offboard CLIs above may still have run through it.
+    const { unwireShim, sweepMcpServers } = await import('./shim.mjs');
+    actions.push(...sweepMcpServers({ exec: exec ?? (await import('./harnesses/harness.mjs')).defaultExec }));
+    actions.push(...unwireShim({ manifest }));
+    const { unwireDevice } = await import('./device.mjs');
+    actions.push(...unwireDevice({ manifest }));
     // Same rule as init (B4): rows that landed while the undo CLIs ran are kept, this run's
     // removals hold, and the save happens under the lock against the file as it is now.
     const { withFileLock } = await import('./fslock.mjs');

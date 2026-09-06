@@ -47,7 +47,9 @@ function scratchConfig() {
 function toolsFor(session) {
   return createOatheTools({
     client: substrate, identity: IDENTITY, workspace: WS, config, activation: seam,
-    speaker: { surface: 'claude', app: null, session },
+    // null: a surface with no hooks (the ChatGPT desktop app) — the one session-less speaker
+    // the claim gate admits (ruling 2026-09-04); a bare terminal can no longer claim.
+    speaker: session ? { surface: 'claude', app: null, session } : { surface: 'chatgpt', app: { bundle: '/Applications/ChatGPT.app', pid: 4242 }, session: null, walked: true, client: 'codex', pid: 4242, device: null },
   });
 }
 const session = (sessionId) => ({ sessionId, transcriptPath: transcript, harness: 'claude' });

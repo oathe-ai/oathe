@@ -171,6 +171,13 @@ test('a resolution knows when its directory is SYNTHETIC — a ChatGPT-desktop s
   fs.mkdirSync(sibling, { recursive: true });
   const notStaging = await new WorkspaceResolver({ env: { OATHE_WORKSPACE_DIR: sibling }, home }).resolve();
   assert.equal(notStaging.synthetic, false, 'only the staging dir is synthetic, not all of ~/.codex');
+  // ChatGPT desktop's "Codex work" conversations (codex 0.153.4, 2026-09-06) run from ~/Documents/Codex/<date>/<slug>.
+  const work = path.join(home, 'Documents/Codex/2026-09-06/te');
+  fs.mkdirSync(work, { recursive: true });
+  assert.equal((await new WorkspaceResolver({ env: { OATHE_WORKSPACE_DIR: work }, home }).resolve()).synthetic, true, 'a Codex-work conversation dir is staging');
+  const docs = path.join(home, 'Documents/Other');
+  fs.mkdirSync(docs, { recursive: true });
+  assert.equal((await new WorkspaceResolver({ env: { OATHE_WORKSPACE_DIR: docs }, home }).resolve()).synthetic, false, 'the rest of Documents is a folder');
 });
 
 test('describe() refuses / and the home directory — the ONE refusal, shared by the ladder, the hooks, the CLI, and the writer', () => {

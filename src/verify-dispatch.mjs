@@ -11,8 +11,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
 
-import { isVerificationTask, verificationTaskId } from './plans.mjs';
-import { isEngineFailureSql } from './statements.mjs';
+import { isVerificationTask, verificationTaskId, verifiedTaskId, updateTaskId } from './plans.mjs';
+import { isVerifyStallSql } from './statements.mjs';
 import { pidAlive } from './sessions.mjs';
 
 export class VerifyDispatchError extends Error {
@@ -42,53 +42,88 @@ function scrubbedEnv(env) {
  * @returns {Promise<{started: true, task_id: string, verification_task: string, engine: string|null,
  *                    pid: number, log: string, note: string}>}
  */
-export async function dispatchVerification({
-  taskId, engine = null, orgId, query, paths, cwd, env, spawn = nodeSpawn, clock = () => new Date(),
-}) {
-  const verificationTask = isVerificationTask(taskId) ? taskId : verificationTaskId(taskId);
-  const originalTask = verificationTask.slice('verify:'.length);
-
+/**
+ * A system task already HELD refuses a second dispatch — the row already says what is running.
+ * @param {{what: string}} o what — the act in words ("a verification of 'x'", "an update of 'codex'")
+ */
+async function refuseIfHeld({ query, orgId, taskId, clock, code, what }) {
   const { rows } = await query(
     `SELECT principal_id, state, ownership_valid_until
        FROM cell.work_claim WHERE org_id = $1 AND task_id = $2
-      ORDER BY claimed_at DESC LIMIT 1`, [orgId, verificationTask]);
+      ORDER BY claimed_at DESC LIMIT 1`, [orgId, taskId]);
   const latest = rows[0];
-  if (latest?.state === 'active') {
-    const until = latest.ownership_valid_until ? new Date(latest.ownership_valid_until) : null;
-    const expired = until !== null && until < clock();
-    throw new VerifyDispatchError('OATHE_VERIFY_IN_FLIGHT',
-      expired
-        ? `a verification of '${originalTask}' is still claimed by ${latest.principal_id} but its `
-          + `lease expired ${until.toISOString()} — likely a dead run; \`oathe yield ${verificationTask}\` `
-          + 'releases it, then dispatch again'
-        : `a verification of '${originalTask}' is already running — claimed by ${latest.principal_id}`
-          + `${until ? ` until ${until.toISOString()}` : ''}; its verdict lands on the board`,
-      { verification_task: verificationTask, holder: latest.principal_id, expired });
-  }
+  if (latest?.state !== 'active') return;
+  const until = latest.ownership_valid_until ? new Date(latest.ownership_valid_until) : null;
+  const expired = until !== null && until < clock();
+  throw new VerifyDispatchError(code,
+    expired
+      ? `${what} is still claimed by ${latest.principal_id} but its `
+        + `lease expired ${until.toISOString()} — likely a dead run; \`oathe yield ${taskId}\` `
+        + 'releases it, then dispatch again'
+      : `${what} is already running — claimed by ${latest.principal_id}`
+        + `${until ? ` until ${until.toISOString()}` : ''}; its outcome lands on the board`,
+    { system_task: taskId, verification_task: taskId, holder: latest.principal_id, expired });
+}
 
+/**
+ * The ONE detached spawn of a bin verb: own process group (it outlives the session, the feed,
+ * the daemon), a log under logsDir overwritten per run (no retention machinery), a scrubbed env.
+ * @returns {{pid: number, log: string}}
+ */
+function spawnDetachedVerb({ paths, args, cwd, env, logName, spawn }) {
   fs.mkdirSync(paths.logsDir, { recursive: true });
-  const log = path.join(paths.logsDir, `verify-${originalTask.replace(/[^A-Za-z0-9._-]+/g, '-')}.log`);
-  const logFd = fs.openSync(log, 'w'); // one log per task, overwritten per run — no retention machinery
+  const log = path.join(paths.logsDir, `${logName.replace(/[^A-Za-z0-9._-]+/g, '-')}.log`);
+  const logFd = fs.openSync(log, 'w');
   let child;
   try {
-    child = spawn(process.execPath,
-      [path.join(paths.packageRoot, 'bin/oathe.mjs'), 'verify', originalTask, ...(engine ? ['--engine', engine] : [])],
+    child = spawn(process.execPath, [path.join(paths.packageRoot, 'bin/oathe.mjs'), ...args],
       { detached: true, cwd, env: scrubbedEnv(env), stdio: ['ignore', logFd, logFd] });
   } finally {
     fs.closeSync(logFd); // the child holds its own copy; the long-lived server must not leak one per dispatch
   }
   child.unref();
+  return { pid: child.pid, log };
+}
 
+export async function dispatchVerification({
+  taskId, engine = null, orgId, query, paths, cwd, env, spawn = nodeSpawn, clock = () => new Date(),
+}) {
+  const verificationTask = isVerificationTask(taskId) ? taskId : verificationTaskId(taskId);
+  const originalTask = verifiedTaskId(verificationTask);
+  await refuseIfHeld({ query, orgId, taskId: verificationTask, clock, code: 'OATHE_VERIFY_IN_FLIGHT', what: `a verification of '${originalTask}'` });
+  const { pid, log } = spawnDetachedVerb({
+    paths, cwd, env, spawn, logName: `verify-${originalTask}`,
+    args: ['verify', originalTask, ...(engine ? ['--engine', engine] : [])],
+  });
   return {
     started: true,
     task_id: originalTask,
     verification_task: verificationTask,
     engine,
-    pid: child.pid,
+    pid,
     log,
     note: `verification of '${originalTask}' started in the background as ${verificationTask} — `
       + 'when it leaves the board the claim settled; a rejection reopens the task with the reason '
       + `recorded on ${verificationTask}'s completion statement. Engine log: ${log}`,
+  };
+}
+
+/**
+ * The glass's `update ↗` (ruling 2026-09-05): `oathe engine update <harness> --then-verify`
+ * detached through the same spawn as a judgment. The child CLAIMS `update:<harness>`, so the
+ * next frame reads "updating <Harness>" off the substrate — this process remembers nothing.
+ * @returns {Promise<{started: true, harness: string, update_task: string, pid: number, log: string, note: string}>}
+ */
+export async function dispatchEngineUpdate({ harness, orgId, query, paths, cwd, env, spawn = nodeSpawn, clock = () => new Date() }) {
+  const updateTask = updateTaskId(harness);
+  await refuseIfHeld({ query, orgId, taskId: updateTask, clock, code: 'OATHE_UPDATE_IN_FLIGHT', what: `an update of '${harness}'` });
+  const { pid, log } = spawnDetachedVerb({
+    paths, cwd, env, spawn, logName: `update-${harness}`, args: ['engine', 'update', harness, '--then-verify'],
+  });
+  return {
+    started: true, harness, update_task: updateTask, pid, log,
+    note: `updating ${harness} in the background as ${updateTask} — when it leaves the board the CLI updated `
+      + `and every judgment its old version failed re-runs; a failure lands on ${updateTask}'s record. Log: ${log}`,
   };
 }
 
@@ -98,17 +133,27 @@ export async function dispatchVerification({
  * wait is bounded by the CHILD'S OWN LIFE, never an arbitrary budget: verdict recorded →
  * the answer; failure statement recorded → the failure; child dead with neither (one
  * last read closes the exit race) → a typed failed outcome naming the retry.
+ * While it waits it TICKS (ruling 2026-09-05): `onTick({elapsedMs})` every `tickMs` — the one
+ * signal a transport forwards as MCP progress so a client's per-tool clock knows the judgment
+ * is still running. No `onTick`, no ticking.
  * @returns {Promise<{verdict: 'accepted'|'rejected', reason: string}
  *                  |{failed: true, reason: string}>}
  */
 export async function awaitVerdict({
   taskId, pid, orgId, query, since,
   pollMs = 1000, isAlive = pidAlive, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  onTick = null, tickMs = null, now = Date.now,
 }) {
   const verificationTask = isVerificationTask(taskId) ? taskId : verificationTaskId(taskId);
-  const originalTask = verificationTask.slice('verify:'.length);
+  const originalTask = verifiedTaskId(verificationTask);
+  const started = now();
+  let nextTick = onTick && tickMs ? started + tickMs : null;
   let lastChance = false;
   for (;;) {
+    if (nextTick !== null && now() >= nextTick) {
+      onTick({ elapsedMs: now() - started });
+      nextTick += tickMs;
+    }
     const { rows } = await query(
       `SELECT v.result, s.proposition
          FROM cell.verification v
@@ -136,7 +181,7 @@ export async function awaitVerdict({
       const { rows: fail } = await query(
         `SELECT proposition FROM cell.agent_statement
           WHERE org_id = $1 AND task_id = $2 AND asserted_at > $3
-            AND ${isEngineFailureSql('evidence_refs')}
+            AND ${isVerifyStallSql('evidence_refs')}
           ORDER BY asserted_at DESC LIMIT 1`,
         [orgId, verificationTask, since]);
       if (fail[0]) return { failed: true, reason: fail[0].proposition };
@@ -159,11 +204,20 @@ export async function awaitVerdict({
  * await its verdict; when the substrate is REMOTE (the cloud), this seam is the one place
  * that flips to dispatch-and-return. Never an engine inside the server either way.
  */
-export function verifierSeam({ orgId, query, paths, cwd, env = process.env }) {
-  return async ({ taskId, engine = null }) => {
+export function verifierSeam({
+  orgId, query, paths, cwd, env = process.env, progressIntervalMs = null,
+  spawn = undefined, pollMs = undefined, sleep = undefined, now = undefined, isAlive = undefined,
+}) {
+  const waitOptions = Object.fromEntries(Object.entries({ pollMs, sleep, now, isAlive }).filter(([, v]) => v !== undefined));
+  return async ({ taskId, engine = null, progress = null }) => {
     const since = new Date().toISOString();
-    const out = await dispatchVerification({ taskId, engine, orgId, query, paths, cwd, env });
-    const outcome = await awaitVerdict({ taskId, pid: out.pid, orgId, query, since });
+    const out = await dispatchVerification({ taskId, engine, orgId, query, paths, cwd, env, ...(spawn && { spawn }) });
+    // The caller's progress emitter (a transport's MCP notification, the CLI's stderr) hears one
+    // line per interval — Node's words, the transport only forwards them.
+    const onTick = progress && progressIntervalMs
+      ? ({ elapsedMs }) => progress(`verifying ${taskId} — ${Math.round(elapsedMs / 1000)}s`)
+      : null;
+    const outcome = await awaitVerdict({ taskId, pid: out.pid, orgId, query, since, onTick, tickMs: progressIntervalMs, ...waitOptions });
     return { ...outcome, log: out.log };
   };
 }

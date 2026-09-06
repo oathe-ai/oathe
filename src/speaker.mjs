@@ -22,16 +22,21 @@ import fs from 'node:fs';
 
 import { processAncestry, nearestAppBundle, SessionRegistry } from './sessions.mjs';
 import { surfaceForSession, harnessForClient, ownerOfTracePath, ownedAncestorIndex, transcriptFor, HARNESS_CLASSES } from './harnesses/catalog.mjs';
+import { readDeviceId } from './device.mjs';
 
 /**
- * @param {{pid?: number, sessionsPath: string, clientName?: string|null,
- *          exec?: object, platform?: string}} o — exec/platform are test seams for the walk
+ * @param {{pid?: number|null, sessionsPath: string, devicePath?: string|null,
+ *          clientName?: string|null, exec?: object, platform?: string}} o
+ *   pid null = NOTHING to walk (a daemon client that named no usable pid) — the speaker is
+ *   unwalked, never resolved from this process's own ancestry (ruling 2026-09-04);
+ *   exec/platform are test seams for the walk.
  * @returns {{surface: string|null, app: {bundle: string, pid: number}|null,
- *            session: {sessionId: string, transcriptPath: string|null, harness: string}|null}}
+ *            session: {sessionId: string, transcriptPath: string|null, harness: string}|null,
+ *            walked: boolean, client: string|null, device: string|null}}
  */
-export function resolveSpeaker({ pid = process.pid, sessionsPath, clientName = null, exec, platform } = {}) {
+export function resolveSpeaker({ pid = process.pid, sessionsPath, devicePath = null, clientName = null, exec, platform } = {}) {
   // The ancestry is a fact of the PROCESS: walked once (one ps call), never per act.
-  const walk = processAncestry({
+  const walk = pid === null ? [] : processAncestry({
     pid,
     ...(exec !== undefined && { exec }),
     ...(platform !== undefined && { platform }),
@@ -85,9 +90,23 @@ export function resolveSpeaker({ pid = process.pid, sessionsPath, clientName = n
     if (cached === null || now !== stamp) { cached = shape(); stamp = now; }
     return cached;
   };
+  // The device is a fact of the INSTALL (ruling 2026-09-04): read once, never invented; a
+  // malformed file refuses typed on every read (no fail-soft outside hooks).
+  let device;
+  let deviceRead = false;
   return {
     get surface() { return current().surface; },
     get app() { return current().app; },
     get session() { return current().session; },
+    /** The pid it was asked to walk — null when there was NOTHING to walk (a daemon client that named none). */
+    get pid() { return pid; },
+    /** Whether the process tree was actually observed — false for pid null and for a blind walk (ps failed). */
+    get walked() { return walk.length > 0; },
+    /** The client's own label (MCP clientInfo.name) — the claim gate checks it against the walk. */
+    get client() { return clientName; },
+    get device() {
+      if (!deviceRead) { device = devicePath ? readDeviceId({ devicePath }) : null; deviceRead = true; }
+      return device;
+    },
   };
 }

@@ -6,6 +6,7 @@
 // read "last word" through this one fragment).
 
 import fs from 'node:fs';
+import { SYSTEM_TASKS } from './plans.mjs';
 
 export const TRACE_SUBJECT_PREFIX = 'trace:';
 
@@ -64,6 +65,53 @@ export async function linkTrace({ client, identity, taskId, session }) {
 }
 
 /**
+ * WHERE an act was spoken (founder ruling 2026-09-05): the PLACE — a folder (`workspace:<ref>`)
+ * or an app (`app:<surface>`, the grammar is src/home.mjs Place) — recorded as ONE observation
+ * per claim × place, subject `place:<place>`, evidence the pickup knows (src/home.mjs
+ * PlaceEvidence: `app:<bundle>` / `device:<id>` / `dir:<project folder>`, each only when known).
+ * `observation`, not `progress`: a place is a fact about the act, never the holder's word, so
+ * it stays out of last-word, the quiet clock, and the verifier's reads. Idempotent by
+ * (work_claim_id, subject_ref) like the trace link. A statement, so it rides Cloud State
+ * unchanged (the `spawn:` argument) — the device on it is why.
+ */
+export const PLACE_SUBJECT_PREFIX = 'place:';
+export function placeSubjectRef(place) {
+  return `${PLACE_SUBJECT_PREFIX}${place}`;
+}
+/**
+ * @param {{client: {query: Function}, identity: {orgId: string, principalId: string}, taskId: string,
+ *          place: {toString: Function}, evidence: {app: string|null, refs: string[]}, workClaimId?: string}} o
+ *   workClaimId — the interval to stamp; default: the principal's open claim (active or asserted), as linkTrace picks it
+ * @returns {Promise<{linked: boolean}>}
+ */
+export async function linkPlace({ client, identity, taskId, place, evidence, workClaimId = null }) {
+  let claimId = workClaimId;
+  if (claimId === null) {
+    const { rows } = await client.query(
+      `SELECT work_claim_id FROM cell.work_claim
+        WHERE org_id = $1 AND principal_id = $2 AND task_id = $3 AND settled_at IS NULL
+          AND state IN ('active', 'completion_asserted')
+        ORDER BY claimed_at DESC LIMIT 1`,
+      [identity.orgId, identity.principalId, taskId]);
+    if (rows.length === 0) return { linked: false };
+    claimId = rows[0].work_claim_id;
+  }
+  const { randomUUID } = await import('node:crypto');
+  await client.query(
+    `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+            execution_actor, claim_principal, statement_type, subject_ref, proposition,
+            evidence_refs, epistemic_status, asserted_at)
+     SELECT $1, $2, $3, $4, $5, $6, 'observation', $7, $8, $9::jsonb, 'observed', now()
+      WHERE NOT EXISTS (
+        SELECT 1 FROM cell.agent_statement
+         WHERE org_id = $2 AND work_claim_id = $4 AND subject_ref = $7)`,
+    [randomUUID(), identity.orgId, taskId, claimId, 'oathe-operator', identity.principalId,
+      placeSubjectRef(String(place)), `picked up at ${String(place)}${evidence.app ? ` from ${evidence.app}` : ''}`,
+      JSON.stringify(evidence.refs)]);
+  return { linked: true };
+}
+
+/**
  * The latest non-trace progress statement of one claim, as a LATERAL body:
  * `LEFT JOIN LATERAL (${latestProgressSql({ task: 't', claim: 'w' })}) p ON true` yields
  * p.proposition / p.asserted_at (NULL when the holder has said nothing yet).
@@ -77,8 +125,22 @@ export async function linkTrace({ client, identity, taskId, session }) {
  */
 /** Engine-failure evidence shape: 'engine-failure:<engine>' — a verify child that lost its
  *  engine records this on the verify task before releasing its claim. */
-export function engineFailureRef(engine) {
-  return `engine-failure:${engine}`;
+export function engineFailureRef(engine, cause = null) {
+  return `${ENGINE_FAILURE_PREFIX}${engine}${cause ? `:${cause}` : ''}`;
+}
+const ENGINE_FAILURE_PREFIX = 'engine-failure:';
+/** The one reader of the grammar: `{engine, cause}` (cause null when the ref carries none), or null for another ref. */
+export function parseEngineFailure(ref) {
+  if (typeof ref !== 'string' || !ref.startsWith(ENGINE_FAILURE_PREFIX)) return null;
+  const [engine, cause = null] = ref.slice(ENGINE_FAILURE_PREFIX.length).split(':');
+  return { engine, cause };
+}
+/** An engine UPDATE that failed (`oathe engine update`) — the stall grammar's sibling, on the update task's statement. */
+export function updateFailureRef(harness) {
+  return `update-failure:${harness}`;
+}
+export function isUpdateFailureSql(column) {
+  return `EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) er WHERE er LIKE 'update-failure:%')`;
 }
 export function isEngineFailureSql(column) {
   return `EXISTS (SELECT 1 FROM jsonb_array_elements_text(${column}) er WHERE er LIKE 'engine-failure:%')`;
@@ -97,6 +159,17 @@ export function isVerifyStallSql(column) {
 }
 
 /** R-AMEND: the amendment trail's subject shape — 'amend:<task_id>', owned here alone. */
+/**
+ * The disclosure an ADMITTED session-less act carries (`trace_link.why`, ruling 2026-09-04):
+ * a surface that runs no hooks by design, or a platform where the process tree could not be
+ * walked and the client's label stood in. One wording, spoken by the tools; the CLI prints it.
+ */
+export function attributionWhy({ surface, walked }) {
+  return walked
+    ? `no session registered for ${surface} (a surface that runs no hooks): nothing links this act to a transcript — its evidence is discovered by fingerprint at verify`
+    : `the process ancestry could not be walked on this platform, so the client's own label (${surface}) stood in: nothing links this act to a transcript — its evidence is discovered by fingerprint at verify`;
+}
+
 export const AMEND_SUBJECT_PREFIX = 'amend:';
 export function amendSubjectRef(taskId) {
   return `${AMEND_SUBJECT_PREFIX}${taskId}`;
@@ -200,6 +273,36 @@ export async function linkSpawn({ client, identity, parent, childTaskId, actor }
       spawnSubjectRef(childTaskId), `spawned '${childTaskId}' under this claim`, JSON.stringify([`task:${childTaskId}`])]);
 }
 
+/**
+ * THIS interval was judged rejected — the verification row's statement link (003: every
+ * verification evaluates a RECORDED statement, and the statement names its claim), never a
+ * clock comparison between a verdict and a claim. The one predicate every reader of "was
+ * this claim rejected" spells (plan 2026-09-04, Leg A); when the upstream `rejected_at`
+ * stamp lands (Leg S) this is the one line that changes.
+ */
+export function rejectedIntervalSql({ claim }) {
+  return `EXISTS (SELECT 1 FROM cell.verification v
+                    JOIN cell.agent_statement s
+                      ON s.org_id = v.org_id AND s.task_id = v.task_id AND s.statement_id = v.statement_id
+                   WHERE s.work_claim_id = ${claim}.work_claim_id AND v.result = 'rejected')`;
+}
+
+/**
+ * The hold on a SYSTEM task (UX rule 22 — the ONE in-flight read): an active claim inside its
+ * lease on `<kind>:<subject>` (`verify:<task>` → a judge is running; `update:<harness>` → the
+ * machine is updating that engine) at `asOf` (a SQL expression — `now()`, or a bound parameter
+ * for a clock a caller injects). An active claim past its lease is a holder that died without
+ * releasing, not a running one. `orgId`/`subject` are SQL expressions too — a task's own row
+ * (`t.org_id`, `t.task_id`) or a literal both fit. The board's `verifying`, the pager's busy rows
+ * and the glass all read this and nothing else, so they never disagree.
+ */
+export function holdSql({ kind, orgId, subject, asOf }) {
+  return `SELECT c.claimed_at FROM cell.work_claim c
+           WHERE c.org_id = ${orgId} AND c.task_id = '${SYSTEM_TASKS[kind]}' || ${subject}
+             AND c.state = 'active' AND c.settled_at IS NULL AND c.ownership_valid_until > ${asOf}
+           ORDER BY c.claimed_at DESC LIMIT 1`;
+}
+
 export function latestVerdictSql({ task }) {
   return `SELECT s.proposition AS verdict, s.asserted_at AS verdict_at
             FROM cell.agent_statement s
@@ -220,6 +323,17 @@ export function latestTracePathSql({ task }) {
            WHERE s.org_id = ${task}.org_id AND s.task_id = ${task}.task_id
              AND ${isTraceSubjectSql('s.subject_ref')}
            ORDER BY s.asserted_at DESC LIMIT 1`;
+}
+
+/**
+ * Every trace-link statement on a task, oldest first — evidence is the TASK's record,
+ * spanning claims (a re-claim judged blind to its prior interval was a false rejection,
+ * live 2026-09-04). The verifier reads it whole; the reclaim bundle shapes it in JS.
+ */
+export function taskTraceLinksSql() {
+  return `SELECT subject_ref, evidence_refs FROM cell.agent_statement
+           WHERE org_id = $1 AND task_id = $2 AND ${isTraceSubjectSql('subject_ref')}
+           ORDER BY asserted_at`;
 }
 
 export function latestProgressSql({ task, claim }) {

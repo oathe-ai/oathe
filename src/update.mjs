@@ -16,7 +16,9 @@ import { spawnSync } from 'node:child_process';
 
 import { defaultExec } from './harnesses/harness.mjs';
 import { notchStatus } from './notch.mjs';
+import { serveStatus } from './serve.mjs';
 import { homeOf } from './paths.mjs';
+import { sweepMcpServers } from './shim.mjs';
 
 export class UpdateError extends Error {
   constructor(code, message, details = {}) {
@@ -52,6 +54,11 @@ function defaultNotch({ env }) {
   return process.platform === 'darwin' ? notchStatus({ home: homeOf(env) }) : null;
 }
 
+/** launchd's word on the serve daemon after init — same rule, same source of truth. */
+function defaultServe({ env }) {
+  return process.platform === 'darwin' ? serveStatus({ home: homeOf(env) }) : null;
+}
+
 const lastLine = (text) => String(text ?? '').trim().split('\n').filter(Boolean).at(-1) ?? '';
 const realpathOrSelf = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
 
@@ -65,6 +72,7 @@ const realpathOrSelf = (p) => { try { return fs.realpathSync(p); } catch { retur
 export function runUpdate({
   packageRoot, execPath = process.execPath, exec = defaultExec, handoff = defaultHandoff,
   env = process.env, args = [], out = process.stdout, tag = 'latest', notch = defaultNotch,
+  daemon = defaultServe,
 }) {
   const readPkg = () => JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
   const pkg = readPkg();
@@ -86,17 +94,37 @@ export function runUpdate({
   }
   if (lastLine(install.stdout)) out.write(`update: ${lastLine(install.stdout)}\n`);
   const after = readPkg().version; // npm replaced the files under this same root
+  // Every MCP server still running was loaded from the tree npm just replaced — stale by
+  // definition. Sweep them now; harness sessions respawn a fresh server from the shim.
+  const [sweep] = sweepMcpServers({ exec });
+  if (sweep.action === 'mcp-swept') {
+    out.write(`update: ${sweep.pids.length} stale MCP server(s) from the previous install terminated — sessions reconnect against the new one\n`);
+  } else if (sweep.action === 'mcp-sweep-partial') {
+    out.write(`update: stale MCP servers partially swept — still running: ${sweep.survivors.join(', ')}; restart those sessions\n`);
+  } else if (sweep.action === 'mcp-sweep-failed') {
+    out.write(`update: the stale-server sweep could not look (${sweep.detail}) — restart open harness sessions by hand\n`);
+  }
   out.write(`update: ${before} → ${after}${after === before ? ' (already current)' : ''} — running init through the new bin\n`);
   // The new bin lives under npm's global prefix — node's directory by default, elsewhere with a
   // custom prefix — never assumed from where node is.
   const prefix = npmQuery(exec, npm, ['prefix', '-g'], 'OATHE_UPDATE_NPM_UNAVAILABLE');
   const init = handoff(path.join(prefix, 'bin', 'oathe'), ['init', ...args], { env });
-  if (init.status !== 0) return { before, after, initStatus: init.status, notch: null };
-  // The last word is the one the person needs: the version live NOW, and whether the notch
-  // they look at is the new one — read from launchd after init re-wired it, never assumed.
+  if (init.status !== 0) return { before, after, initStatus: init.status, notch: null, daemon: null };
+  // The last word is the one the person needs: the version live NOW, and whether the two
+  // supervised services — the notch they look at and the daemon every session forwards to —
+  // are the new ones, read from launchd after init re-wired them, never assumed.
   const glass = notch({ env });
-  if (glass === null) out.write(`update successful — oathe v${after}\n`);
-  else if (glass.pid !== null) out.write(`update successful — oathe v${after} · notch running (pid ${glass.pid})\n`);
-  else out.write(`update installed oathe v${after} — but the notch is NOT running (launchd: ${glass.loaded ? 'loaded, no pid' : 'not loaded'}); run \`oathe init\` and read its notch line\n`);
-  return { before, after, initStatus: init.status, notch: glass };
+  const dmn = daemon({ env });
+  if (glass !== null && glass.pid === null) {
+    out.write(`update installed oathe v${after} — but the notch is NOT running (launchd: ${glass.loaded ? 'loaded, no pid' : 'not loaded'}); run \`oathe init\` and read its notch line\n`);
+  } else if (dmn !== null && dmn.pid === null) {
+    out.write(`update installed oathe v${after} — but the daemon is NOT running (launchd: ${dmn.loaded ? 'loaded, no pid' : 'not loaded'}); every session forwards into nothing — run \`oathe init\` and read its daemon line\n`);
+  } else {
+    const parts = [
+      ...(glass !== null ? [`notch running (pid ${glass.pid})`] : []),
+      ...(dmn !== null ? [`daemon running (pid ${dmn.pid})`] : []),
+    ];
+    out.write(`update successful — oathe v${after}${parts.length > 0 ? ` · ${parts.join(' · ')}` : ''}\n`);
+  }
+  return { before, after, initStatus: init.status, notch: glass, daemon: dmn };
 }

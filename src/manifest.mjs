@@ -12,7 +12,16 @@ export function sha256Hex(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
 
-const MANIFEST_FORMAT = 1;
+export const MANIFEST_FORMAT = 1;
+
+export class InstallManifestError extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.name = 'InstallManifestError';
+    this.code = code;
+    this.details = details;
+  }
+}
 
 export class InstallManifest {
   /** @param {{manifestPath: string, backupsDir: string, clock?: () => string}} o */
@@ -29,9 +38,23 @@ export class InstallManifest {
   static load({ manifestPath, backupsDir, clock }) {
     const manifest = new InstallManifest({ manifestPath, backupsDir, clock });
     if (fs.existsSync(manifestPath)) {
-      const doc = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      manifest.rows = doc.rows ?? [];
-      manifest.backups = doc.backups ?? [];
+      let doc;
+      try {
+        doc = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      } catch (e) {
+        throw new InstallManifestError('OATHE_MANIFEST_MALFORMED',
+          `${manifestPath} is not valid JSON (${e.message}) — move it aside and run oathe init (or uninstall with the oathe that wrote it)`, { file: manifestPath });
+      }
+      // The format is the GATE (zero legacy, founder 2026-09-05): a manifest another oathe wrote
+      // is refused by name, never read as an empty one — doctor would say "nothing wired" and
+      // uninstall would remove nothing.
+      if (doc?.format !== MANIFEST_FORMAT || !Array.isArray(doc.rows) || !Array.isArray(doc.backups)) {
+        throw new InstallManifestError('OATHE_MANIFEST_FORMAT',
+          `${manifestPath} is format ${JSON.stringify(doc?.format)}; this oathe reads format ${MANIFEST_FORMAT} — `
+          + 'uninstall with the oathe that wrote it, then run oathe init', { file: manifestPath, found: doc?.format, expected: MANIFEST_FORMAT });
+      }
+      manifest.rows = doc.rows;
+      manifest.backups = doc.backups;
     }
     return manifest;
   }
@@ -48,7 +71,7 @@ export class InstallManifest {
    *  bring them back from a disk copy that predates the removal. */
   #removed = new Set();
 
-  /** One row per (harness, file, kind, detail identity); a re-run replaces its own row. */
+  /** One row per (harness, file, kind, detail identity — `detail.id` when named); a re-run replaces its own row. */
   upsert({ harness, file, kind, scope = 'user', detail = null, blockVersion, sha256 }) {
     const key = this.#key({ harness, file, kind, detail });
     const row = {
@@ -58,12 +81,31 @@ export class InstallManifest {
     const at = this.rows.findIndex((r) => this.#key(r) === key);
     if (at === -1) this.rows.push(row);
     else this.rows[at] = row;
+    // Converge: every OTHER row with this identity goes too — twins an earlier writer left behind
+    // (the live 2026-09-05 manifest carried three copies of one codex stanza row).
+    this.rows = this.rows.filter((r, i) => i === (at === -1 ? this.rows.length - 1 : at) || this.#key(r) !== key);
     this.#removed.delete(key); // written again in the same run: a row, not a removal
     return row;
   }
 
+  /**
+   * The rows that mean a harness is WIRED — everything but its `cli-address` row, which is a
+   * measurement of the machine (recorded for wired and unwired harnesses alike), never a write.
+   * Every "is it onboarded?" question asks this, so an address alone wires nothing.
+   */
+  wiringRowsFor(harness) {
+    return this.rows.filter((r) => r.harness === harness && r.kind !== 'cli-address');
+  }
+
+  /** The address init measured for a harness's CLI (its `cli-address` row), or null. */
+  cliAddressFor(harness) {
+    return this.rows.find((r) => r.kind === 'cli-address' && r.harness === harness)?.file ?? null;
+  }
+
+  /** A row's identity: the writer's `detail.id` when it names one (so a re-init whose detail changed
+   *  shape REPLACES the row — zero legacy, 2026-09-05), else the whole detail. */
   #key({ harness, file, kind, detail }) {
-    return JSON.stringify([harness, file, kind, detail ?? null]);
+    return JSON.stringify([harness, file, kind, detail?.id !== undefined ? { id: detail.id } : detail ?? null]);
   }
 
   /** @returns {object[]} the removed rows */

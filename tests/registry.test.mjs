@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { WorkspaceRegistry, RegistryError } from '../src/registry.mjs';
+import { WorkspaceRegistry, RegistryError, REGISTRY_FORMAT } from '../src/registry.mjs';
 import { workspaceRef } from '../src/workspace.mjs';
 
 function scratch(prefix) {
@@ -123,4 +123,14 @@ test('a malformed registry file refuses loudly with OATHE_REGISTRY_MALFORMED nam
     (e) => e instanceof RegistryError && e.code === 'OATHE_REGISTRY_MALFORMED'
       && e.message.includes(registryPath),
   );
+});
+
+test('the registry file\'s format is its gate: another format, or no workspaces object, refuses OATHE_REGISTRY_FORMAT by name (zero legacy, 2026-09-05)', async () => {
+  const { registryPath, root, registry } = fixture();
+  fs.mkdirSync(path.dirname(registryPath), { recursive: true });
+  fs.writeFileSync(registryPath, JSON.stringify({ format: REGISTRY_FORMAT + 1, workspaces: {} }));
+  await assert.rejects(registry.register({ cwd: root, source: 'cli:claim' }),
+    (e) => e instanceof RegistryError && e.code === 'OATHE_REGISTRY_FORMAT' && e.message.includes(registryPath) && e.message.includes(`format ${REGISTRY_FORMAT}`));
+  fs.writeFileSync(registryPath, JSON.stringify({ format: REGISTRY_FORMAT }));
+  assert.throws(() => registry.load(), (e) => e.code === 'OATHE_REGISTRY_FORMAT');
 });

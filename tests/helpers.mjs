@@ -5,8 +5,42 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
 import { notchLabel } from '../src/notch.mjs';
+import { serveLabel } from '../src/serve.mjs';
+import { ContractRef, Place, PlaceEvidence } from '../src/home.mjs';
+import { linkPlace } from '../src/statements.mjs';
+
+/**
+ * Seed a CLAIM the way the tools make one: the task row (kept if it exists), the substrate's
+ * `claim_work` with the ledger's contract_ref, and the PLACE statement the pickup records
+ * (ruling 2026-09-05: a claim without a place does not exist — a fixture must not fake one).
+ * Intervals are Postgres interval strings ('2 hours', '3 days', '1 minute').
+ * @param {{substrate: {query: Function}, taskId: string, workspace: string, principal?: string,
+ *          objective?: string, claimedAgo?: string, lease?: string, leaseFrom?: 'now'|'claim',
+ *          verifyBy?: string, createdAgo?: string, orgId?: string}} o
+ *   leaseFrom — 'now': lease = now() + lease (a live claim); 'claim': lease = claimed_at + lease (an
+ *   old claim whose lease may already be gone — the pager's overdue fixtures)
+ * @returns {Promise<{workClaimId: string}>}
+ */
+export async function seedClaim({
+  substrate, taskId, workspace, principal = 'founder', objective = `seeded ${taskId}`,
+  claimedAgo = '0 hours', lease = '4 hours', leaseFrom = 'now', verifyBy = '1 day', createdAgo = claimedAgo, orgId = 'oathe',
+}) {
+  await substrate.query(
+    `INSERT INTO cell.task (org_id, task_id, department, objective, origin, verification_plan, verify_by, claim_mode, created_at)
+     VALUES ($1, $2, 'founder', $3, 'minted_at_claim', '{"plan_status":"unknown"}'::jsonb, now() + $4::interval, 'exclusive', now() - $5::interval)
+     ON CONFLICT DO NOTHING`,
+    [orgId, taskId, objective, verifyBy, createdAgo]);
+  const workClaimId = randomUUID();
+  const leaseSql = leaseFrom === 'claim' ? 'now() - $5::interval + $6::interval' : 'now() + $6::interval';
+  await substrate.query(
+    `SELECT cell.claim_work($1, $2, $3, NULL, NULL, $4, 'founder', 'exclusive', ${leaseSql}, $7, now() - $5::interval, gen_random_uuid())`,
+    [orgId, taskId, workClaimId, principal, claimedAgo, lease, String(new ContractRef({ workspace, orgId, taskId }))]);
+  await linkPlace({ client: substrate, identity: { orgId, principalId: principal }, taskId, place: Place.workspace(workspace), evidence: new PlaceEvidence({}), workClaimId });
+  return { workClaimId };
+}
 
 // A sandbox's machine side effects die with the process. A test that runs `oathe init`
 // through the REAL bin (cli.test's picker moment, init.test's machine-wide verifier run)
@@ -19,16 +53,58 @@ const sandboxHomes = [];
 if (process.platform === 'darwin') {
   process.on('exit', () => {
     for (const home of sandboxHomes) {
+      // Both supervised services: a leaked KeepAlive daemon outlives the temp dir forever.
       spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${notchLabel(home)}`], { stdio: 'ignore' });
+      spawnSync('launchctl', ['bootout', `gui/${process.getuid()}/${serveLabel(home)}`], { stdio: 'ignore' });
     }
   });
+}
+
+/**
+ * A minimal Claude transcript (one tool call, one result) in Claude's store layout — a file
+ * the claude trace store OWNS and can project (ownership is by path), under a scratch home.
+ * @param {{taskId: string, home?: string}} o  home: the HOME to plant it under (default: a scratch dir)
+ * @returns {{file: string, sessionId: string}}
+ */
+export function writeClaudeTranscript({ taskId, home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-trace-')) }) {
+  const dir = path.join(home, '.claude', 'projects', 'fixture');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${taskId}.jsonl`);
+  const sessionId = randomUUID();
+  fs.writeFileSync(file, [
+    JSON.stringify({ type: 'user', uuid: 'u1', sessionId, cwd: dir, message: { role: 'user', content: 'work' } }),
+    JSON.stringify({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId, cwd: dir,
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'make it' } }] } }),
+    JSON.stringify({ type: 'user', uuid: 'u2', parentUuid: 'a1', sessionId, cwd: dir,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'made it\nExit code 0' }] } }),
+  ].join('\n'));
+  return { file, sessionId };
+}
+
+/**
+ * ONE claim interval's worth of evidence: a minimal Claude transcript (one tool call, one
+ * result — what the verifier lane needs to judge at all) in Claude's store layout (ownership
+ * is by path), linked to the claim by the same trace-link statement the heartbeat writes.
+ * @param {{substrate: {query: Function}, taskId: string, workClaimId: string, principal: string, orgId?: string}} o
+ * @returns {Promise<{file: string, sessionId: string}>}
+ */
+export async function linkClaudeTrace({ substrate, taskId, workClaimId, principal, orgId = 'oathe' }) {
+  const { file, sessionId } = writeClaudeTranscript({ taskId });
+  await substrate.query(
+    `INSERT INTO cell.agent_statement (statement_id, org_id, task_id, work_claim_id,
+            execution_actor, claim_principal, statement_type, subject_ref, proposition,
+            evidence_refs, epistemic_status, asserted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'progress', $7, 'trace', $8::jsonb, 'observed', now())`,
+    [randomUUID(), orgId, taskId, workClaimId, `session:${sessionId}`, principal, `trace:${sessionId}`,
+      JSON.stringify([file])]);
+  return { file, sessionId };
 }
 
 /**
  * @param {{scratchDb: string, claudeScript?: string}} o
  *   claudeScript: shell body for the fake `claude` binary (default: print and exit 0)
  */
-export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', withCursor = true }) {
+export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', codexScript = '', withCursor = true }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oathe-sb-'));
   sandboxHomes.push(home);
   fs.mkdirSync(path.join(home, '.claude'));
@@ -40,7 +116,7 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
   const bin = path.join(home, 'bin');
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\n${claudeScript}\n`);
-  fs.writeFileSync(path.join(bin, 'codex'), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(bin, 'codex'), `#!/bin/sh\n${codexScript}\n`);
   // A resolvable absolute `oathe` for wiring that must never record a bare name (cursor).
   fs.writeFileSync(path.join(bin, 'oathe'), '#!/bin/sh\n');
   for (const name of ['claude', 'codex', 'oathe']) fs.chmodSync(path.join(bin, name), 0o755);
@@ -74,8 +150,13 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
       const key = args[0] === 'mcp' ? 'mcp' : (args[1] === 'marketplace' ? 'marketplace' : 'add');
       const line = stanza[key];
       if (args.includes('remove')) {
-        // A marketplace stanza carries its source line (as the real config.toml does).
-        const pattern = key === 'marketplace' ? new RegExp(`\\[marketplaces\\.oathe\\]\\n(source = "[^"]*"\\n)?`) : `${line}\n`;
+        // A marketplace stanza carries its source line; an mcp stanza its command (as the
+        // real config.toml does).
+        // `codex mcp remove` drops the WHOLE table (probed live, 2026-09-05: the stamped
+        // tool_timeout_sec went with it) — so does the fake.
+        const pattern = key === 'marketplace' ? new RegExp(`\\[marketplaces\\.oathe\\]\\n(source = "[^"]*"\\n)?`)
+          : key === 'mcp' ? new RegExp(`\\[mcp_servers\\.oathe\\]\\n(?:(?!\\[)[^\\n]*\\n?)*`)
+            : `${line}\n`;
         fs.writeFileSync(configPath, prior.replace(pattern, ''));
         return { status: 0, stdout: '', stderr: '' };
       }
@@ -87,12 +168,40 @@ export function sandbox({ scratchDb, claudeScript = 'echo fake-claude; exit 0', 
         if (recorded === undefined) fs.writeFileSync(configPath, `${prior}${line}\nsource = "${args[3]}"\n`);
         return { status: 0, stdout: '', stderr: '' };
       }
+      if (key === 'mcp') {
+        // `codex mcp add <name> -- <command> <args…>` REWRITES the whole stanza — command and
+        // args — and drops any other key in it (probed live, codex-cli 0.150.0, 2026-09-05:
+        // a hand-written tool_timeout_sec did not survive a re-add). The fake does the same,
+        // so the adapter's stamp-after-add is what the tests exercise.
+        const sep = args.indexOf('--');
+        const stanza = `${line}\ncommand = "${args[sep + 1]}"\nargs = ${JSON.stringify(args.slice(sep + 2))}\n`;
+        const block = new RegExp(`\\[mcp_servers\\.oathe\\]\\n(?:(?!\\[)[^\\n]*\\n?)*`);
+        const next = prior.includes(line) ? prior.replace(block, stanza) : `${prior}${stanza}`;
+        if (next !== prior) fs.writeFileSync(configPath, next);
+        return { status: 0, stdout: '', stderr: '' };
+      }
       if (!prior.includes(line)) fs.writeFileSync(configPath, `${prior}${line}\n`);
       return { status: 0, stdout: '', stderr: '' };
     },
     claude(args) {
       const marketplacesFile = path.join(registryDir, 'known_marketplaces.json');
       const installedFile = path.join(registryDir, 'installed_plugins.json');
+      // `claude mcp add -s user <name> -- <command> <args…>` lands in ~/.claude.json —
+      // the user scope's home (claude-code/mcp.md, pinned).
+      const claudeJson = path.join(home, '.claude.json');
+      if (args[0] === 'mcp' && args[1] === 'add') {
+        const doc = readJson(claudeJson, {});
+        const sep = args.indexOf('--');
+        doc.mcpServers = { ...doc.mcpServers, [args[sep - 1]]: { command: args[sep + 1], args: args.slice(sep + 2) } };
+        writeJson(claudeJson, doc);
+        return;
+      }
+      if (args[0] === 'mcp' && args[1] === 'remove') {
+        const doc = readJson(claudeJson, {});
+        delete doc.mcpServers?.[args[2]];
+        writeJson(claudeJson, doc);
+        return;
+      }
       if (args[1] === 'marketplace' && args[2] === 'add') {
         const doc = readJson(marketplacesFile, {});
         doc.oathe = { source: { source: 'directory', path: args[3] } };

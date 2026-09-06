@@ -20,7 +20,7 @@ export function buildContext({ env = process.env, exec, cwd = process.cwd() } = 
   const home = homeOf(env);
   const config = new OatheConfig({ env, cwd });
   const manifest = InstallManifest.load({ manifestPath: paths.manifestPath, backupsDir: paths.backupsDir });
-  const harnesses = buildAll({ home, envPath: env.PATH, paths, exec }); // the ONE roster; consumers filter by capability
+  const harnesses = buildAll({ home, envPath: env.PATH, paths, exec, config }); // the ONE roster; consumers filter by capability
   const substrate = new Substrate({ database: config.get('db'), paths, env, config });
   const identity = {
     orgId: config.get('org'),
