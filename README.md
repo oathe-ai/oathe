@@ -84,8 +84,8 @@ Two rules carry most of the weight:
 
 Honest labels, kept current in [ROADMAP.md](ROADMAP.md):
 
-- **Working:** durable tasks and attempts, death-and-recovery (the task survives the session; the next session opens on it), non-author verification, cross-harness handoff (`continue`: same board, same claims, either harness).
-- **Designed:** workspace checkpoints, effect receipts, teammate handoff, the reliability benchmark, per-harness drift monitors (docs, install, and live lanes — proven on a developer machine against Claude Code, Codex, and Cursor; the scheduled workflows run in this repository).
+- **Working:** durable tasks and attempts, death-and-recovery (the task survives the session; the next session opens on it), non-author verification, cross-harness handoff (`continue`: same board, same claims, either harness), workspace checkpoints, effect receipts.
+- **Designed:** teammate handoff, the reliability benchmark, per-harness drift monitors (docs, install, and live lanes — proven on a developer machine against Claude Code, Codex, and Cursor; the scheduled workflows run in this repository).
 - **Planned:** automatic pickup of interrupted work, cloud continuation, third-party conformance.
 
 Known limitations are disclosed in the roadmap, including the ones that are semi-embarrassing.
