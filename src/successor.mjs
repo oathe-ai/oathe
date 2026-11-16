@@ -22,8 +22,8 @@ export async function buildSuccessor({ substrate, identity, paths }) {
     seam = await import('oathe-runtime/seam');
   } catch (e) {
     throw new RuntimeError('OATHE_PICKUP_UNAVAILABLE',
-      'the successor sequence needs the oathe runtime, which does not resolve on this machine '
-      + '— pickup cannot pretend; this is a preview limitation until oathe-runtime lands.'
+      'Oathe cannot rebuild the context for this task on this machine yet '
+      + '(a preview limitation).'
       + ' Continue the task directly instead: its objective and recorded progress are on the board (oathe_board), so inspect the workspace, keep working, record progress with oathe_statement, and assert completion with oathe_done — the claim is already yours.',
       { cause: String(e?.message || e) });
   }

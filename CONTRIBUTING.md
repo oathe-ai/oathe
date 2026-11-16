@@ -1,6 +1,6 @@
 # Contributing to Oathe
 
-Oathe is an open-source runtime for autosave, handoff, and verification of agent work across harnesses. Contributions should preserve its core boundary: Oathe defines generic reliability primitives; organization-specific intelligence remains outside the project.
+Oathe is open-source software for autosave, handoff, and verification of agent work across agent tools. Contributions should preserve its core boundary: Oathe defines generic reliability primitives; organization-specific intelligence remains outside the project.
 
 ## Before you start
 

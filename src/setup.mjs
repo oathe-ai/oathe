@@ -335,7 +335,7 @@ class SetupScreen {
       text: `    ${label} ${radio}`,
       fixed: false,
       kind: 'agent',
-      hint: '← → choose · who picks your work back up (the notch\'s continue opens this agent)',
+      hint: '← → choose · who picks your work back up (continue opens this agent)',
     };
   }
 

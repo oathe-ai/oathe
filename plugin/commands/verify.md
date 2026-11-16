@@ -6,7 +6,7 @@ argument-hint: <task-id> [engine]
 Run verification for the named task with the `oathe_verify` MCP tool.
 
 Arguments: `$ARGUMENTS` — the first word is the task id; the optional second word is the
-engine to judge with (`claude`, `codex`, or `cursor` — any harness CLI present on this
+engine to judge with (`claude`, `codex`, or `cursor`; any of these on this
 machine can verify). Passing an engine is how you retry a STALLED verification on a
 different engine after an outage (e.g. a usage limit): the failed run already released its
 claim and recorded the failure, so the retry claims cleanly.

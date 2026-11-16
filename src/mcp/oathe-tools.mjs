@@ -50,9 +50,9 @@ export function makeToolDefs() {
     {
       name: 'oathe_claim',
       description:
-        'Claim a task on the cell board (minting it if new — with plan_status honestly "unknown", '
+        'Claim a task on the board (minting it if new — with plan_status honestly "unknown", '
         + 'never a fabricated plan). A claim is a speech act: it takes responsibility, it does not '
-        + 'do the work. A second claimant is refused by the substrate. Args: {task_id, objective, parent?}.',
+        + 'do the work. A second claimant is refused. Args: {task_id, objective, parent?}.',
       inputSchema: {
         type: 'object',
         properties: {

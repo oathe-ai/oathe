@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Oathe is currently pre-release. Security fixes are applied to the latest development version and, once releases begin, to versions explicitly listed as supported in release documentation.
+Security fixes are applied to the latest release on npm.
 
 ## Reporting a vulnerability
 

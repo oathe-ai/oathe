@@ -1,8 +1,8 @@
-# oathe
+# Oathe
 
-**Auto save across your harnesses.**
+**Everyone already has an agent. Oathe is a way for them to work together.**
 
-Make sure your agent actually **DID** what it **SAID** it did.
+An agent network for your team: agent-to-agent handoff between your AI assistant and your coworkers', checked when it comes back.
 
 ![Claude Code hits its usage limit mid-fix; Codex opens in the same repo and continues the task — progress, statements, and verification target intact.](assets/oathe-hero.png)
 
@@ -16,28 +16,28 @@ That's the product. Below is exactly how much of it works today, because a relia
 
 ## Quickstart
 
+You need Node 22.13 or newer and a running Postgres.
+
 ```bash
 npm install -g @oathe/oathe@latest
-oathe init          # once per machine, from anywhere: local substrate up (createdb + schema),
-                    # every detected harness pre-selected — space toggles, Enter installs
+oathe init          # once per machine, from anywhere: local database up (createdb + schema),
+                    # every detected agent pre-selected — space toggles, Enter installs
 
 cd your-project
 claude              # a normal session — the board is in it; nothing auto-resumes
 ```
 
-Ctrl-C anytime. Open `codex` in the same folder — same board, same claims, other harness.
-When a session dies, the notch's continue reopens the task where it lived in your default
-agent; `oathe claude` is the command it runs, and yours if you want a session tracked as one
-attempt (`--hermetic` for a curated environment). On macOS, init also seats the notch: a quiet glass on the camera housing that
-pulses verdicts and answers a click with the board (`oathe notch --welcome` replays its
-tour).
+Ctrl-C anytime. Open `codex` in the same folder and it's the same board and the same claims.
+When a session dies, continue reopens the task where it lived in your default agent. On macOS,
+init also adds a small bar at the top of your screen. It shows verdicts, and a click shows
+your tasks (`oathe notch --welcome` replays its tour).
 
 What Oathe reads, stores, and sends: [docs/PRIVACY.md](docs/PRIVACY.md). The full
 technical reference: [docs/PACKAGE.md](docs/PACKAGE.md).
 
 ## What gets saved
 
-most harnesses save transcripts today. 
+most agent tools save transcripts today. 
 when projects are getting bigger and bigger this is insufficient.
 long-running systems are juggling so many tasks that the model loses attention.
 oathe goes up a layer of abstraction:
@@ -74,10 +74,10 @@ Two rules carry most of the weight:
 
 ## What Oathe is not
 
-- **Not a harness.** Claude Code, Codex, OpenClaw and friends keep their own prompts, tools, subagents, and UX. Oathe sits underneath.
+- **Not an agent.** Claude Code, Codex, OpenClaw and friends keep their own prompts, tools, subagents, and UX. Oathe sits underneath.
 - **Not a model router.** Routers pick where a turn runs. Oathe preserves what work exists, what already happened, and what would finish it.
 - **Not transcript sync.** No copying hidden state between vendors.
-- **Not a sandbox.** Oathe bounds and attributes attempt processes; compose it with your harness's sandbox or VM isolation for filesystem security.
+- **Not a sandbox.** Oathe bounds and attributes attempt processes; compose it with your agent tool's sandbox or VM isolation for filesystem security.
 - **Not a memory product.** Transcripts are evidence, never the source of truth.
 
 ## Status
@@ -92,7 +92,7 @@ Known limitations are disclosed in the roadmap, including the ones that are semi
 
 ## Under the hood
 
-A small runtime plus a Postgres schema that carries the invariants. The database is deliberately load-bearing: the rules that keep work safe (one current attempt per task, receipts before effects, verification before settlement) are enforced where no caller can route around them. Harness adapters are thin; the substrate is strict.
+A small package plus a Postgres schema that carries the invariants. The database is deliberately load-bearing: the rules that keep work safe (one current attempt per task, receipts before effects, verification before settlement) are enforced where no caller can route around them. Adapters for each agent tool are thin; the database is strict.
 
 ## CLI and MCP
 

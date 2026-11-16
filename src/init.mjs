@@ -43,7 +43,7 @@ export async function runInit({
     const detect = await substrate.detect();
     if (!detect.reachable) {
       throw new OatheInitError('OATHE_SUBSTRATE_UNREACHABLE',
-        'Postgres is not reachable, so there is no substrate to onboard onto. Install and start '
+        'Oathe needs Postgres and cannot reach it. Install and start '
         + 'it first ('
         + (process.platform === 'darwin'
           ? 'macOS: `brew install postgresql@17 && brew services start postgresql@17`'
