@@ -1,12 +1,12 @@
 ---
 name: oathe-work
-description: Use when working in a workspace with an Oathe board (the SessionStart context shows one) — before starting any substantive task, when reporting progress, when picking prior work back up, and when stopping. Claims are speech acts recorded in the cell substrate via the oathe_* MCP tools.
+description: Use when working in a workspace with an Oathe board (the SessionStart context shows one) — before starting any substantive task, when reporting progress, when picking prior work back up, and when stopping. Claims are speech acts recorded through the oathe_* MCP tools.
 ---
 
 # Working the Oathe board
 
 The board in this session's opening context is the durable record of this folder's work.
-The substrate refuses dishonesty by construction — work with it, not around it.
+Oathe refuses dishonesty by construction. Work with it, not around it.
 
 ## The loop
 
@@ -23,8 +23,8 @@ The substrate refuses dishonesty by construction — work with it, not around it
    lease of yours), call `oathe_pickup {task_id}`: the successor sequence returns the compiled
    frame for the obligation. The obligation, not the conversation, is what comes back.
 4. **Say done when it is done.** Finished work closes with
-   `oathe_done {task_id, proposition, evidence_ref}` — a completion statement plus the
-   substrate's own terminal. Completion is ASSERTED, not settled: verification is still owed.
+   `oathe_done {task_id, proposition, evidence_ref}` — a completion statement plus
+   Oathe's own terminal. Completion is ASSERTED, not settled: verification is still owed.
 5. **Yield what you cannot finish.** Stopping without finishing means
    `oathe_yield {task_id, note}` — the task goes back on the board, unowned, with a declared
    cause. Walking away silently leaves a lease to expire, which the board will show.

@@ -1,7 +1,7 @@
 {
   "name": "@oathe/oathe",
   "version": "0.4.6",
-  "description": "Oathe is auto save for AI coding agents: an open-source runtime that moves a task between Claude Code, Codex and Cursor and checks the work was actually done. D0 preview.",
+  "description": "Everyone already has an agent. Oathe is a way for them to work together. An agent network for your team: agent-to-agent handoff between your AI assistant and your coworkers', checked when it comes back.",
   "author": "Oathe Inc. (https://oathe.ai)",
   "type": "module",
   "engines": {
@@ -39,6 +39,18 @@
     "url": "git+https://github.com/oathe-ai/oathe.git"
   },
   "homepage": "https://oathe.ai",
+  "keywords": [
+    "oathe",
+    "agent-network",
+    "agent-to-agent",
+    "a2a",
+    "mcp",
+    "handoff",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "cursor"
+  ],
   "files": [
     ".claude-plugin/",
     "assets/",

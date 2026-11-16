@@ -12,20 +12,20 @@ const VERBS = ['init', ...launchable(), 'claim', 'ls', 'note', 'amend', 'done', 
 const USAGE = `usage: oathe <verb> [args]
 
 verbs:
-  init [--harness a,b] [--yes] bring up the local cell substrate + wire the harnesses you pick
-${launchable().map((name) => `  ${name.padEnd(6)} [--hermetic] [args…]  ${byName(name).displayName} here as one tracked attempt (what the notch's continue runs; plain ${byName(name).launch.bin} works too)`).join('\n')}
+  init [--harness a,b] [--yes] create the local database and set up the agents you pick (needs Postgres)
+${launchable().map((name) => `  ${name.padEnd(6)} [--hermetic] [args…]  ${byName(name).displayName} here as one tracked attempt (what continue runs; start your agent with plain ${byName(name).launch.bin})`).join('\n')}
   claim <task-id> [objective]  claim a task (minting it when new — objective required then)
   ls [--all]                   this workspace's board (--all: every workspace)
   note <task-id> <text> [ref]  record a progress statement against your active claim
   amend <task> "<objective>" "<why>"  change what done means, on the record (active claim only)
-  done <task-id> <what> [ref]  assert completion (a completion statement + the substrate's terminal)
+  done <task-id> <what> [ref]  assert completion (records a completion statement)
   verify [task] [--all] [--engine ${verifierCapable().join('|')}]  run the verification lane (non-author seat settles)
-  engine update <harness> [--then-verify [task]]  update an engine's CLI in place, as the claim update:<harness> (what the glass's update ↗ runs); --then-verify re-judges what its old version failed
+  engine update <harness> [--then-verify [task]]  update an engine's CLI in place, as the claim update:<harness> (what the update ↗ button runs); --then-verify re-judges what its old version failed
   trace <task-id> [--out dir]  export the claim's linked session traces as ATIF trajectories
-  notch [--welcome]            the whole machine's board + breach digest, pure JSON (only shows); --welcome replays the one-time welcome on the glass
+  notch [--welcome]            the whole machine's board + breach digest, pure JSON (only shows); --welcome replays the one-time welcome
   yield <task-id> <note>       yield: the task goes back on the board, unowned
   doctor [--surface]           verify every managed surface (--surface: the resolution report only)
-  status                       the substrate half of doctor
+  status                       the database half of doctor
   version                      the package version on PATH
   update [--yes] [--harness a,b]  the upgrade as one verb: npm i -g @oathe/oathe@latest through this node's npm, then init through the new bin
   config <key> [value] [--global]  read or write a config key (workspace scope by default)
