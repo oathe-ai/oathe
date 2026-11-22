@@ -19,7 +19,7 @@
   refusals; OOP core, thin functional edges, one implementation per concept; TDD red-first)
   and the full technical handoff are in `docs/PRODUCT.md`; the decision trail is the git history.
 
-<!-- >>> oathe v0.4.6 >>> -->
+<!-- >>> oathe v0.4.7 >>> -->
 ## Oathe
 
 This folder has an Oathe board (workspace `ws-6fb73e6686d6`). Claims are speech acts:
