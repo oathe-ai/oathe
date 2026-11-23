@@ -8,7 +8,7 @@ An agent network for your team: agent-to-agent handoff between your AI assistant
 
 You're mid-refactor in Claude Code when it hits a usage limit. You open Codex, say `continue`, and it picks up the same task — what's done, what's left, and a test that decides whether it's actually finished. Nothing pasted, nothing retyped, and the new agent doesn't have to take the old agent's word for anything because models are very good at being wrong AND confident.
 
-That's the product. Below is exactly how much of it works today, because a reliability project that overstates its own status would be a joke.
+That's the product. Here is exactly how much of it works today. Overstating that would be a joke.
 
 <img width="800" height="519" alt="Live UI/UX. Picking up a chatgpt app task in Claude code" src="https://github.com/user-attachments/assets/be275ab6-ea90-412a-8cea-0eb4f8f17eac" />
 
@@ -84,8 +84,8 @@ Two rules carry most of the weight:
 
 Honest labels, kept current in [ROADMAP.md](ROADMAP.md):
 
-- **Working:** durable tasks and attempts, death-and-recovery (the task survives the session; the next session opens on it), non-author verification, cross-harness handoff (`continue`: same board, same claims, either harness), workspace checkpoints, effect receipts.
-- **Designed:** teammate handoff, the reliability benchmark, per-harness drift monitors (docs, install, and live lanes — proven on a developer machine against Claude Code, Codex, and Cursor; the scheduled workflows run in this repository).
+- **Working:** durable tasks and attempts, death-and-recovery (the task survives the session; the next session opens on it), non-author verification, cross-harness handoff (`continue`: same board, same claims, either harness), teammate handoff, workspace checkpoints, effect receipts.
+- **Designed:** the reliability benchmark, per-harness drift monitors (docs, install, and live lanes — proven on a developer machine against Claude Code, Codex, and Cursor; the scheduled workflows run in this repository).
 - **Planned:** automatic pickup of interrupted work, cloud continuation, third-party conformance.
 
 Known limitations are disclosed in the roadmap, including the ones that are semi-embarrassing.

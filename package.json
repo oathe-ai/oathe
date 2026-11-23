@@ -1,7 +1,7 @@
 {
   "name": "@oathe/oathe",
   "version": "0.4.7",
-  "description": "Everyone already has an agent. Oathe is a way for them to work together. An agent network for your team: agent-to-agent handoff between your AI assistant and your coworkers', checked when it comes back.",
+  "description": "Handoff and verification for teams running their own AI agents.",
   "author": "Oathe Inc. (https://oathe.ai)",
   "type": "module",
   "engines": {
