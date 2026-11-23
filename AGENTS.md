@@ -4,7 +4,7 @@
 Contributors' rules — the touchpoint principle for supported harnesses and the UX contract
 (`docs/UX.md`) — are in `CLAUDE.md` outside the oathe fence; they bind Codex sessions equally.
 
-<!-- >>> oathe v0.4.6 >>> -->
+<!-- >>> oathe v0.4.7 >>> -->
 ## Oathe
 
 This folder has an Oathe board (workspace `ws-6fb73e6686d6`). Claims are speech acts:
